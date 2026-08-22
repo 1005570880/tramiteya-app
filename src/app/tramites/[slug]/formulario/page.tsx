@@ -7,22 +7,32 @@ import Header from "../../../../components/Header";
 import Footer from "../../../../components/Footer";
 import { generateDocument } from "../../../../lib/generateDocument";
 import { useRouter } from "next/navigation";
+import { localDraftStorage } from "../../../../lib/draftStorage";
 
 export default function PetitionForm({ params }: { params: { slug: string } }) {
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resetSignal, setResetSignal] = useState(0);
   const router = useRouter();
+  const draftKey = `petition:${params.slug}`;
 
   async function handleComplete(data: any) {
     setLoading(true);
     try {
       const doc = await generateDocument(params.slug, data);
       setResult(doc);
+      // Optionally remove draft on completion
+      localDraftStorage.remove(draftKey);
     } catch (e) {
       setResult("Error al generar el documento.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleClearDraft() {
+    localDraftStorage.remove(draftKey);
+    setResetSignal((s) => s + 1);
   }
 
   if (result) {
@@ -50,10 +60,17 @@ export default function PetitionForm({ params }: { params: { slug: string } }) {
       <Header />
       <section className="max-w-4xl mx-auto px-4 py-12">
         <div className="bg-white p-6 rounded-2xl shadow">
-          <h2 className="text-xl font-bold mb-2">Formulario</h2>
-          <p className="text-sm text-slate-500 mb-4">Complete los pasos para generar su documento.</p>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold">Formulario</h2>
+              <p className="text-sm text-slate-500">Complete los pasos para generar su documento.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={handleClearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button>
+            </div>
+          </div>
 
-          <StepForm steps={petitionForm} onComplete={handleComplete} />
+          <StepForm steps={petitionForm} onComplete={handleComplete} draftKey={draftKey} resetSignal={resetSignal} />
 
           {loading && <div className="mt-4 text-sm text-slate-500">Generando documento...</div>}
         </div>
