@@ -19,6 +19,51 @@ export const petitionForm: FormStep[] = [
   { id: "otros", title: "Información adicional", fields: [{ id: "anexos", label: "Anexos", type: "textarea" }, { id: "fecha", label: "Fecha", type: "date" }] },
 ];
 
+const fineRemovalBaseFields: FormStep[] = [
+  { id: "solicitante", title: "Solicitante", fields: [
+    { id: "nombres", label: "Nombres", type: "text", required: true }, { id: "apellidos", label: "Apellidos", type: "text", required: true },
+    { id: "documento", label: "Documento de identidad", type: "text", required: true }, { id: "correo", label: "Correo electrónico", type: "email", required: true },
+    { id: "telefono", label: "Teléfono", type: "phone" }, { id: "direccion", label: "Dirección", type: "text" },
+  ]},
+  { id: "entidad", title: "Entidad destinataria", fields: [
+    { id: "entidad", label: "Entidad / organismo de tránsito", type: "text", required: true }, { id: "ciudad", label: "Ciudad", type: "text", required: true },
+    { id: "correo_dest", label: "Correo de notificaciones de la entidad", type: "email" },
+  ]},
+];
+
+export const fineRemovalForm: FormStep[] = [
+  ...fineRemovalBaseFields,
+  { id: "multa", title: "Multa y actuación administrativa", fields: [
+    { id: "numero_acto", label: "Número de resolución / acto / multa", type: "text", required: true },
+    { id: "fecha_acto", label: "Fecha del acto o imposición", type: "date", required: true },
+    { id: "valor_multa", label: "Valor de la multa (COP)", type: "text" },
+    { id: "placa", label: "Placa del vehículo", type: "text" },
+  ]},
+  { id: "fundamento", title: "Fundamentos y solicitud", fields: [
+    { id: "causal", label: "Fundamento para solicitar la eliminación / revocatoria / archivo", type: "textarea", required: true, placeholder: "Explica qué ocurrió, por qué consideras que la multa debe ser revisada y qué causal o irregularidad invocas." },
+    { id: "hechos", label: "Hechos", type: "textarea", required: true },
+    { id: "pretension", label: "Solicitud concreta", type: "textarea", required: true, placeholder: "Solicita la actuación administrativa que corresponda: revisión, revocatoria, archivo, retiro o corrección del registro, según el caso." },
+  ]},
+  { id: "anexos", title: "Anexos", fields: [
+    { id: "anexos", label: "Relación de documentos anexos", type: "textarea" }, { id: "fecha", label: "Fecha", type: "date" },
+  ]},
+];
+
+export const ticketRemovalForm: FormStep[] = [
+  ...fineRemovalBaseFields,
+  { id: "comparendo", title: "Comparendo", fields: [
+    { id: "numero_comparendo", label: "Número de comparendo", type: "text", required: true }, { id: "fecha_comparendo", label: "Fecha del comparendo", type: "date", required: true },
+    { id: "autoridad", label: "Autoridad de tránsito", type: "text", required: true }, { id: "placa", label: "Placa del vehículo", type: "text" },
+    { id: "valor", label: "Valor registrado", type: "text" },
+  ]},
+  { id: "fundamento", title: "Fundamento jurídico y solicitud", fields: [
+    { id: "causal", label: "Causal de prescripción, caducidad u otra causal aplicable", type: "textarea", required: true },
+    { id: "hechos", label: "Hechos y explicación", type: "textarea", required: true },
+    { id: "solicitud", label: "Solicitud de archivo, exoneración, revocatoria o retiro del registro", type: "textarea", required: true },
+  ]},
+  { id: "anexos", title: "Anexos", fields: [{ id: "anexos", label: "Relación de anexos", type: "textarea" }, { id: "fecha", label: "Fecha", type: "date" }] },
+];
+
 export const commercialLeaseForm: FormStep[] = [
   { id: "partes", title: "Partes y representación", fields: [
     { id: "arrendador", label: "Arrendador / razón social", type: "text", required: true }, { id: "arrendador_documento", label: "NIT o documento del arrendador", type: "text", required: true },
@@ -49,47 +94,30 @@ export const tutelaForm: FormStep[] = [
     { id: "accionado", label: "Entidad o persona accionada", type: "text", required: true }, { id: "accionado_direccion", label: "Dirección / correo del accionado", type: "text" },
   ]},
   { id: "derechos", title: "Derechos fundamentales y hechos", fields: [
-    { id: "derechos_vulnerados", label: "Derechos fundamentales vulnerados", type: "textarea", required: true, placeholder: "Ej. vida digna, salud, debido proceso" },
-    { id: "hechos", label: "Hechos", type: "textarea", required: true },
+    { id: "derechos_vulnerados", label: "Derechos fundamentales vulnerados", type: "textarea", required: true, placeholder: "Ej. vida digna, salud, debido proceso" }, { id: "hechos", label: "Hechos", type: "textarea", required: true },
   ]},
   { id: "pretensiones", title: "Pretensiones y medida cautelar", fields: [
-    { id: "pretensiones", label: "Pretensiones", type: "textarea", required: true },
-    { id: "medida_cautelar", label: "¿Solicita medida provisional?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] },
+    { id: "pretensiones", label: "Pretensiones", type: "textarea", required: true }, { id: "medida_cautelar", label: "¿Solicita medida provisional?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] },
     { id: "medida_cautelar_detalle", label: "Explique la medida solicitada", type: "textarea", condition: { questionId: "medida_cautelar", operator: "equals", value: "si" } },
   ]},
 ];
 
 export const comparendoImpugnationForm: FormStep[] = [
-  { id: "infractor", title: "Datos del infractor", fields: [
-    { id: "infractor_nombre", label: "Nombre completo", type: "text", required: true }, { id: "infractor_documento", label: "Documento", type: "text", required: true },
-    { id: "infractor_direccion", label: "Dirección", type: "text" }, { id: "infractor_correo", label: "Correo electrónico", type: "email" },
-  ]},
-  { id: "comparendo", title: "Comparendo", fields: [
-    { id: "numero_comparendo", label: "Número de comparendo", type: "text", required: true }, { id: "fecha_comparendo", label: "Fecha del comparendo", type: "date", required: true },
-    { id: "autoridad", label: "Autoridad de tránsito", type: "text", required: true }, { id: "placa", label: "Placa del vehículo", type: "text" },
-  ]},
-  { id: "fundamento", title: "Fundamento y solicitud", fields: [
-    { id: "causal", label: "Causal de prescripción / caducidad", type: "textarea", required: true }, { id: "hechos", label: "Hechos y explicación", type: "textarea", required: true },
-    { id: "solicitud_exoneracion", label: "Solicitud de exoneración / archivo", type: "textarea", required: true },
-  ]},
+  { id: "infractor", title: "Datos del infractor", fields: [{ id: "infractor_nombre", label: "Nombre completo", type: "text", required: true }, { id: "infractor_documento", label: "Documento", type: "text", required: true }, { id: "infractor_direccion", label: "Dirección", type: "text" }, { id: "infractor_correo", label: "Correo electrónico", type: "email" }] },
+  { id: "comparendo", title: "Comparendo", fields: [{ id: "numero_comparendo", label: "Número de comparendo", type: "text", required: true }, { id: "fecha_comparendo", label: "Fecha del comparendo", type: "date", required: true }, { id: "autoridad", label: "Autoridad de tránsito", type: "text", required: true }, { id: "placa", label: "Placa del vehículo", type: "text" }] },
+  { id: "fundamento", title: "Fundamento y solicitud", fields: [{ id: "causal", label: "Causal de prescripción / caducidad", type: "textarea", required: true }, { id: "hechos", label: "Hechos y explicación", type: "textarea", required: true }, { id: "solicitud_exoneracion", label: "Solicitud de exoneración / archivo", type: "textarea", required: true }] },
 ];
 
 export const specialPowerForm: FormStep[] = [
-  { id: "poderdante", title: "Poderdante", fields: [
-    { id: "poderdante_nombre", label: "Nombre / razón social", type: "text", required: true }, { id: "poderdante_documento", label: "Documento / NIT", type: "text", required: true }, { id: "poderdante_direccion", label: "Dirección", type: "text" },
-  ]},
-  { id: "apoderado", title: "Apoderado", fields: [
-    { id: "apoderado_nombre", label: "Nombre completo del abogado", type: "text", required: true }, { id: "apoderado_documento", label: "Documento del abogado", type: "text", required: true }, { id: "apoderado_tarjeta", label: "Tarjeta profesional", type: "text", required: true },
-  ]},
-  { id: "facultades", title: "Facultades específicas", fields: [
-    { id: "facultades_especificas", label: "Facultades específicas conferidas", type: "textarea", required: true }, { id: "proceso", label: "Proceso / asunto", type: "textarea", required: true },
-    { id: "facultad_sustituir", label: "¿Puede sustituir el poder?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] },
-    { id: "facultad_recibir", label: "¿Puede recibir notificaciones?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] },
-  ]},
+  { id: "poderdante", title: "Poderdante", fields: [{ id: "poderdante_nombre", label: "Nombre / razón social", type: "text", required: true }, { id: "poderdante_documento", label: "Documento / NIT", type: "text", required: true }, { id: "poderdante_direccion", label: "Dirección", type: "text" }] },
+  { id: "apoderado", title: "Apoderado", fields: [{ id: "apoderado_nombre", label: "Nombre completo del abogado", type: "text", required: true }, { id: "apoderado_documento", label: "Documento del abogado", type: "text", required: true }, { id: "apoderado_tarjeta", label: "Tarjeta profesional", type: "text", required: true }] },
+  { id: "facultades", title: "Facultades específicas", fields: [{ id: "facultades_especificas", label: "Facultades específicas conferidas", type: "textarea", required: true }, { id: "proceso", label: "Proceso / asunto", type: "textarea", required: true }, { id: "facultad_sustituir", label: "¿Puede sustituir el poder?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] }, { id: "facultad_recibir", label: "¿Puede recibir notificaciones?", type: "radio", options: [{ label: "Sí", value: "si" }, { label: "No", value: "no" }] }] },
 ];
 
 export const formDefinitions: Record<string, FormDefinition> = {
   "derecho-de-peticion": { procedureSlug: "derecho-de-peticion", title: "Derecho de petición", steps: petitionForm },
+  "derecho-de-peticion-eliminar-multa": { procedureSlug: "derecho-de-peticion-eliminar-multa", title: "Derecho de petición para eliminar multa", steps: fineRemovalForm },
+  "derecho-de-peticion-eliminar-comparendo": { procedureSlug: "derecho-de-peticion-eliminar-comparendo", title: "Derecho de petición para eliminar comparendo", steps: ticketRemovalForm },
   "contrato-de-arrendamiento": { procedureSlug: "contrato-de-arrendamiento", title: "Contrato de arrendamiento comercial", steps: commercialLeaseForm },
   "accion-de-tutela": { procedureSlug: "accion-de-tutela", title: "Acción de tutela", steps: tutelaForm },
   "impugnacion-comparendos": { procedureSlug: "impugnacion-comparendos", title: "Impugnación de comparendos", steps: comparendoImpugnationForm },
