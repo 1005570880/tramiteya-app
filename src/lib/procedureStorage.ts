@@ -1,63 +1,73 @@
 import type { ProcedureInstance } from '../types/procedure';
+import type { FormAnswers } from '../types/form';
 
 const STORAGE_KEY = 'tramiteya:instances';
 
-import type { ProcedureInstance as PI } from '../types/procedure';
-import { readInstances, writeInstances } from './serverStorage';
-
-function safeParse(raw: string | null): ProcedureInstance[] {
+function read(): ProcedureInstance[] {
+  if (typeof window === 'undefined') return [];
   try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as ProcedureInstance[];
-  } catch (e) {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ProcedureInstance[]) : [];
+  } catch {
     return [];
   }
 }
 
+function write(instances: ProcedureInstance[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(instances));
+  } catch {
+    // Storage can be unavailable in private/restricted browser contexts.
+  }
+}
+
 export const procedureStorage = {
-  create(procedureId: string, procedureSlug: string, answers: Record<string, unknown> = {}) {
-    const all = safeParse(typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : '[]');
+  create(procedureId: string, procedureSlug: string, answers: FormAnswers = {}) {
+    const all = read();
     const now = new Date().toISOString();
-    const inst: ProcedureInstance = {
+    const instance: ProcedureInstance = {
       id: `pi_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       procedureId,
       procedureSlug,
       status: 'in_progress',
-      answers: answers as any,
+      answers,
       createdAt: now,
       updatedAt: now,
     };
-    all.push(inst);
-    if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-    return inst;
+    write([...all, instance]);
+    return instance;
   },
 
-  get(id: string) {
-    const all = safeParse(typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : '[]');
-    return all.find((i) => i.id === id) || null;
+  get(id: string): ProcedureInstance | null {
+    return read().find((instance) => instance.id === id) ?? null;
   },
 
-  list() {
-    return safeParse(typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : '[]');
+  list(): ProcedureInstance[] {
+    return read();
   },
 
-  update(id: string, patch: Partial<ProcedureInstance>) {
-    const all = safeParse(typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : '[]');
-    const idx = all.findIndex((i) => i.id === id);
-    if (idx === -1) return null;
-    const existing = all[idx];
-    const updated: ProcedureInstance = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-    all[idx] = updated;
-    if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  update(id: string, patch: Partial<ProcedureInstance>): ProcedureInstance | null {
+    const all = read();
+    const index = all.findIndex((instance) => instance.id === id);
+    if (index === -1) return null;
+
+    const updated: ProcedureInstance = {
+      ...all[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    all[index] = updated;
+    write(all);
     return updated;
   },
 
-  remove(id: string) {
-    const all = safeParse(typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : '[]');
-    const filtered = all.filter((i) => i.id !== id);
-    if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-    return true;
+  remove(id: string): boolean {
+    const all = read();
+    const filtered = all.filter((instance) => instance.id !== id);
+    write(filtered);
+    return filtered.length !== all.length;
   },
 };
