@@ -9,7 +9,7 @@ function ensureDir() {
   if (!fs.existsSync(INSTANCES_FILE)) fs.writeFileSync(INSTANCES_FILE, '[]');
 }
 
-export function readInstances(): any[] {
+export function readInstances() {
   try {
     ensureDir();
     const raw = fs.readFileSync(INSTANCES_FILE, 'utf-8');
@@ -21,7 +21,7 @@ export function readInstances(): any[] {
   }
 }
 
-export function writeInstances(data: any[]) {
+export function writeInstances(data) {
   ensureDir();
   fs.writeFileSync(INSTANCES_FILE, JSON.stringify(data, null, 2));
 }

@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { serverInstanceRepo } from '../../../../lib/serverInstanceRepo';
+import { getRepositoryFactory } from '../../../../lib/repositoryFactory';
 import { getUserFromAccessToken } from '../../../../lib/supabaseServerClient';
+import { patchInstanceSchema } from '../../../../lib/schemas';
+
+const factory = getRepositoryFactory();
 
 async function getUser(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
@@ -15,7 +18,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    const inst = serverInstanceRepo.get(params.id);
+    const repo = factory.getInstanceRepo();
+    const inst = await repo.get(params.id);
     if (!inst) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     if (inst.userId && inst.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     return NextResponse.json({ data: inst });
@@ -29,14 +33,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     const body = await req.json();
-    // Disallow changing ownership fields
-    delete body.userId;
-    delete body.createdAt;
-    const existing = serverInstanceRepo.get(params.id);
+    const parsed = patchInstanceSchema.safeParse(body);
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid payload', details: parsed.error.errors }, { status: 400 });
+    const repo = factory.getInstanceRepo();
+    const existing = await repo.get(params.id);
     if (!existing) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     if (existing.userId && existing.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    const updated = serverInstanceRepo.update(params.id, body || {});
-    if (!updated) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+    const updated = await repo.update(params.id, parsed.data as any);
+    if (!updated) return NextResponse.json({ error: 'Update failed' }, { status: 500 });
     return NextResponse.json({ data: updated });
   } catch (e) {
     return NextResponse.json({ error: 'Unable to update instance' }, { status: 500 });
@@ -47,10 +51,12 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    const existing = serverInstanceRepo.get(params.id);
+    const repo = factory.getInstanceRepo();
+    const existing = await repo.get(params.id);
     if (!existing) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     if (existing.userId && existing.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    serverInstanceRepo.remove(params.id);
+    const ok = await repo.remove(params.id);
+    if (!ok) return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
     return NextResponse.json({ data: true });
   } catch (e) {
     return NextResponse.json({ error: 'Unable to remove instance' }, { status: 500 });
