@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { petitionForm } from "../../../../data/forms";
 import StepForm from "../../../../components/StepForm";
 import Header from "../../../../components/Header";
 import Footer from "../../../../components/Footer";
@@ -11,82 +10,42 @@ import { localDraftStorage } from "../../../../lib/draftStorage";
 import { procedureStorage } from "../../../../lib/procedureStorage";
 import type { FormAnswers } from "../../../../types/form";
 import { procedures } from "../../../../data/procedures";
+import { getFormDefinition } from "../../../../data/forms";
 
-export default function PetitionForm({ params }: { params: { slug: string } }) {
-  const [resultId, setResultId] = useState<string | null>(null);
+export default function ProcedureForm({ params }: { params: { slug: string } }) {
   const [loading, setLoading] = useState(false);
   const [resetSignal, setResetSignal] = useState(0);
   const router = useRouter();
-  const draftKey = `petition:${params.slug}`;
+  const definition = getFormDefinition(params.slug);
+  const procedure = procedures.find((p) => p.slug === params.slug);
+  const draftKey = `procedure:${params.slug}`;
 
-  function ensureInstance(existingDraft: any, answers: FormAnswers) {
-    // If draft contains __instanceId, use it
-    const instId = existingDraft?.data?.__instanceId as string | undefined;
-    if (instId) {
-      const inst = procedureStorage.get(instId);
-      if (inst) return inst;
-    }
-    // create new instance
-    const proc = procedures.find((p) => p.slug === params.slug);
-    const created = procedureStorage.create(proc?.id || params.slug, params.slug, answers as any);
-    // attach instance id to draft
-    const saved = localDraftStorage.load(draftKey) as any;
-    const payload = saved?.data || {};
-    payload.__instanceId = created.id;
-    localDraftStorage.save(draftKey, payload);
+  if (!definition || !procedure) {
+    return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1><p className="mt-2 text-slate-600">Aún no existe un formulario configurado para este trámite.</p></section><Footer /></main>;
+  }
+
+  function ensureInstance(answers: FormAnswers) {
+    const saved = localDraftStorage.load(draftKey) as { data?: FormAnswers & { __instanceId?: string } } | null;
+    const id = saved?.data?.__instanceId;
+    if (id) { const existing = procedureStorage.get(id); if (existing) return existing; }
+    const created = procedureStorage.create(procedure.id, procedure.slug, answers);
+    localDraftStorage.save(draftKey, { ...(saved?.data || {}), __instanceId: created.id });
     return created;
   }
 
-  async function handleComplete(data: FormAnswers) {
+  async function handleComplete(answers: FormAnswers) {
     setLoading(true);
     try {
-      const existingDraft = localDraftStorage.load(draftKey) as any;
-      const inst = ensureInstance(existingDraft, data);
-      const proc = procedures.find((p) => p.slug === params.slug);
-      if (!proc) throw new Error('Procedure not found');
-      const doc = await generateDocument({ procedure: proc, answers: data });
-      // update instance with answers and document
-      procedureStorage.update(inst.id, { answers: data, status: 'document_ready', document: doc, completedAt: new Date().toISOString() });
-      // remove draft but keep instance
+      const instance = ensureInstance(answers);
+      const document = await generateDocument({ procedure, answers });
+      procedureStorage.update(instance.id, { answers, status: "document_ready", document, completedAt: new Date().toISOString() });
       localDraftStorage.remove(draftKey);
-      setResultId(inst.id);
-      // navigate to result page
-      router.push(`/tramites/${params.slug}/resultado/${inst.id}`);
-    } catch (e) {
-      console.error(e);
-      // show error state — kept simple here
-      alert('Error al generar el documento');
-    } finally {
-      setLoading(false);
-    }
+      router.push(`/tramites/${params.slug}/resultado/${instance.id}`);
+    } catch (error) {
+      console.error(error);
+      alert("No fue posible generar el documento. Inténtalo nuevamente.");
+    } finally { setLoading(false); }
   }
 
-  function handleClearDraft() {
-    localDraftStorage.remove(draftKey);
-    setResetSignal((s) => s + 1);
-  }
-
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <Header />
-      <section className="max-w-4xl mx-auto px-4 py-12">
-        <div className="bg-white p-6 rounded-2xl shadow">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-bold">Formulario</h2>
-              <p className="text-sm text-slate-500">Complete los pasos para generar su documento.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={handleClearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button>
-            </div>
-          </div>
-
-          <StepForm steps={petitionForm} onComplete={handleComplete} draftKey={draftKey} resetSignal={resetSignal} />
-
-          {loading && <div className="mt-4 text-sm text-slate-500">Generando documento...</div>}
-        </div>
-      </section>
-      <Footer />
-    </main>
-  );
+  return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-4xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="mb-6"><p className="text-sm font-medium text-blue-600">{procedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">Completa los datos y TrámiteYa preparará tu documento.</p></div><div className="flex justify-end mb-4"><button onClick={() => { localDraftStorage.remove(draftKey); setResetSignal((s) => s + 1); }} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div><StepForm steps={definition.steps} onComplete={handleComplete} draftKey={draftKey} resetSignal={resetSignal} />{loading && <div className="mt-4 text-sm text-slate-500">Generando documento...</div>}</div></section><Footer /></main>;
 }
