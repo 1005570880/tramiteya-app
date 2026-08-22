@@ -12,7 +12,9 @@ export type ProcedureStatus =
   | "draft"
   | "in_progress"
   | "pending_information"
+  | "review"
   | "document_ready"
+  | "downloaded"
   | "completed";
 
 export interface DocumentItem {
