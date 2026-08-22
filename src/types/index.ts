@@ -1,9 +1,4 @@
-export type Procedure = {
-  id: string;
-  slug: string;
-  title: string;
-  description: string;
-  category: string;
-  estimatedTime: string;
-  available: boolean;
-};
+import type { Procedure } from './procedure';
+import type { FormField, FormStep } from './form';
+
+export type { Procedure, FormField, FormStep };

@@ -1,13 +1,30 @@
-import type { FormField, FormStep } from "../types/form";
+export type FormFieldType =
+  | "text"
+  | "textarea"
+  | "email"
+  | "phone"
+  | "date"
+  | "select"
+  | "radio"
+  | "checkbox"
+  | "file";
 
-export type Procedure = {
+export type FormField = {
   id: string;
-  slug: string;
-  title: string;
-  description: string;
-  category: string;
-  estimatedTime: string;
-  available: boolean;
+  label: string;
+  type: FormFieldType;
+  required?: boolean;
+  placeholder?: string;
+  options?: { label: string; value: string }[];
+  condition?: { questionId: string; operator: "equals" | "notEquals" | "contains"; value: string };
 };
 
-export type { FormField, FormStep };
+export type FormStep = {
+  id: string;
+  title: string;
+  description?: string;
+  fields: FormField[];
+};
+
+export type FormAnswer = string | string[] | null | boolean;
+export type FormAnswers = Record<string, FormAnswer>;
