@@ -1,9 +1,11 @@
 name: TrámiteYa CI
+
 on:
   push:
     branches: ["phase-1-setup", "main"]
   pull_request:
     branches: ["phase-1-setup", "main"]
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -19,5 +21,5 @@ jobs:
         run: npm install
       - name: Run tests
         run: npm test
-      - name: Build
+      - name: Production build
         run: npm run build
