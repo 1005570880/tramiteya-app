@@ -33,8 +33,7 @@ Instalación (desarrollo local)
 4. Build
    npm run build
 
-Variables de entorno (
-see .env.example)
+Variables de entorno (ver .env.example)
 
 - NEXT_PUBLIC_SUPABASE_URL — URL de Supabase (opcional)
 - NEXT_PUBLIC_SUPABASE_ANON_KEY — anon key (opcional)
