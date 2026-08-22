@@ -1,5 +1,15 @@
 # TrámiteYa — Updates
 
+## Phase 8.4 — Wompi Production Payments
+
+- Added production Wompi Checkout Widget integration using the server-side price catalog.
+- Added SHA-256 integrity signing with `WOMPI_INTEGRITY_SECRET` and unique `DOC-<documentVersionId>` references.
+- Added authenticated payment preparation endpoint at `/api/payments/wompi`.
+- Added `/api/webhooks/wompi` with dynamic Wompi event-property checksum verification using `WOMPI_EVENTS_SECRET`, timestamp and SHA-256.
+- Webhook now validates transaction amount, changes payment state to `approved`, and marks the corresponding document version metadata as `payment_status: paid`.
+- Result page now uses the real Wompi widget and checks payment status for the exact document version before enabling Word/PDF downloads.
+- No launch pricing is used; checkout reads the server catalog in `src/data/pricing.ts`.
+
 ## Phase 6 — Motor Multitrámite
 
 - Added `src/lib/multitramiteEngine.ts` as the central orchestration layer for form packages, conditional fields, required-field validation and document generation.
