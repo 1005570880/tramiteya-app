@@ -11,7 +11,8 @@ const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo',
 function documentContent(procedure: Procedure, answers: FormAnswers): string { return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers); }
 
 export async function generateDocument({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<DocumentItem> {
-  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content: documentContent(procedure, answers), createdAt: new Date().toISOString(), status: 'ready' };
+  const generatedAt = new Date().toISOString();
+  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content: documentContent(procedure, answers), createdAt: generatedAt, generatedAt, version: 1, status: 'ready' };
 }
 
 function isHeading(line: string) { return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.)/.test(line); }
@@ -30,11 +31,7 @@ export async function generatePdf({ procedure, answers }: { procedure: Procedure
     pdf.on('end', () => resolve(Buffer.concat(chunks)));
     pdf.on('error', reject);
     pdf.font('Helvetica').fontSize(11);
-    for (const line of content.split('\n')) {
-      if (!line.trim()) { pdf.moveDown(0.6); continue; }
-      if (isHeading(line)) pdf.font('Helvetica-Bold').fontSize(11.5).text(line, { paragraphGap: 5 });
-      else pdf.font('Helvetica').fontSize(11).text(line, { align: 'left', lineGap: 3 });
-    }
+    for (const line of content.split('\n')) { if (!line.trim()) { pdf.moveDown(0.6); continue; } if (isHeading(line)) pdf.font('Helvetica-Bold').fontSize(11.5).text(line, { paragraphGap: 5 }); else pdf.font('Helvetica').fontSize(11).text(line, { align: 'left', lineGap: 3 }); }
     pdf.end();
   });
 }
