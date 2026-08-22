@@ -4,22 +4,25 @@ import type { Procedure } from '../types';
 import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
+import { buildTrafficDocument } from './trafficDocumentTemplates';
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
+const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
+function documentContent(procedure: Procedure, answers: FormAnswers): string { return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers); }
 
 export async function generateDocument({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<DocumentItem> {
-  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content: buildDocumentText(procedure, answers), createdAt: new Date().toISOString(), status: 'ready' };
+  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content: documentContent(procedure, answers), createdAt: new Date().toISOString(), status: 'ready' };
 }
 
-function isHeading(line: string) { return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.)/.test(line); }
+function isHeading(line: string) { return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.)/.test(line); }
 
 export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
-  const paragraphs = buildDocumentText(procedure, answers).split('\n').map((line) => isHeading(line) ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] }) : new Paragraph({ children: [new TextRun(line)] }));
+  const paragraphs = documentContent(procedure, answers).split('\n').map((line) => isHeading(line) ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] }) : new Paragraph({ children: [new TextRun(line)] }));
   return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
 }
 
 export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> {
-  const content = buildDocumentText(procedure, answers);
+  const content = documentContent(procedure, answers);
   return await new Promise<Buffer>((resolve, reject) => {
     const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 60, bottom: 60, left: 65, right: 65 } });
     const chunks: Buffer[] = [];
