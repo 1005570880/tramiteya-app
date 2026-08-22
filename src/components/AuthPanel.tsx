@@ -1,0 +1,12 @@
+"use client";
+import { useEffect, useState } from 'react';
+import { getSupabaseBrowser } from '../lib/supabaseBrowserClient';
+
+export default function AuthPanel() {
+  const [email,setEmail]=useState(''); const [password,setPassword]=useState(''); const [mode,setMode]=useState<'login'|'signup'>('login'); const [message,setMessage]=useState(''); const [loading,setLoading]=useState(false);
+  const supabase=getSupabaseBrowser();
+  useEffect(()=>{ if(!supabase)return; const {data}=supabase.auth.onAuthStateChange((_event,session)=>setMessage(session?`Sesión iniciada como ${session.user.email}`:'Sin sesión')); return ()=>data.subscription.unsubscribe(); },[supabase]);
+  async function submit(e:React.FormEvent){e.preventDefault();if(!supabase){setMessage('Configura Supabase para habilitar autenticación.');return;}setLoading(true);setMessage('');const result=mode==='login'?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password});setLoading(false);if(result.error)setMessage(result.error.message);else setMessage(mode==='login'?'Sesión iniciada.':'Cuenta creada. Revisa tu correo si la confirmación está habilitada.');}
+  async function logout(){if(supabase)await supabase.auth.signOut();}
+  return <div className="max-w-md mx-auto bg-white border rounded-2xl p-6 shadow-sm"><h2 className="text-xl font-bold">{mode==='login'?'Iniciar sesión':'Crear cuenta'}</h2><p className="text-sm text-slate-500 mt-1">Tus trámites y documentos quedarán asociados a tu cuenta.</p><form onSubmit={submit} className="mt-5 space-y-3"><input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Correo electrónico" className="w-full border rounded-lg px-3 py-2"/><input required minLength={6} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Contraseña" className="w-full border rounded-lg px-3 py-2"/><button disabled={loading} className="w-full rounded-lg bg-blue-600 text-white py-2 font-medium">{loading?'Procesando...':mode==='login'?'Entrar':'Registrarme'}</button></form><button onClick={()=>setMode(mode==='login'?'signup':'login')} className="mt-4 text-sm text-blue-600">{mode==='login'?'Crear una cuenta':'Ya tengo cuenta'}</button>{message&&<p className="mt-4 text-sm text-slate-600">{message}</p>}<button onClick={logout} className="mt-4 block text-xs text-slate-400">Cerrar sesión</button></div>;
+}
