@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
-import { getSupabaseServer, getUserFromAccessToken } from '../../../../../lib/supabaseServerClient';
-import { getProcedurePrice } from '../../../../../data/pricing';
+import { getSupabaseServer, getUserFromAccessToken } from '@/lib/supabaseServerClient';
+import { getProcedurePrice } from '@/data/pricing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
