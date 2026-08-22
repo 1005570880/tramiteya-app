@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { procedureStorage } from "../../../../lib/procedureStorage";
-import type { ProcedureInstance } from "../../../../types/procedure";
-import { getSupabaseBrowser } from "../../../../lib/supabaseBrowserClient";
+import { procedureStorage } from "../../../../../lib/procedureStorage";
+import type { ProcedureInstance } from "../../../../../types/procedure";
+import { getSupabaseBrowser } from "../../../../../lib/supabaseBrowserClient";
 import { useRouter } from "next/navigation";
-import Header from "../../../../components/Header";
-import Footer from "../../../../components/Footer";
-import WompiCheckout from "../../../../components/WompiCheckout";
+import Header from "../../../../../components/Header";
+import Footer from "../../../../../components/Footer";
+import WompiCheckout from "../../../../../components/WompiCheckout";
 
 export default function ResultPage({ params }: { params: { slug: string; id: string } }) {
   const [instance, setInstance] = useState<ProcedureInstance | null>(null);
@@ -29,17 +29,11 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
             const data = await response.json();
             setInstance(data);
             const historyResponse = await fetch(`/api/instances/${params.id}/documents`, { headers, cache: "no-store" });
-            if (historyResponse.ok) {
-              const historyData = await historyResponse.json();
-              setHistory(historyData.data || []);
-            }
+            if (historyResponse.ok) setHistory((await historyResponse.json()).data || []);
             const latest = data.document;
             if (latest?.id) {
               const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&documentVersionId=${encodeURIComponent(latest.id)}`, { headers, cache: "no-store" });
-              if (paymentResponse.ok) {
-                const paymentData = await paymentResponse.json();
-                setPaid(Boolean(paymentData.approved));
-              }
+              if (paymentResponse.ok) setPaid(Boolean((await paymentResponse.json()).approved));
             }
             return;
           }
@@ -57,7 +51,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
   const docs = history.length ? history : (instance.document ? [instance.document] : []);
   const latest = instance.document || docs[docs.length - 1];
   const edit = () => router.push(`/tramites/${params.slug}/formulario?instance=${encodeURIComponent(instance.id)}`);
-
   const markDownloaded = async () => {
     procedureStorage.markDownloaded(instance.id);
     const supabase = getSupabaseBrowser();
@@ -68,7 +61,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
       }
     } catch (error) { console.error(error); }
   };
-
   const download = async (format: "docx" | "pdf", version?: number) => {
     if (!paid) { alert("Primero debes completar el pago para descargar el documento."); return; }
     await markDownloaded();
@@ -78,14 +70,9 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
     if (!session?.access_token) { alert("Tu sesión ha expirado. Inicia sesión nuevamente."); return; }
     const response = await fetch(`/api/documents/${instance.id}/download${format === "pdf" ? "/pdf" : ""}${suffix}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
     if (!response.ok) { alert("La descarga todavía no está habilitada."); return; }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `tramiteya-${params.slug}.${format}`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `tramiteya-${params.slug}.${format}`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
   };
-
-  const downloadButtonClass = (format: "word" | "pdf") => paid
-    ? `px-4 py-3 rounded-lg ${format === "pdf" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"} font-medium hover:opacity-90`
-    : "px-4 py-3 rounded-lg bg-slate-200 text-slate-400 font-medium cursor-not-allowed";
+  const downloadButtonClass = (format: "word" | "pdf") => paid ? `px-4 py-3 rounded-lg ${format === "pdf" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"} font-medium hover:opacity-90` : "px-4 py-3 rounded-lg bg-slate-200 text-slate-400 font-medium cursor-not-allowed";
 
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow">
     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
