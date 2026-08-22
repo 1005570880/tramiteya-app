@@ -22,6 +22,8 @@ export interface DocumentItem {
   content: string;
   createdAt: string;
   status: "ready" | "error";
+  version?: number;
+  generatedAt?: string;
 }
 
 export interface ProcedureInstance {
