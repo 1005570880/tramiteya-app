@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseServer } from '@/lib/supabaseServerClient';
-import { getProcedurePrice } from '@/data/pricing';
+import { getSupabaseServer } from '../../../lib/supabaseServerClient';
+import { getProcedurePrice } from '../../../data/pricing';
 
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && process.env.PAYMENTS_MOCK !== 'true') {
