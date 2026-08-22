@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '../../../../lib/supabaseServerClient';
+import { getProcedurePrice } from '../../../../data/pricing';
 
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && process.env.PAYMENTS_MOCK !== 'true') {
@@ -10,10 +11,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const procedureId = String(body?.procedureId || '');
     const documentVersionId = body?.documentVersionId ? String(body.documentVersionId) : null;
-    const amount = Number(body?.amount ?? 0);
+    const pricing = getProcedurePrice(procedureId);
 
-    if (!procedureId || !Number.isInteger(amount) || amount < 0) {
-      return NextResponse.json({ error: 'Datos de checkout inválidos.' }, { status: 400 });
+    if (!procedureId || !pricing) {
+      return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
@@ -27,13 +28,13 @@ export async function POST(request: Request) {
         procedure_id: procedureId,
         user_id: user.id,
         document_version_id: documentVersionId,
-        amount,
-        currency: 'COP',
+        amount: pricing.price,
+        currency: pricing.currency,
         status: 'approved',
         provider: 'mock',
         provider_reference: reference,
         approved_at: new Date().toISOString(),
-        metadata: { simulated: true },
+        metadata: { simulated: true, pricing_source: 'server_catalog' },
       })
       .select('*')
       .single();
