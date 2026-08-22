@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import React from "react";
+import Link from "next/link";
 
 export default function Header() {
   return (
@@ -20,7 +20,7 @@ export default function Header() {
         <nav className="flex items-center gap-4">
           <Link href="/tramites" className="text-slate-700 hover:text-slate-900">Trámites</Link>
           <Link href="/dashboard" className="text-slate-700 hover:text-slate-900">Dashboard</Link>
-          <Link href="#" className="hidden sm:inline-block bg-blue-600 text-white px-4 py-2 rounded-md font-semibold">Iniciar mi trámite</Link>
+          <Link href="/tramites" className="hidden sm:inline-block bg-blue-600 text-white px-4 py-2 rounded-md font-semibold">Iniciar mi trámite</Link>
         </nav>
       </div>
     </header>
