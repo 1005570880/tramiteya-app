@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseServer } from '../../../../lib/supabaseServerClient';
-import { getProcedurePrice } from '../../../../data/pricing';
+import { getSupabaseServer } from '@/lib/supabaseServerClient';
+import { getProcedurePrice } from '@/data/pricing';
 
 export async function POST(request: Request) {
   if (process.env.NODE_ENV === 'production' && process.env.PAYMENTS_MOCK !== 'true') {
@@ -55,7 +55,6 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      // A concurrent retry can win the unique constraint. Return that payment instead of creating a duplicate.
       if (error.code === '23505') {
         const { data: concurrent } = await supabase
           .from('payments')
