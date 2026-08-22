@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseServer, getUserFromAccessToken } from '../../../../lib/supabaseServerClient';
+import { getSupabaseServer, getUserFromAccessToken } from '@/lib/supabaseServerClient';
 
 export async function GET(request: Request) {
   try {
