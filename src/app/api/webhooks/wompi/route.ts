@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { getSupabaseServer } from '../../../../../lib/supabaseServerClient';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function getPathValue(data: unknown, path: string): unknown {
@@ -69,7 +70,8 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
-      await supabase.from('payments').update({ status: 'rejected', metadata }).eq('id', payment.id);
+      const { error: rejectedError } = await supabase.from('payments').update({ status: 'rejected', metadata }).eq('id', payment.id);
+      if (rejectedError) return NextResponse.json({ error: rejectedError.message }, { status: 500 });
     }
     return NextResponse.json({ received: true });
   } catch (error) {
