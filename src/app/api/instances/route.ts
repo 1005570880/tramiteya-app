@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getRepositoryFactory } from '../../../../lib/repositoryFactory';
-import { getUserFromAccessToken } from '../../../../lib/supabaseServerClient';
-import { createInstanceSchema } from '../../../../lib/schemas';
+import { getRepositoryFactory } from '../../../lib/repositoryFactory';
+import { getUserFromAccessToken } from '../../../lib/supabaseServerClient';
+import { createInstanceSchema } from '../../../lib/schemas';
 
 const factory = getRepositoryFactory();
 async function getUser(req: NextRequest) { const auth=req.headers.get('authorization')||''; if(!auth.startsWith('Bearer '))return null; return getUserFromAccessToken(auth.slice(7)); }
