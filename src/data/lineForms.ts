@@ -1,0 +1,6 @@
+import type { FormStep } from '../types/form';
+export const laborClaimForm:FormStep[]=[
+{id:'worker',title:'Trabajador',fields:[{id:'nombres',label:'Nombres',type:'text',required:true},{id:'apellidos',label:'Apellidos',type:'text',required:true},{id:'documento',label:'Documento de identidad',type:'text',required:true},{id:'correo',label:'Correo electrónico',type:'email',required:true},{id:'telefono',label:'Teléfono',type:'phone'}]},
+{id:'employment',title:'Relación laboral',fields:[{id:'empleador',label:'Empleador / empresa',type:'text',required:true},{id:'cargo',label:'Cargo',type:'text'},{id:'fecha_inicio',label:'Fecha de inicio',type:'date'},{id:'fecha_fin',label:'Fecha de terminación, si aplica',type:'date'},{id:'salario',label:'Salario aproximado',type:'text'}]},
+{id:'claim',title:'Incumplimiento y pretensiones',fields:[{id:'tipo_reclamo',label:'Tipo de reclamación',type:'select',required:true,options:[{label:'Salarios / prestaciones adeudadas',value:'salarios'},{label:'Terminación / indemnización',value:'terminacion'},{label:'Seguridad social',value:'seguridad-social'},{label:'Acoso / otras obligaciones laborales',value:'otros'}]},{id:'hechos',label:'Hechos',type:'textarea',required:true},{id:'pretensiones',label:'Lo que solicita',type:'textarea',required:true}]}
+];
