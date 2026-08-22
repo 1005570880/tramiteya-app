@@ -1,0 +1,5 @@
+import { getFormDefinition, type FormDefinition } from './forms';
+import { trafficSpecialForms } from './trafficProcedures';
+import { laborClaimForm } from './lineForms';
+const titles:Record<string,string>={'prescripcion-comparendo':'Solicitud de prescripción de comparendo / obligación de tránsito','caducidad-comparendo':'Solicitud de caducidad de actuación de tránsito','revocatoria-comparendo':'Solicitud de revocatoria / corrección de actuación de tránsito','solicitud-soportes-comparendo':'Solicitud de información y soportes de comparendo','fotomultas':'Solicitud relacionada con fotodetección / fotomulta','reclamacion-laboral':'Reclamación laboral'};
+export function getDynamicFormDefinition(slug:string):FormDefinition|undefined{const base=getFormDefinition(slug);if(base)return base;const traffic=trafficSpecialForms[slug];if(traffic)return{procedureSlug:slug,title:titles[slug]??slug,steps:traffic};if(slug==='reclamacion-laboral')return{procedureSlug:slug,title:titles[slug],steps:laborClaimForm};return undefined;}
