@@ -7,9 +7,7 @@ export const dynamic = 'force-dynamic';
 
 function getPathValue(data: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, key) => {
-    if (value && typeof value === 'object' && key in value) {
-      return (value as Record<string, unknown>)[key];
-    }
+    if (value && typeof value === 'object' && key in value) return (value as Record<string, unknown>)[key];
     return undefined;
   }, data);
 }
@@ -25,12 +23,10 @@ function verifyEventSignature(payload: any, secret: string, headerChecksum: stri
   const timestamp = payload?.timestamp;
   const checksum = String(headerChecksum || payload?.signature?.checksum || '');
   if (!properties.length || timestamp === undefined || !checksum) return false;
-
   const values = properties.map((property: unknown) => {
     const value = getPathValue(payload?.data, String(property));
     return value === null || value === undefined ? '' : String(value);
   });
-
   const input = `${values.join('')}${timestamp}${secret}`;
   const calculated = crypto.createHash('sha256').update(input).digest('hex');
   return safeEqual(calculated, checksum);
@@ -39,35 +35,28 @@ function verifyEventSignature(payload: any, secret: string, headerChecksum: stri
 export async function POST(request: NextRequest) {
   try {
     const secret = process.env.WOMPI_EVENTS_SECRET;
-    if (!secret) {
-      return NextResponse.json({ error: 'Wompi events secret is not configured.' }, { status: 503 });
-    }
+    if (!secret) return NextResponse.json({ error: 'Wompi events secret is not configured.' }, { status: 503 });
 
     const payload = await request.json();
     if (!verifyEventSignature(payload, secret, request.headers.get('X-Event-Checksum'))) {
       return NextResponse.json({ error: 'Invalid event signature.' }, { status: 401 });
     }
-
-    if (payload?.event !== 'transaction.updated') {
-      return NextResponse.json({ received: true, ignored: true });
-    }
+    if (payload?.event !== 'transaction.updated') return NextResponse.json({ received: true, ignored: true });
 
     const transaction = payload?.data?.transaction;
     const status = String(transaction?.status || '').toUpperCase();
     const reference = String(transaction?.reference || '').trim();
     const amountInCents = Number(transaction?.amount_in_cents ?? transaction?.amountInCents ?? 0);
-
-    if (!reference || !Number.isFinite(amountInCents)) {
-      return NextResponse.json({ error: 'Invalid transaction payload.' }, { status: 400 });
-    }
+    if (!reference || !Number.isFinite(amountInCents)) return NextResponse.json({ error: 'Invalid transaction payload.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    const { data: payment, error: paymentError } = await supabase
+    const { data: paymentData, error: paymentError } = await supabase
       .from('payments')
       .select('id,amount,currency,status,document_version_id,provider,provider_reference,metadata')
       .eq('provider', 'wompi')
       .eq('provider_reference', reference)
       .maybeSingle();
+    const payment: any = paymentData;
 
     if (paymentError) return NextResponse.json({ error: paymentError.message }, { status: 500 });
     if (!payment) return NextResponse.json({ received: true, ignored: true });
@@ -90,20 +79,16 @@ export async function POST(request: NextRequest) {
         .from('payments')
         .update({ status: 'approved', approved_at: new Date().toISOString(), metadata })
         .eq('id', payment.id);
-
-      if (updatePaymentError) {
-        return NextResponse.json({ error: updatePaymentError.message }, { status: 500 });
-      }
+      if (updatePaymentError) return NextResponse.json({ error: updatePaymentError.message }, { status: 500 });
 
       if (payment.document_version_id) {
-        const { data: document, error: documentError } = await supabase
+        const { data: documentData, error: documentError } = await supabase
           .from('documents')
           .select('id,meta')
           .eq('id', String(payment.document_version_id))
           .maybeSingle();
-
+        const document: any = documentData;
         if (documentError) return NextResponse.json({ error: documentError.message }, { status: 500 });
-
         if (document) {
           const nextMeta = {
             ...(document.meta || {}),
@@ -112,23 +97,12 @@ export async function POST(request: NextRequest) {
             payment_id: payment.id,
             wompi_transaction_id: transactionId,
           };
-
-          const { error: documentUpdateError } = await supabase
-            .from('documents')
-            .update({ meta: nextMeta })
-            .eq('id', document.id);
-
-          if (documentUpdateError) {
-            return NextResponse.json({ error: documentUpdateError.message }, { status: 500 });
-          }
+          const { error: documentUpdateError } = await supabase.from('documents').update({ meta: nextMeta }).eq('id', document.id);
+          if (documentUpdateError) return NextResponse.json({ error: documentUpdateError.message }, { status: 500 });
         }
       }
     } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
-      const { error: rejectedError } = await supabase
-        .from('payments')
-        .update({ status: 'rejected', metadata })
-        .eq('id', payment.id);
-
+      const { error: rejectedError } = await supabase.from('payments').update({ status: 'rejected', metadata }).eq('id', payment.id);
       if (rejectedError) return NextResponse.json({ error: rejectedError.message }, { status: 500 });
     }
 
