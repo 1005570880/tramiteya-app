@@ -20,7 +20,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (instance.userId !== u.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const documentRepo = factory.getDocumentRepo();
-    const docs = documentRepo ? await documentRepo.listByInstance(params.id) : [];
+    const docs = documentRepo && typeof documentRepo.listByInstance === 'function'
+      ? await documentRepo.listByInstance(params.id)
+      : [];
 
     return NextResponse.json({ data: docs });
   } catch {
