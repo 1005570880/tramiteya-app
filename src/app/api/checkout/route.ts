@@ -36,21 +36,23 @@ export async function POST(request: Request) {
     if (existing) return NextResponse.json({ ok: true, payment: existing, reused: true });
 
     const reference = `MOCK-${crypto.randomUUID()}`;
+    const paymentPayload: any = {
+      procedure_id: procedureId,
+      user_id: user.id,
+      document_version_id: documentVersionId,
+      idempotency_key: idempotencyKey,
+      amount: pricing.price,
+      currency: pricing.currency,
+      status: 'approved',
+      provider: 'mock',
+      provider_reference: reference,
+      approved_at: new Date().toISOString(),
+      metadata: { simulated: true, pricing_source: 'server_catalog' },
+    };
+
     const { data: payment, error } = await supabase
       .from('payments')
-      .insert({
-        procedure_id: procedureId,
-        user_id: user.id,
-        document_version_id: documentVersionId,
-        idempotency_key: idempotencyKey,
-        amount: pricing.price,
-        currency: pricing.currency,
-        status: 'approved',
-        provider: 'mock',
-        provider_reference: reference,
-        approved_at: new Date().toISOString(),
-        metadata: { simulated: true, pricing_source: 'server_catalog' },
-      })
+      .insert(paymentPayload)
       .select('*')
       .single();
 
