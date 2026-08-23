@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFormDefinition } from '../../../../../data/forms';
-import { getProcedure } from '../../../../../lib/procedureStorage';
+import { procedures } from '../../../../../data/procedures';
 import { validateProcedureAnswers } from '../../../../../lib/multitramiteEngine';
 import type { FormAnswers } from '../../../../../types/form';
 
 export async function POST(request: NextRequest, { params }: { params: { slug: string } }) {
-  const procedure = await getProcedure(params.slug);
+  const procedure = procedures.find((item) => item.slug === params.slug);
   if (!procedure) return NextResponse.json({ error: 'Trámite no encontrado' }, { status: 404 });
 
   const definition = getFormDefinition(params.slug);
