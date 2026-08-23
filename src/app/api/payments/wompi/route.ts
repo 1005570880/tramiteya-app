@@ -21,7 +21,8 @@ export async function POST(request: NextRequest) {
     const pricing = getProcedurePrice(procedureId);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
-    const { data: document, error: documentError } = await supabase.from('documents').select('id,instance_id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
+    const { data: documentData, error: documentError } = await supabase.from('documents').select('id,instance_id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
+    const document: any = documentData;
     if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
@@ -36,7 +37,8 @@ export async function POST(request: NextRequest) {
     const { data: existing } = await supabase.from('payments').select('*').eq('user_id', user.id).eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
 
     if (!existing) {
-      const { error: insertError } = await supabase.from('payments').insert({ procedure_id: procedureId, user_id: user.id, document_version_id: documentVersionId, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, metadata: { reference, amount_in_cents: amountInCents } });
+      const paymentPayload: any = { procedure_id: procedureId, user_id: user.id, document_version_id: documentVersionId, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, metadata: { reference, amount_in_cents: amountInCents } };
+      const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
