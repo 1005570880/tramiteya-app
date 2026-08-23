@@ -5,28 +5,15 @@ import { getSupabaseServer } from '../../../../lib/supabaseServerClient';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function getPathValue(data: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((value, key) => {
-    if (value && typeof value === 'object' && key in value) return (value as Record<string, unknown>)[key];
-    return undefined;
-  }, data);
-}
-function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a.toLowerCase(), 'utf8');
-  const right = Buffer.from(b.toLowerCase(), 'utf8');
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
+function getPathValue(data: unknown, path: string): unknown { return path.split('.').reduce<unknown>((value, key) => { if (value && typeof value === 'object' && key in value) return (value as Record<string, unknown>)[key]; return undefined; }, data); }
+function safeEqual(a: string, b: string): boolean { const left = Buffer.from(a.toLowerCase(), 'utf8'); const right = Buffer.from(b.toLowerCase(), 'utf8'); return left.length === right.length && crypto.timingSafeEqual(left, right); }
 function verifyEventSignature(payload: any, secret: string, headerChecksum: string | null): boolean {
   const properties = Array.isArray(payload?.signature?.properties) ? payload.signature.properties : [];
   const timestamp = payload?.timestamp;
   const checksum = String(headerChecksum || payload?.signature?.checksum || '');
   if (!properties.length || timestamp === undefined || !checksum) return false;
-  const values = properties.map((property: unknown) => {
-    const value = getPathValue(payload?.data, String(property));
-    return value === null || value === undefined ? '' : String(value);
-  });
-  const calculated = crypto.createHash('sha256').update(`${values.join('')}${timestamp}${secret}`).digest('hex');
-  return safeEqual(calculated, checksum);
+  const values = properties.map((property: unknown) => { const value = getPathValue(payload?.data, String(property)); return value === null || value === undefined ? '' : String(value); });
+  return safeEqual(crypto.createHash('sha256').update(`${values.join('')}${timestamp}${secret}`).digest('hex'), checksum);
 }
 
 export async function POST(request: NextRequest) {
@@ -56,8 +43,9 @@ export async function POST(request: NextRequest) {
     const metadata = { ...(payment.metadata || {}), wompi_transaction_id: transactionId || undefined, last_event_status: status, last_event_timestamp: payload.timestamp };
 
     if (status === 'APPROVED') {
-      const paymentUpdate: any = { status: 'approved', approved_at: new Date().toISOString(), metadata };
-      const { error: updatePaymentError } = await supabase.from('payments').update(paymentUpdate).eq('id', payment.id);
+      const paymentUpdate: Record<string, unknown> = { status: 'approved', approved_at: new Date().toISOString(), metadata };
+      const paymentsTable = supabase.from('payments') as any;
+      const { error: updatePaymentError } = await paymentsTable.update(paymentUpdate).eq('id', payment.id);
       if (updatePaymentError) return NextResponse.json({ error: updatePaymentError.message }, { status: 500 });
 
       if (payment.document_version_id) {
@@ -66,14 +54,15 @@ export async function POST(request: NextRequest) {
         if (documentError) return NextResponse.json({ error: documentError.message }, { status: 500 });
         if (document) {
           const nextMeta = { ...(document.meta || {}), payment_status: 'paid', paid_at: new Date().toISOString(), payment_id: payment.id, wompi_transaction_id: transactionId };
-          const documentUpdate: any = { meta: nextMeta };
-          const { error: documentUpdateError } = await supabase.from('documents').update(documentUpdate).eq('id', document.id);
+          const documentsTable = supabase.from('documents') as any;
+          const { error: documentUpdateError } = await documentsTable.update({ meta: nextMeta }).eq('id', document.id);
           if (documentUpdateError) return NextResponse.json({ error: documentUpdateError.message }, { status: 500 });
         }
       }
     } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
-      const paymentUpdate: any = { status: 'rejected', metadata };
-      const { error: rejectedError } = await supabase.from('payments').update(paymentUpdate).eq('id', payment.id);
+      const paymentUpdate: Record<string, unknown> = { status: 'rejected', metadata };
+      const paymentsTable = supabase.from('payments') as any;
+      const { error: rejectedError } = await paymentsTable.update(paymentUpdate).eq('id', payment.id);
       if (rejectedError) return NextResponse.json({ error: rejectedError.message }, { status: 500 });
     }
     return NextResponse.json({ received: true });
