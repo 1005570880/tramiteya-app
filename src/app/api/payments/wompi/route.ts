@@ -17,15 +17,15 @@ export async function POST(request: NextRequest) {
     const pricing = getProcedurePrice(procedureKey);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
-    const { data: procedure, error: procedureError } = await supabase
-      .from('procedures')
+    const proceduresTable = supabase.from('procedures') as any;
+    const { data: procedure, error: procedureError } = await proceduresTable
       .select('id,slug')
       .eq('slug', procedureKey)
       .limit(1)
       .maybeSingle();
     if (procedureError || !procedure) return NextResponse.json({ error: 'El trámite no está configurado en la base de datos.' }, { status: 409 });
 
-    const procedureId = procedure.id as string;
+    const procedureId = String(procedure.id);
     const documentsTable = supabase.from('documents') as any;
     const { data: document, error: documentError } = await documentsTable
       .select('id,instance_id,procedure_id,meta')
