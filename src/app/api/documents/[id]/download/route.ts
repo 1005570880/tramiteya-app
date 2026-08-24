@@ -31,7 +31,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const requestedVersionNumber = versionParam && /^\d+$/.test(versionParam) ? Number(versionParam) : 0;
     const doc = requestedVersionId ? docs.find((d: any) => String(d.id) === requestedVersionId) : requestedVersionNumber ? docs.find((d: any) => Number(d.version) === requestedVersionNumber) : docs[docs.length - 1] || instance.document;
     if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
-    const paid = await hasApprovedPayment(user.id, instance.procedureId || instance.procedureSlug, (doc as any).id || null);
+    const procedureId = String(instance.procedureId || instance.procedureSlug);
+    const paid = await hasApprovedPayment(user.id, procedureId, (doc as any).id || null);
     if (!paid) return NextResponse.json({ error: 'Payment required', code: 'PAYMENT_REQUIRED' }, { status: 402 });
     const snapshot = (doc as any).snapshot;
     const content = snapshot?.content || doc.content;
