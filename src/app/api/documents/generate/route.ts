@@ -8,8 +8,8 @@ export const runtime = 'nodejs';
 
 type RequestBody = { procedureSlug?: string; answers?: FormAnswers; previousVersion?: number; instanceId?: string };
 type DocumentRecord = { id: string; title: string; procedure_id: string; instance_id: string | null; content: string; meta: Record<string, unknown> };
-
 type DbProcedure = { id: string; slug: string };
+type DocumentVersionRecord = { id: string; document_id: string; version_number: number; content: string };
 
 function isUuid(value?: string | null) {
   return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -26,9 +26,6 @@ export async function POST(request: NextRequest) {
     const document = await generateDocument({ procedure, answers: body.answers ?? {}, previousVersion: body.previousVersion ?? 0, instanceId: body.instanceId });
     const supabase = getSupabaseServer();
 
-    // The browser-side procedure catalog uses stable string ids (e.g. "derecho-peticion"),
-    // while Supabase stores relational procedure ids as UUIDs. Resolve the DB id by slug
-    // before persisting so guest checkout never attempts to insert a string id into a UUID FK.
     const { data: dbProcedure, error: procedureError } = await supabase
       .from('procedures')
       .select('id,slug')
@@ -44,8 +41,6 @@ export async function POST(request: NextRequest) {
       id: document.id,
       title: document.title,
       procedure_id: dbProcedure.id,
-      // Guest instances created locally have ids such as pi_..., not UUIDs.
-      // Keep the document independent from that local id until a server instance exists.
       instance_id: isUuid(body.instanceId) ? body.instanceId! : null,
       content: document.content,
       meta: {
@@ -66,7 +61,27 @@ export async function POST(request: NextRequest) {
       console.error('Document persistence failed:', persistError.message);
       return NextResponse.json({ error: 'No fue posible guardar el documento.', code: 'DOCUMENT_PERSISTENCE_ERROR' }, { status: 500 });
     }
-    return NextResponse.json(document);
+
+    // Wompi works with a document version, not merely the document id.
+    // Persist every generated version so the payment can be linked to the
+    // exact content that the customer is unlocking.
+    const versionId = `${document.id}:v${document.version}`;
+    const versionRow: DocumentVersionRecord = {
+      id: versionId,
+      document_id: document.id,
+      version_number: document.version,
+      content: document.content,
+    };
+    const versionsTable = supabase.from('document_versions') as unknown as {
+      upsert: (values: DocumentVersionRecord, options: { onConflict: string }) => Promise<{ error: { message: string } | null }>;
+    };
+    const { error: versionPersistError } = await versionsTable.upsert(versionRow, { onConflict: 'id' });
+    if (versionPersistError) {
+      console.error('Document version persistence failed:', versionPersistError.message);
+      return NextResponse.json({ error: 'No fue posible preparar la versión del documento.', code: 'DOCUMENT_VERSION_PERSISTENCE_ERROR' }, { status: 500 });
+    }
+
+    return NextResponse.json({ ...document, documentVersionId: versionId });
   } catch (error) {
     console.error('Document generation failed:', error);
     return NextResponse.json({ error: 'No fue posible generar el documento', code: 'DOCUMENT_GENERATION_ERROR' }, { status: 500 });
