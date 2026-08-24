@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 type CheckoutData = { publicKey: string; currency: 'COP'; amountInCents: number; reference: string; integrity: string; price: number; documentVersionId: string };
 declare global { interface Window { WidgetCheckout?: new (config: any) => { open: (callback?: (result: any) => void) => void }; } }
@@ -8,6 +9,8 @@ declare global { interface Window { WidgetCheckout?: new (config: any) => { open
 export default function WompiCheckout({ procedureId, documentVersionId, onPending }: { procedureId: string; documentVersionId: string; onPending?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     if (document.getElementById('wompi-widget-script')) return;
@@ -16,6 +19,21 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     script.src = 'https://checkout.wompi.co/widget.js';
     script.async = true;
     document.body.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const supabaseModule = await import('../lib/supabaseBrowserClient');
+        const supabase = supabaseModule.getSupabaseBrowser();
+        const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any;
+        if (active) setAuthenticated(Boolean(session?.user));
+      } catch {
+        if (active) setAuthenticated(false);
+      }
+    })();
+    return () => { active = false; };
   }, []);
 
   async function waitForApproval(token: string, attempts = 20): Promise<boolean> {
@@ -33,6 +51,11 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     return false;
   }
 
+  function goToLogin() {
+    const next = `${window.location.pathname}${window.location.search}`;
+    router.push(`/login?next=${encodeURIComponent(next)}`);
+  }
+
   async function openCheckout() {
     setLoading(true);
     setError(null);
@@ -41,7 +64,10 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
       const supabaseModule = await import('../lib/supabaseBrowserClient');
       const supabase = supabaseModule.getSupabaseBrowser();
       const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any;
-      if (!session?.access_token) throw new Error('Inicia sesión para continuar.');
+      if (!session?.access_token) {
+        goToLogin();
+        return;
+      }
 
       const response = await fetch('/api/payments/wompi', {
         method: 'POST',
@@ -83,5 +109,5 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     }
   }
 
-  return <div className="space-y-2"><button type="button" onClick={openCheckout} disabled={loading} className="w-full px-4 py-3 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-60">{loading ? 'Preparando pago…' : 'Pagar y desbloquear documento'}</button>{error && <p className="text-xs text-red-600">{error}</p>}<p className="text-[11px] text-slate-400 text-center">Pago seguro procesado por Wompi.</p></div>;
+  return <div className="space-y-2"><button type="button" onClick={openCheckout} disabled={loading || authenticated === null} className="w-full px-4 py-3 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-60">{loading ? 'Preparando pago…' : authenticated ? 'Pagar y desbloquear documento' : 'Iniciar sesión para pagar'}</button>{error && <p className="text-xs text-red-600">{error}</p>}<p className="text-[11px] text-slate-400 text-center">Pago seguro procesado por Wompi.</p></div>;
 }
