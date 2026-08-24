@@ -7,6 +7,7 @@ import type { FormAnswers } from '../../../../types/form';
 export const runtime = 'nodejs';
 
 type RequestBody = { procedureSlug?: string; answers?: FormAnswers; previousVersion?: number; instanceId?: string };
+type DocumentRecord = { id: string; title: string; procedure_id: string; instance_id: string | null; content: string; meta: Record<string, unknown> };
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,14 +19,18 @@ export async function POST(request: NextRequest) {
 
     const document = await generateDocument({ procedure, answers: body.answers ?? {}, previousVersion: body.previousVersion ?? 0, instanceId: body.instanceId });
     const supabase = getSupabaseServer();
-    const { error: persistError } = await supabase.from('documents').upsert({
+    const documentRow: DocumentRecord = {
       id: document.id,
       title: document.title,
       procedure_id: document.procedureId,
       instance_id: document.instanceId || null,
       content: document.content,
       meta: { version: document.version, generatedAt: document.generatedAt, sourceVersion: document.sourceVersion, snapshot: document.snapshot, procedureSlug },
-    }, { onConflict: 'id' });
+    };
+    const documentsTable = supabase.from('documents') as unknown as {
+      upsert: (values: DocumentRecord, options: { onConflict: string }) => Promise<{ error: { message: string } | null }>;
+    };
+    const { error: persistError } = await documentsTable.upsert(documentRow, { onConflict: 'id' });
     if (persistError) return NextResponse.json({ error: 'No fue posible guardar el documento.' }, { status: 500 });
     return NextResponse.json(document);
   } catch (error) {
