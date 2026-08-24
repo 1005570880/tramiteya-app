@@ -37,7 +37,13 @@ export const supabaseDocumentRepo: DocumentRepository = {
         snapshot: document.snapshot,
       },
     };
-    const { data, error } = await supabase.from('documents').insert(payload).select('*').single();
+
+    // The server Supabase client is intentionally untyped until the database
+    // schema is generated. Keep this repository boundary explicit so the
+    // application types do not get reduced to `never[]` by Supabase's generic
+    // table inference during the production build.
+    const documentsTable = supabase.from('documents') as any;
+    const { data, error } = await documentsTable.insert(payload).select('*').single();
     if (error) throw error;
     return mapRow(data || payload);
   },
