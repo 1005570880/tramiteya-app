@@ -58,7 +58,7 @@ export async function generateDocument({ procedure, answers, previousVersion = 0
     status: 'ready',
     instanceId,
     sourceVersion: `v${version}`,
-    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt },
+    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content },
   };
 }
 
