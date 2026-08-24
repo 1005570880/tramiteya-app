@@ -9,8 +9,8 @@ export const dynamic = 'force-dynamic';
 type ExistingPayment = { id: string; user_id: string | null; status: string | null; guest_access_token: string | null; guest_email: string | null };
 type PaymentPayload = { procedure_id: string; user_id: string | null; document_id: string | null; document_version_id: string | null; amount: number; currency: string; status: string; provider: string; provider_reference: string; guest_access_token: string | null; guest_email: string | null; metadata: Record<string, unknown> };
 type ProcedureRow = { id: string; slug?: string | null };
-type VersionRow = { id: string; document_id: string };
-type DocumentRow = { id: string; instance_id: string | null; procedure_id: string | null; user_id: string | null };
+type VersionRow = { id: string; document_id: string; version_number?: number; content?: string | null };
+type DocumentRow = { id: string; instance_id: string | null; procedure_id: string | null; user_id: string | null; content: string; meta?: Record<string, unknown> | null };
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
@@ -28,27 +28,47 @@ export async function POST(request: NextRequest) {
 
     const pricing = getProcedurePrice(procedureSlug);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
-    if (!isUuid(suppliedVersionId)) return NextResponse.json({ error: 'Identificador de documento inválido.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
     const proceduresTable = supabase.from('procedures') as unknown as { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: ProcedureRow | null; error: { message: string } | null }> } } };
-    const versionsTable = supabase.from('document_versions') as unknown as { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: VersionRow | null; error: { message: string } | null }> } } };
-    const documentsTable = supabase.from('documents') as unknown as { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: DocumentRow | null; error: { message: string } | null }> } } };
+    const versionsTable = supabase.from('document_versions') as unknown as {
+      select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: VersionRow | null; error: { message: string } | null }> } };
+      upsert: (values: { id: string; document_id: string; version_number: number; content: string }, options: { onConflict: string }) => Promise<{ error: { message: string } | null }>;
+    };
+    const documentsTable = supabase.from('documents') as unknown as {
+      select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: DocumentRow | null; error: { message: string } | null }> } };
+    };
     const paymentsTable = supabase.from('payments') as unknown as {
       select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: ExistingPayment | null; error: { message: string } | null }> } } };
       insert: (values: PaymentPayload) => Promise<{ error: { message: string; code?: string } | null }>;
     };
 
-    const { data: version, error: versionError } = await versionsTable.select('id,document_id').eq('id', suppliedVersionId).maybeSingle();
-    if (versionError || !version) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
+    let version: VersionRow | null = null;
+    const { data: directVersion, error: versionError } = await versionsTable.select('id,document_id,version_number,content').eq('id', suppliedVersionId).maybeSingle();
+    if (!versionError && directVersion) version = directVersion;
 
-    const { data: document, error: documentError } = await documentsTable.select('id,instance_id,procedure_id,user_id').eq('id', version.document_id).maybeSingle();
+    // Backward compatibility: early guest-generated documents passed the
+    // document id to checkout before document_versions was persisted. Recover
+    // that document and materialize its first version on demand.
+    if (!version) {
+      const { data: legacyDocument, error: legacyDocumentError } = await documentsTable
+        .select('id,instance_id,procedure_id,user_id,content,meta')
+        .eq('id', suppliedVersionId)
+        .maybeSingle();
+      if (!legacyDocumentError && legacyDocument) {
+        const versionNumber = Number(legacyDocument.meta?.version || 1);
+        const recoveredVersionId = `${legacyDocument.id}:v${versionNumber}`;
+        const { error: recoverError } = await versionsTable.upsert({ id: recoveredVersionId, document_id: legacyDocument.id, version_number: versionNumber, content: legacyDocument.content }, { onConflict: 'id' });
+        if (!recoverError) version = { id: recoveredVersionId, document_id: legacyDocument.id, version_number: versionNumber, content: legacyDocument.content };
+      }
+    }
+
+    if (!version) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
+
+    const { data: document, error: documentError } = await documentsTable.select('id,instance_id,procedure_id,user_id,content,meta').eq('id', version.document_id).maybeSingle();
     if (documentError || !document) return NextResponse.json({ error: 'Documento no encontrado.' }, { status: 404 });
     if (user && document.user_id && document.user_id !== user.id) return NextResponse.json({ error: 'No tienes acceso a este documento.' }, { status: 403 });
 
-    // The document is the source of truth for the procedure actually used to
-    // generate it. This avoids breaking guest checkout when the UI/catalog slug
-    // differs from the database slug. Fall back to slug lookup for legacy docs.
     let procedureId = document.procedure_id;
     let procedure: ProcedureRow | null = procedureId ? { id: procedureId } : null;
 
