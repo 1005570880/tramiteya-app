@@ -9,7 +9,9 @@ export const runtime = 'nodejs';
 type RequestBody = { procedureSlug?: string; answers?: FormAnswers; previousVersion?: number; instanceId?: string };
 type DocumentRecord = { id: string; title: string; procedure_id: string; instance_id: string | null; content: string; meta: Record<string, unknown> };
 type DbProcedure = { id: string; slug: string };
-type DocumentVersionRecord = { id: string; document_id: string; version_number: number; content: string };
+type DocumentVersionRecord = { id: string; document_id: string; version: number; content: string; meta?: Record<string, unknown> };
+
+type PersistedVersion = { id: string };
 
 function isUuid(value?: string | null) {
   return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -71,27 +73,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No fue posible guardar el documento.', code: 'DOCUMENT_PERSISTENCE_ERROR' }, { status: 500 });
     }
 
-    // Wompi works with a document version, not merely the document id.
-    // Persist every generated version so the payment can be linked to the
-    // exact content that the customer is unlocking.
+    // The production schema uses UUID ids and a unique (document_id, version)
+    // constraint. Keep the version record aligned with that schema rather than
+    // manufacturing a non-UUID id such as "<document-id>:v1".
     const versionNumber = normalizeVersionNumber(document.version ?? document.sourceVersion);
-    const versionId = `${document.id}:v${versionNumber}`;
+    const versionId = crypto.randomUUID();
     const versionRow: DocumentVersionRecord = {
       id: versionId,
       document_id: document.id,
-      version_number: versionNumber,
+      version: versionNumber,
       content: document.content,
+      meta: {
+        sourceVersion: document.sourceVersion,
+        generatedAt: document.generatedAt,
+      },
     };
+
     const versionsTable = supabase.from('document_versions') as unknown as {
-      upsert: (values: DocumentVersionRecord, options: { onConflict: string }) => Promise<{ error: { message: string } | null }>;
+      upsert: (values: DocumentVersionRecord, options: { onConflict: string }) => Promise<{ data: PersistedVersion[] | null; error: { message: string } | null }>;
     };
-    const { error: versionPersistError } = await versionsTable.upsert(versionRow, { onConflict: 'id' });
+    const { data: persistedVersions, error: versionPersistError } = await versionsTable.upsert(versionRow, { onConflict: 'document_id,version' });
     if (versionPersistError) {
       console.error('Document version persistence failed:', versionPersistError.message);
       return NextResponse.json({ error: 'No fue posible preparar la versión del documento.', code: 'DOCUMENT_VERSION_PERSISTENCE_ERROR' }, { status: 500 });
     }
 
-    return NextResponse.json({ ...document, documentVersionId: versionId });
+    const persistedVersionId = persistedVersions?.[0]?.id || versionId;
+    return NextResponse.json({ ...document, documentVersionId: persistedVersionId });
   } catch (error) {
     console.error('Document generation failed:', error);
     return NextResponse.json({ error: 'No fue posible generar el documento', code: 'DOCUMENT_GENERATION_ERROR' }, { status: 500 });
