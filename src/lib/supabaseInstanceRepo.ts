@@ -43,7 +43,7 @@ export const supabaseInstanceRepo: InstanceRepository = {
     const { data, error } = await supabase.from('procedure_instances').select('*').eq('id', id).limit(1).single();
     if (error) return null;
     const row: any = data;
-    const inst: ProcedureInstance = {
+    return {
       id: row.id,
       procedureId: row.procedure_id,
       procedureSlug: row.procedure_slug,
@@ -54,8 +54,7 @@ export const supabaseInstanceRepo: InstanceRepository = {
       completedAt: row.completed_at || undefined,
       userId: row.user_id || undefined,
       document: row.document || undefined,
-    };
-    return inst;
+    } as ProcedureInstance;
   },
 
   async list() {
@@ -78,16 +77,15 @@ export const supabaseInstanceRepo: InstanceRepository = {
 
   async update(id: string, patch) {
     const supabase = getSupabaseServer();
-    const safePatch = { ...patch };
-    delete (safePatch as any).userId;
-    delete (safePatch as any).createdAt;
-    delete (safePatch as any).id;
+    const safePatch: Record<string, unknown> = { ...(patch as Record<string, unknown>) };
+    delete safePatch.userId;
+    delete safePatch.createdAt;
+    delete safePatch.id;
     safePatch.updated_at = new Date().toISOString();
     const instancesTable = supabase.from('procedure_instances') as any;
     const { error } = await instancesTable.update(safePatch).eq('id', id);
     if (error) return null;
-    const inst = await this.get(id);
-    return inst;
+    return this.get(id);
   },
 
   async remove(id: string) {
