@@ -22,7 +22,12 @@ export const supabaseInstanceRepo: InstanceRepository = {
       created_at: now,
       updated_at: now,
     };
-    const { error } = await supabase.from('procedure_instances').insert(payload);
+
+    // The generated Supabase client does not currently carry the database
+    // schema, so its table inference can resolve inserts/updates to never[].
+    // Keep this boundary explicit until generated DB types are introduced.
+    const instancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await instancesTable.insert(payload);
     if (error) throw error;
     return {
       id,
@@ -81,7 +86,8 @@ export const supabaseInstanceRepo: InstanceRepository = {
     delete safePatch.createdAt;
     delete safePatch.id;
     safePatch.updated_at = new Date().toISOString();
-    const { error } = await supabase.from('procedure_instances').update(safePatch).eq('id', id);
+    const instancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await instancesTable.update(safePatch).eq('id', id);
     if (error) return null;
     return this.get(id);
   },
