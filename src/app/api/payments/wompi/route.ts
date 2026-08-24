@@ -6,6 +6,9 @@ import { getProcedurePrice } from '../../../../data/pricing';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type ExistingPayment = { id: string; user_id: string | null; status: string | null; guest_access_token: string | null; guest_email: string | null };
+type PaymentPayload = { procedure_id: string; user_id: string | null; document_version_id: string; amount: number; currency: string; status: string; provider: string; provider_reference: string; guest_access_token: string | null; guest_email: string | null; metadata: Record<string, unknown> };
+
 export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
@@ -22,8 +25,8 @@ export async function POST(request: NextRequest) {
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    const { data: documentData, error: documentError } = await supabase.from('documents').select('id,instance_id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
-    const document: any = documentData;
+    const documentsTable = supabase.from('documents') as unknown as { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: { id: string; instance_id: string | null; procedure_id: string | null; meta: Record<string, unknown> | null } | null; error: { message: string } | null }> } } };
+    const { data: document, error: documentError } = await documentsTable.select('id,instance_id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
     if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
@@ -35,12 +38,16 @@ export async function POST(request: NextRequest) {
     if (!integritySecret || !publicKey) return NextResponse.json({ error: 'Wompi no está configurado en el servidor.' }, { status: 503 });
     const integrity = crypto.createHash('sha256').update(`${reference}${amountInCents}${currency}${integritySecret}`).digest('hex');
 
-    const { data: existing } = await supabase.from('payments').select('id,user_id,status,guest_access_token,guest_email').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
+    const paymentsTable = supabase.from('payments') as unknown as {
+      select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: ExistingPayment | null; error: { message: string } | null }> } } };
+      insert: (values: PaymentPayload) => Promise<{ error: { message: string; code?: string } | null }>;
+    };
+    const { data: existing } = await paymentsTable.select('id,user_id,status,guest_access_token,guest_email').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
     let accessToken = existing?.guest_access_token || guestAccessToken || null;
 
     if (!existing) {
       if (!user && !accessToken) accessToken = crypto.randomBytes(32).toString('hex');
-      const paymentPayload: any = {
+      const paymentPayload: PaymentPayload = {
         procedure_id: procedureId,
         user_id: user?.id || null,
         document_version_id: documentVersionId,
@@ -53,7 +60,7 @@ export async function POST(request: NextRequest) {
         guest_email: user ? null : (guestEmail || null),
         metadata: { reference, amount_in_cents: amountInCents, checkout_mode: user ? 'authenticated' : 'guest' },
       };
-      const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
+      const { error: insertError } = await paymentsTable.insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     } else if (!user && !accessToken) {
       return NextResponse.json({ error: 'Se requiere el enlace de acceso de esta compra.' }, { status: 401 });
