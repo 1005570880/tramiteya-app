@@ -15,6 +15,15 @@ function isUuid(value?: string | null) {
   return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function normalizeVersionNumber(version: unknown): number {
+  if (typeof version === 'number' && Number.isFinite(version)) return Math.max(1, Math.trunc(version));
+  if (typeof version === 'string') {
+    const parsed = Number(version.replace(/^v/i, ''));
+    if (Number.isFinite(parsed)) return Math.max(1, Math.trunc(parsed));
+  }
+  return 1;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RequestBody;
@@ -65,7 +74,7 @@ export async function POST(request: NextRequest) {
     // Wompi works with a document version, not merely the document id.
     // Persist every generated version so the payment can be linked to the
     // exact content that the customer is unlocking.
-    const versionNumber = document.version ?? document.sourceVersion ?? 1;
+    const versionNumber = normalizeVersionNumber(document.version ?? document.sourceVersion);
     const versionId = `${document.id}:v${versionNumber}`;
     const versionRow: DocumentVersionRecord = {
       id: versionId,
