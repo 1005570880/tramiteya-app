@@ -8,7 +8,7 @@ function generateId(prefix = 'pi') {
 }
 
 export const supabaseInstanceRepo: InstanceRepository = {
-  async create(procedureId: string, procedureSlug: string, answers = {}, userId?: string) {
+  async create(procedureId: string, procedureSlug: string, answers: FormAnswers = {}, userId?: string) {
     const supabase = getSupabaseServer();
     const now = new Date().toISOString();
     const id = generateId('pi');
@@ -24,17 +24,16 @@ export const supabaseInstanceRepo: InstanceRepository = {
     };
     const { error } = await supabase.from('procedure_instances').insert(payload);
     if (error) throw error;
-    const inst: ProcedureInstance = {
+    return {
       id,
       procedureId: procedureId || '',
       procedureSlug,
-      status: 'in_progress',
-      answers: answers as FormAnswers,
+      status: 'in_progress' as const,
+      answers,
       createdAt: now,
       updatedAt: now,
       userId: userId || undefined,
-    };
-    return inst;
+    } satisfies ProcedureInstance;
   },
 
   async get(id: string) {
@@ -61,7 +60,7 @@ export const supabaseInstanceRepo: InstanceRepository = {
     const supabase = getSupabaseServer();
     const { data, error } = await supabase.from('procedure_instances').select('*');
     if (error) return [];
-    return (data || []).map((row: any) => ({
+    return (data || []).map((row: any): ProcedureInstance => ({
       id: row.id,
       procedureId: row.procedure_id,
       procedureSlug: row.procedure_slug,
@@ -75,18 +74,16 @@ export const supabaseInstanceRepo: InstanceRepository = {
     }));
   },
 
-  async update(id: string, patch) {
+  async update(id: string, patch: Partial<ProcedureInstance>) {
     const supabase = getSupabaseServer();
-    // prevent updating protected fields
-    const safePatch = { ...patch };
-    delete (safePatch as any).userId;
-    delete (safePatch as any).createdAt;
-    delete (safePatch as any).id;
+    const safePatch = { ...patch } as Record<string, unknown>;
+    delete safePatch.userId;
+    delete safePatch.createdAt;
+    delete safePatch.id;
     safePatch.updated_at = new Date().toISOString();
     const { error } = await supabase.from('procedure_instances').update(safePatch).eq('id', id);
     if (error) return null;
-    const inst = await this.get(id);
-    return inst;
+    return this.get(id);
   },
 
   async remove(id: string) {
