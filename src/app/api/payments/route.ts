@@ -1,30 +1,23 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseServer, getUserFromAccessToken } from '../../../lib/supabaseServerClient';
+import { getSupabaseServer } from '../../../lib/supabaseServerClient';
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const procedureId = String(url.searchParams.get('procedureId') || '');
-    const documentVersionId = url.searchParams.get('documentVersionId');
-    if (!procedureId) return NextResponse.json({ error: 'procedureId es requerido.' }, { status: 400 });
-
-    const authorization = request.headers.get('authorization') || '';
-    const token = authorization.replace(/^Bearer\s+/i, '').trim();
-    const user = token ? await getUserFromAccessToken(token) : null;
-    if (!user) return NextResponse.json({ error: 'Autenticación requerida.' }, { status: 401 });
+    const procedureId = String(url.searchParams.get('procedureId') || '').trim();
+    const documentVersionId = String(url.searchParams.get('documentVersionId') || '').trim();
+    if (!procedureId || !documentVersionId) return NextResponse.json({ error: 'procedureId y documentVersionId son requeridos.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    let query = supabase.from('payments')
+    const { data, error } = await supabase.from('payments')
       .select('id,status,amount,currency,procedure_id,document_version_id,provider,created_at,approved_at')
-      .eq('user_id', user.id)
       .eq('procedure_id', procedureId)
+      .eq('document_version_id', documentVersionId)
       .eq('status', 'approved')
       .order('created_at', { ascending: false })
-      .limit(1);
+      .limit(1)
+      .maybeSingle();
 
-    if (documentVersionId) query = query.eq('document_version_id', documentVersionId);
-
-    const { data, error } = await query.maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ approved: Boolean(data), payment: data || null });
   } catch {
