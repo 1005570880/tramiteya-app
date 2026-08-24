@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 type ExistingPayment = { id: string; user_id: string | null; status: string | null; guest_access_token: string | null; guest_email: string | null };
 type PaymentPayload = { procedure_id: string; user_id: string | null; document_id: string | null; document_version_id: string | null; amount: number; currency: string; status: string; provider: string; provider_reference: string; guest_access_token: string | null; guest_email: string | null; metadata: Record<string, unknown> };
-type ProcedureRow = { id: string };
+type ProcedureRow = { id: string; slug?: string | null };
 type VersionRow = { id: string; document_id: string };
 type DocumentRow = { id: string; instance_id: string | null; procedure_id: string | null; user_id: string | null };
 
@@ -39,16 +39,37 @@ export async function POST(request: NextRequest) {
       insert: (values: PaymentPayload) => Promise<{ error: { message: string; code?: string } | null }>;
     };
 
-    const { data: procedure, error: procedureError } = await proceduresTable.select('id').eq('slug', procedureSlug).maybeSingle();
-    if (procedureError || !procedure) return NextResponse.json({ error: 'Trámite no encontrado en la base de datos.' }, { status: 404 });
-
     const { data: version, error: versionError } = await versionsTable.select('id,document_id').eq('id', suppliedVersionId).maybeSingle();
     if (versionError || !version) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
 
     const { data: document, error: documentError } = await documentsTable.select('id,instance_id,procedure_id,user_id').eq('id', version.document_id).maybeSingle();
     if (documentError || !document) return NextResponse.json({ error: 'Documento no encontrado.' }, { status: 404 });
-    if (document.procedure_id && document.procedure_id !== procedure.id) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
     if (user && document.user_id && document.user_id !== user.id) return NextResponse.json({ error: 'No tienes acceso a este documento.' }, { status: 403 });
+
+    // The document is the source of truth for the procedure actually used to
+    // generate it. This avoids breaking guest checkout when the UI/catalog slug
+    // differs from the database slug. Fall back to slug lookup for legacy docs.
+    let procedureId = document.procedure_id;
+    let procedure: ProcedureRow | null = procedureId ? { id: procedureId } : null;
+
+    if (!procedure) {
+      const { data: bySlug, error: procedureError } = await proceduresTable.select('id,slug').eq('slug', procedureSlug).maybeSingle();
+      if (procedureError || !bySlug) {
+        if (isUuid(procedureSlug)) {
+          const { data: byId, error: byIdError } = await proceduresTable.select('id,slug').eq('id', procedureSlug).maybeSingle();
+          if (!byIdError && byId) {
+            procedure = byId;
+            procedureId = byId.id;
+          }
+        }
+      } else {
+        procedure = bySlug;
+        procedureId = bySlug.id;
+      }
+    }
+
+    if (!procedure || !procedureId) return NextResponse.json({ error: 'El trámite asociado al documento no existe en la base de datos.' }, { status: 404 });
+    if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
     const amountInCents = pricing.price * 100;
     const currency = 'COP';
@@ -62,7 +83,7 @@ export async function POST(request: NextRequest) {
     let accessToken = existing?.guest_access_token || guestAccessToken || null;
     if (!existing) {
       if (!user && !accessToken) accessToken = crypto.randomBytes(32).toString('hex');
-      const paymentPayload: PaymentPayload = { procedure_id: procedure.id, user_id: user?.id || null, document_id: document.id, document_version_id: version.id, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, guest_access_token: user ? null : accessToken, guest_email: user ? null : (guestEmail || null), metadata: { reference, amount_in_cents: amountInCents, checkout_mode: user ? 'authenticated' : 'guest' } };
+      const paymentPayload: PaymentPayload = { procedure_id: procedureId, user_id: user?.id || null, document_id: document.id, document_version_id: version.id, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, guest_access_token: user ? null : accessToken, guest_email: user ? null : (guestEmail || null), metadata: { reference, amount_in_cents: amountInCents, checkout_mode: user ? 'authenticated' : 'guest' } };
       const { error: insertError } = await paymentsTable.insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     } else if (!user && !accessToken) {
