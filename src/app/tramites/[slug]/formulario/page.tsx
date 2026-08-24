@@ -23,7 +23,7 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   if (!definition || !procedure) return <main className="min-h-screen bg-slate-50"><Header/><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer/></main>;
   function analyze(a: FormAnswers) {
     if (!procedure) return [];
-    const d = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(`${params.slug} ${procedure.name} ${procedure.category}`) ? evaluateTrafficCase(a) : [];
+    const d = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(`${params.slug} ${procedure.title} ${procedure.category}`) ? evaluateTrafficCase(a) : [];
     setAnalysis(d);
     return d;
   }
