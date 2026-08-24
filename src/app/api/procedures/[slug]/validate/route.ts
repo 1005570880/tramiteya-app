@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFormDefinition } from '../../../../../data/forms';
 import { procedures } from '../../../../../data/procedures';
 import { validateProcedureAnswers } from '../../../../../lib/multitramiteEngine';
+import { evaluateLegalQuality } from '../../../../../lib/legalQualityGate';
 import type { FormAnswers } from '../../../../../types/form';
 
 export async function POST(request: NextRequest, { params }: { params: { slug: string } }) {
@@ -14,8 +15,24 @@ export async function POST(request: NextRequest, { params }: { params: { slug: s
   try {
     const body = await request.json();
     const answers = (body?.answers ?? {}) as FormAnswers;
-    const issues = validateProcedureAnswers(procedure, answers);
-    return NextResponse.json({ valid: issues.length === 0, issues, procedure: { slug: procedure.slug, title: procedure.title } });
+    const structuralIssues = validateProcedureAnswers(procedure, answers);
+    const legalQuality = evaluateLegalQuality(params.slug, answers);
+    const issues = [
+      ...structuralIssues,
+      ...legalQuality.errors.map((issue) => ({
+        field: issue.field || 'legal',
+        message: issue.message,
+        code: issue.code,
+        severity: issue.severity,
+      })),
+    ];
+
+    return NextResponse.json({
+      valid: issues.length === 0 && legalQuality.passed,
+      issues,
+      legalQuality,
+      procedure: { slug: procedure.slug, title: procedure.title },
+    });
   } catch {
     return NextResponse.json({ error: 'Solicitud inválida' }, { status: 400 });
   }
