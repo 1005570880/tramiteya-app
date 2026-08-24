@@ -6,7 +6,7 @@ const v=(a:FormAnswers,k:string,f='')=>{const x=a[k];if(Array.isArray(x))return 
 const fmt=(value?:string)=>value?new Date(`${value}T00:00:00`).toLocaleDateString('es-CO'):'';
 
 export function buildTrafficDocument(slug:string,a:FormAnswers){
- const title:Record<string,string>={'prescripcion-comparendo':'SOLICITUD DE PRESCRIPCIÓN DE OBLIGACIÓN DE TRÁNSITO','caducidad-comparendo':'SOLICITUD DE REVISIÓN DE CADUCIDAD DE ACTUACIÓN DE TRÁNSITO','revocatoria-comparendo':'SOLICITUD DE REVOCATORIA / CORRECCIÓN DE ACTUACIÓN DE TRÁNSITO','solicitud-soportes-comparendo':'DERECHO DE PETICIÓN — SOLICITUD DE INFORMACIÓN Y SOPORTES DE TRÁNSITO','fotomultas':'DERECHO DE PETICIÓN — SOLICITUD RELACIONADA CON FOTODETECCIÓN / FOTOMULTA'}[slug]??'SOLICITUD ADMINISTRATIVA DE TRÁNSITO';
+ const title: string = {'prescripcion-comparendo':'SOLICITUD DE PRESCRIPCIÓN DE OBLIGACIÓN DE TRÁNSITO','caducidad-comparendo':'SOLICITUD DE REVISIÓN DE CADUCIDAD DE ACTUACIÓN DE TRÁNSITO','revocatoria-comparendo':'SOLICITUD DE REVOCATORIA / CORRECCIÓN DE ACTUACIÓN DE TRÁNSITO','solicitud-soportes-comparendo':'DERECHO DE PETICIÓN — SOLICITUD DE INFORMACIÓN Y SOPORTES DE TRÁNSITO','fotomultas':'DERECHO DE PETICIÓN — SOLICITUD RELACIONADA CON FOTODETECCIÓN / FOTOMULTA'}[slug]??'SOLICITUD ADMINISTRATIVA DE TRÁNSITO';
 
  const structured=Array.isArray(a.comparendos);
  if(slug==='prescripcion-comparendo' && structured){
