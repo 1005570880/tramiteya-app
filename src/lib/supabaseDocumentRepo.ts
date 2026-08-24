@@ -21,7 +21,8 @@ function mapRow(row: any): DocumentItem {
 export const supabaseDocumentRepo: DocumentRepository = {
   async create(document) {
     const supabase = getSupabaseServer();
-    const id = `doc_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    // Supabase documents.id is UUID; the previous doc_<timestamp> value caused PostgreSQL 400 errors.
+    const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const payload = {
       id,
@@ -30,6 +31,7 @@ export const supabaseDocumentRepo: DocumentRepository = {
       instance_id: document.instanceId || null,
       content: document.content,
       created_at: createdAt,
+      updated_at: createdAt,
       meta: {
         version: document.version,
         generatedAt: document.generatedAt,
