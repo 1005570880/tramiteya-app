@@ -6,76 +6,45 @@ import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
 import { analyzeLegalBasis } from './normativeEngine';
+import { getProcedureModule, renderConfiguredDocument } from './genericProcedureEngine';
+import '../data/procedureModules';
 
 function generateId(prefix = 'doc') {
-  // Supabase stores documents.id as UUID. Keep the fallback prefix for non-Supabase storage only.
-  if (prefix === 'doc' && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
+  if (prefix === 'doc' && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 }
 
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
 
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
+  const module = getProcedureModule(procedure.slug);
+  if (module && !trafficSlugs.has(procedure.slug)) return renderConfiguredDocument(module, answers);
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
 }
 
 function appendLegalBasis(content: string, procedure: Procedure, answers: FormAnswers): string {
   const analysis = analyzeLegalBasis(procedure.slug, answers);
   if (!analysis.norms.length) return content;
-
   const normativeLines = analysis.norms.flatMap((norm) => [
     `${norm.title}${norm.article ? ` — ${norm.article}` : ''}`,
     norm.description,
     `Fuente: ${norm.authority} — ${norm.sourceUrl}`,
     '',
   ]);
-
-  return [
-    content,
-    '',
-    'FUNDAMENTO NORMATIVO DE REFERENCIA',
-    ...normativeLines,
-    'CRITERIO DE SELECCIÓN',
-    ...analysis.rationale,
-    '',
-    'ADVERTENCIA DE REVISIÓN',
-    ...analysis.alerts,
-  ].join('\n');
+  return [content, '', 'FUNDAMENTO NORMATIVO DE REFERENCIA', ...normativeLines, 'CRITERIO DE SELECCIÓN', ...analysis.rationale, '', 'ADVERTENCIA DE REVISIÓN', ...analysis.alerts].join('\n');
 }
 
-function buildFinalContent(procedure: Procedure, answers: FormAnswers): string {
-  return appendLegalBasis(documentContent(procedure, answers), procedure, answers);
-}
+function buildFinalContent(procedure: Procedure, answers: FormAnswers): string { return appendLegalBasis(documentContent(procedure, answers), procedure, answers); }
 
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
   const content = buildFinalContent(procedure, answers);
-  return {
-    id: generateId('doc'),
-    title: `${procedure.title} - Documento generado`,
-    procedureId: procedure.id,
-    content,
-    createdAt: generatedAt,
-    generatedAt,
-    version,
-    status: 'ready',
-    instanceId,
-    sourceVersion: `v${version}`,
-    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content },
-  };
+  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content } };
 }
 
-export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
-  return renderDocx(buildFinalContent(procedure, answers));
-}
-
-export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> {
-  return renderPdf(buildFinalContent(procedure, answers));
-}
-
+export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(buildFinalContent(procedure, answers)); }
+export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(buildFinalContent(procedure, answers)); }
 export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
 
@@ -84,9 +53,7 @@ function isHeading(line: string) {
 }
 
 function renderDocx(content: string): Uint8Array | Promise<Uint8Array> {
-  const paragraphs = content.split('\n').map(line => isHeading(line)
-    ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] })
-    : new Paragraph({ children: [new TextRun(line)] }));
+  const paragraphs = content.split('\n').map(line => isHeading(line) ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] }) : new Paragraph({ children: [new TextRun(line)] }));
   return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
 }
 
