@@ -4,11 +4,14 @@ import { getSupabaseServer } from '../../../lib/supabaseServerClient';
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const procedureId = String(url.searchParams.get('procedureId') || '').trim();
+    const procedureKey = String(url.searchParams.get('procedureId') || '').trim();
     const documentVersionId = String(url.searchParams.get('documentVersionId') || '').trim();
-    if (!procedureId || !documentVersionId) return NextResponse.json({ error: 'procedureId y documentVersionId son requeridos.' }, { status: 400 });
+    if (!procedureKey || !documentVersionId) return NextResponse.json({ error: 'procedureId y documentVersionId son requeridos.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
+    const { data: procedure } = await supabase.from('procedures').select('id').eq('slug', procedureKey).limit(1).maybeSingle();
+    const procedureId = procedure?.id || procedureKey;
+
     const { data, error } = await supabase.from('payments')
       .select('id,status,amount,currency,procedure_id,document_version_id,provider,created_at,approved_at')
       .eq('procedure_id', procedureId)
@@ -20,7 +23,8 @@ export async function GET(request: Request) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ approved: Boolean(data), payment: data || null });
-  } catch {
+  } catch (error) {
+    console.error('Payment status lookup failed:', error);
     return NextResponse.json({ error: 'No fue posible consultar el estado del pago.' }, { status: 400 });
   }
 }
