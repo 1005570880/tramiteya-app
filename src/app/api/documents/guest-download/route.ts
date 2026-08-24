@@ -5,6 +5,9 @@ import { generateDocxFromContent, generatePdfFromContent } from '../../../../lib
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type GuestPayment = { id: string; status: string; procedure_id: string | null; document_version_id: string | null };
+type DocumentRecord = { id: string; content: string | null; meta: Record<string, unknown> | null; procedure_id: string | null };
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -14,18 +17,20 @@ export async function POST(request: NextRequest) {
     if (!documentId || !guestAccessToken) return NextResponse.json({ error: 'Datos de acceso incompletos.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    const { data: payment, error: paymentError } = await supabase.from('payments')
-      .select('id,status,procedure_id,document_version_id')
+    const paymentsTable = supabase.from('payments') as unknown as {
+      select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: GuestPayment | null; error: { message: string } | null }> } } } };
+    };
+    const { data: payment, error: paymentError } = await paymentsTable.select('id,status,procedure_id,document_version_id')
       .eq('guest_access_token', guestAccessToken)
       .eq('document_version_id', documentId)
       .eq('status', 'approved')
       .maybeSingle();
     if (paymentError || !payment) return NextResponse.json({ error: 'El pago no está confirmado.' }, { status: 402 });
 
-    const { data: document, error: documentError } = await supabase.from('documents')
-      .select('id,content,meta,procedure_id')
-      .eq('id', documentId)
-      .maybeSingle();
+    const documentsTable = supabase.from('documents') as unknown as {
+      select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: DocumentRecord | null; error: { message: string } | null }> } };
+    };
+    const { data: document, error: documentError } = await documentsTable.select('id,content,meta,procedure_id').eq('id', documentId).maybeSingle();
     if (documentError || !document) return NextResponse.json({ error: 'Documento no encontrado.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== payment.procedure_id) return NextResponse.json({ error: 'El documento no corresponde al pago.' }, { status: 409 });
 
