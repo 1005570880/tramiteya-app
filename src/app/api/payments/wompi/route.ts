@@ -10,13 +10,22 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = getSupabaseServer();
     const body = await request.json();
-    const procedureId = String(body?.procedureId || '').trim();
+    const procedureKey = String(body?.procedureId || '').trim();
     const documentVersionId = String(body?.documentVersionId || '').trim();
-    if (!procedureId || !documentVersionId) return NextResponse.json({ error: 'Trámite y versión de documento son obligatorios.' }, { status: 400 });
+    if (!procedureKey || !documentVersionId) return NextResponse.json({ error: 'Trámite y versión de documento son obligatorios.' }, { status: 400 });
 
-    const pricing = getProcedurePrice(procedureId);
+    const pricing = getProcedurePrice(procedureKey);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
+    const { data: procedure, error: procedureError } = await supabase
+      .from('procedures')
+      .select('id,slug')
+      .eq('slug', procedureKey)
+      .limit(1)
+      .maybeSingle();
+    if (procedureError || !procedure) return NextResponse.json({ error: 'El trámite no está configurado en la base de datos.' }, { status: 409 });
+
+    const procedureId = procedure.id as string;
     const documentsTable = supabase.from('documents') as any;
     const { data: document, error: documentError } = await documentsTable
       .select('id,instance_id,procedure_id,meta')
@@ -41,19 +50,21 @@ export async function POST(request: NextRequest) {
         procedure_id: procedureId,
         user_id: null,
         document_version_id: documentVersionId,
+        document_id: document.id,
         amount: pricing.price,
         currency,
         status: 'pending',
         provider: 'wompi',
         provider_reference: reference,
-        metadata: { reference, amount_in_cents: amountInCents },
+        metadata: { reference, amount_in_cents: amountInCents, procedureSlug: procedureKey },
       };
       const { error: insertError } = await paymentsTable.insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
     return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId });
-  } catch {
+  } catch (error) {
+    console.error('Wompi preparation failed:', error);
     return NextResponse.json({ error: 'No fue posible preparar el pago Wompi.' }, { status: 400 });
   }
 }
