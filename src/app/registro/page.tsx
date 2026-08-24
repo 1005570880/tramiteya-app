@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { signUpWithEmail } from '../../services/authService';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function RegisterPage() {
+function RegisterForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -44,4 +44,8 @@ export default function RegisterPage() {
       </div>
     </main>
   );
+}
+
+export default function RegisterPage() {
+  return <Suspense fallback={<main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-slate-500">Cargando...</div></main>}><RegisterForm /></Suspense>;
 }
