@@ -7,28 +7,37 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type ExistingPayment = { id: string; user_id: string | null; status: string | null; guest_access_token: string | null; guest_email: string | null };
-type PaymentPayload = { procedure_id: string; user_id: string | null; document_version_id: string; amount: number; currency: string; status: string; provider: string; provider_reference: string; guest_access_token: string | null; guest_email: string | null; metadata: Record<string, unknown> };
+type PaymentPayload = { procedure_id: string; user_id: string | null; document_id: string | null; document_version_id: string | null; amount: number; currency: string; status: string; provider: string; provider_reference: string; guest_access_token: string | null; guest_email: string | null; metadata: Record<string, unknown> };
+
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
     const user = token ? await getUserFromAccessToken(token) : null;
     const body = await request.json();
-    const procedureId = String(body?.procedureId || '').trim();
-    const documentVersionId = String(body?.documentVersionId || '').trim();
+    const procedureSlug = String(body?.procedureId || '').trim();
+    const suppliedVersionId = String(body?.documentVersionId || '').trim();
     const guestAccessToken = String(body?.guestAccessToken || '').trim();
     const guestEmail = String(body?.guestEmail || '').trim().toLowerCase();
-    if (!procedureId || !documentVersionId) return NextResponse.json({ error: 'Trámite y versión de documento son obligatorios.' }, { status: 400 });
+    if (!procedureSlug || !suppliedVersionId) return NextResponse.json({ error: 'Trámite y versión de documento son obligatorios.' }, { status: 400 });
     if (!user && guestAccessToken && guestAccessToken.length < 32) return NextResponse.json({ error: 'Token de acceso invitado inválido.' }, { status: 400 });
 
-    const pricing = getProcedurePrice(procedureId);
+    const pricing = getProcedurePrice(procedureSlug);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
+    if (!isUuid(suppliedVersionId)) return NextResponse.json({ error: 'Identificador de documento inválido.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    const documentsTable = supabase.from('documents') as unknown as { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: { id: string; instance_id: string | null; procedure_id: string | null; meta: Record<string, unknown> | null } | null; error: { message: string } | null }> } } };
-    const { data: document, error: documentError } = await documentsTable.select('id,instance_id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
-    if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
-    if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
+    const { data: procedure, error: procedureError } = await supabase.from('procedures').select('id').eq('slug', procedureSlug).maybeSingle();
+    if (procedureError || !procedure) return NextResponse.json({ error: 'Trámite no encontrado en la base de datos.' }, { status: 404 });
+
+    const { data: version, error: versionError } = await supabase.from('document_versions').select('id,document_id,content,meta').eq('id', suppliedVersionId).maybeSingle();
+    if (versionError || !version) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
+
+    const { data: document, error: documentError } = await supabase.from('documents').select('id,instance_id,procedure_id,user_id').eq('id', version.document_id).maybeSingle();
+    if (documentError || !document) return NextResponse.json({ error: 'Documento no encontrado.' }, { status: 404 });
+    if (document.procedure_id && document.procedure_id !== procedure.id) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
+    if (user && document.user_id && document.user_id !== user.id) return NextResponse.json({ error: 'No tienes acceso a este documento.' }, { status: 403 });
 
     const amountInCents = pricing.price * 100;
     const currency = 'COP';
@@ -38,19 +47,16 @@ export async function POST(request: NextRequest) {
     if (!integritySecret || !publicKey) return NextResponse.json({ error: 'Wompi no está configurado en el servidor.' }, { status: 503 });
     const integrity = crypto.createHash('sha256').update(`${reference}${amountInCents}${currency}${integritySecret}`).digest('hex');
 
-    const paymentsTable = supabase.from('payments') as unknown as {
-      select: (columns: string) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: ExistingPayment | null; error: { message: string } | null }> } } };
-      insert: (values: PaymentPayload) => Promise<{ error: { message: string; code?: string } | null }>;
-    };
-    const { data: existing } = await paymentsTable.select('id,user_id,status,guest_access_token,guest_email').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
+    const { data: existing } = await supabase.from('payments').select('id,user_id,status,guest_access_token,guest_email').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
     let accessToken = existing?.guest_access_token || guestAccessToken || null;
 
     if (!existing) {
       if (!user && !accessToken) accessToken = crypto.randomBytes(32).toString('hex');
       const paymentPayload: PaymentPayload = {
-        procedure_id: procedureId,
+        procedure_id: procedure.id,
         user_id: user?.id || null,
-        document_version_id: documentVersionId,
+        document_id: document.id,
+        document_version_id: version.id,
         amount: pricing.price,
         currency,
         status: 'pending',
@@ -60,14 +66,15 @@ export async function POST(request: NextRequest) {
         guest_email: user ? null : (guestEmail || null),
         metadata: { reference, amount_in_cents: amountInCents, checkout_mode: user ? 'authenticated' : 'guest' },
       };
-      const { error: insertError } = await paymentsTable.insert(paymentPayload);
+      const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     } else if (!user && !accessToken) {
       return NextResponse.json({ error: 'Se requiere el enlace de acceso de esta compra.' }, { status: 401 });
     }
 
-    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guestAccessToken: user ? null : accessToken });
-  } catch {
+    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId: version.id, guestAccessToken: user ? null : accessToken });
+  } catch (error) {
+    console.error('WOMPI_CHECKOUT_ERROR', error);
     return NextResponse.json({ error: 'No fue posible preparar el pago Wompi.' }, { status: 400 });
   }
 }
