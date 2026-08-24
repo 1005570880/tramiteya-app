@@ -7,7 +7,11 @@ import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
 import { analyzeLegalBasis } from './normativeEngine';
 
-function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
+function generateId() {
+  // Supabase public.documents.id is a UUID. Keep generated document identifiers
+  // compatible with that schema so guest generation can be persisted safely.
+  return crypto.randomUUID();
+}
 
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
 
@@ -48,7 +52,7 @@ export async function generateDocument({ procedure, answers, previousVersion = 0
   const version = Math.max(1, previousVersion + 1);
   const content = buildFinalContent(procedure, answers);
   return {
-    id: generateId('doc'),
+    id: generateId(),
     title: `${procedure.title} - Documento generado`,
     procedureId: procedure.id,
     content,
