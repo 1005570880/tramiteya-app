@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { signInWithEmail } from '../../services/authService';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -38,13 +38,14 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div><label className="block text-sm font-medium">Correo electrónico</label><input value={email} onChange={e => setEmail(e.target.value)} type="email" className="w-full border rounded p-2" required /></div>
           <div><label className="block text-sm font-medium">Contraseña</label><input value={password} onChange={e => setPassword(e.target.value)} type="password" className="w-full border rounded p-2" required /></div>
-          <div className="flex items-center justify-between">
-            <Link href="/recuperar-contrasena" className="text-sm text-slate-500">Recuperar contraseña</Link>
-            <button disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50">{loading ? 'Entrando...' : 'Entrar'}</button>
-          </div>
+          <div className="flex items-center justify-between"><Link href="/recuperar-contrasena" className="text-sm text-slate-500">Recuperar contraseña</Link><button disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50">{loading ? 'Entrando...' : 'Entrar'}</button></div>
         </form>
         <div className="mt-4 text-sm text-slate-500">¿No tienes cuenta? <Link href={registerHref} className="text-blue-600">Regístrate</Link></div>
       </div>
     </main>
   );
+}
+
+export default function LoginPage() {
+  return <Suspense fallback={<main className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-slate-500">Cargando...</div></main>}><LoginForm /></Suspense>;
 }
