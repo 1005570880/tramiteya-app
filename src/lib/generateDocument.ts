@@ -7,7 +7,13 @@ import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
 import { analyzeLegalBasis } from './normativeEngine';
 
-function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
+function generateId(prefix = 'doc') {
+  // Supabase stores documents.id as UUID. Keep the fallback prefix for non-Supabase storage only.
+  if (prefix === 'doc' && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+}
 
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
 
