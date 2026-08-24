@@ -29,15 +29,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const requestedVersionNumber = versionParam && /^\d+$/.test(versionParam) ? Number(versionParam) : 0;
     const doc = requestedVersionId ? docs.find((d: any) => String(d.id) === requestedVersionId) : requestedVersionNumber ? docs.find((d: any) => Number(d.version) === requestedVersionNumber) : docs[docs.length - 1] || instance.document;
     if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
-    const procedure = procedures.find(item => item.slug === instance.procedureSlug || item.id === instance.procedureId);
+
+    const procedureSlug = String(instance.procedureSlug || '');
+    const procedureId = String(instance.procedureId || '');
+    const procedure = procedures.find(item => item.slug === procedureSlug || item.id === procedureId);
     if (!procedure) return NextResponse.json({ error: 'Procedure not found' }, { status: 404 });
-    const paid = await hasApprovedPayment(user.id, instance.procedureId || instance.procedureSlug, (doc as any).id || null);
+
+    const documentVersionId = (doc as any).id ? String((doc as any).id) : null;
+    const paid = await hasApprovedPayment(user.id, procedureId || procedureSlug, documentVersionId);
     if (!paid) return NextResponse.json({ error: 'Payment required', code: 'PAYMENT_REQUIRED' }, { status: 402 });
     const snapshot = (doc as any).snapshot;
     const content = snapshot?.content || doc.content;
     if (!content) return NextResponse.json({ error: 'Document snapshot not available' }, { status: 409 });
     const buffer = await generatePdfFromContent(content);
-    return new NextResponse(buffer as unknown as BodyInit, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="tramiteya-${instance.procedureSlug}-v${doc.version || 1}.pdf"`, 'Cache-Control': 'no-store' } });
+    const version = Number(doc.version || 1);
+    return new NextResponse(buffer as unknown as BodyInit, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="tramiteya-${procedureSlug}-v${version}.pdf"`, 'Cache-Control': 'no-store' } });
   } catch {
     return NextResponse.json({ error: 'Unable to generate PDF' }, { status: 500 });
   }
