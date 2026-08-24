@@ -65,11 +65,12 @@ export async function POST(request: NextRequest) {
     // Wompi works with a document version, not merely the document id.
     // Persist every generated version so the payment can be linked to the
     // exact content that the customer is unlocking.
-    const versionId = `${document.id}:v${document.version}`;
+    const versionNumber = document.version ?? document.sourceVersion ?? 1;
+    const versionId = `${document.id}:v${versionNumber}`;
     const versionRow: DocumentVersionRecord = {
       id: versionId,
       document_id: document.id,
-      version_number: document.version,
+      version_number: versionNumber,
       content: document.content,
     };
     const versionsTable = supabase.from('document_versions') as unknown as {
