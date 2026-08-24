@@ -53,10 +53,14 @@ export async function getLegalContext(input: LegalContextInput) {
   if (ruleError) throw ruleError;
   if (argumentError) throw argumentError;
 
-  const applicableRules = (rules ?? []).filter((rule) => matchesTrigger(rule.trigger_conditions ?? {}, input.facts));
-  const applicableArguments = (argumentsData ?? []).filter((item) => matchesTrigger(item.trigger_conditions ?? {}, input.facts));
+  const typedSources = (sources ?? []) as unknown as LegalSource[];
+  const typedRules = (rules ?? []) as unknown as LegalRule[];
+  const typedArguments = (argumentsData ?? []) as unknown as LegalArgument[];
+
+  const applicableRules = typedRules.filter((rule) => matchesTrigger(rule.trigger_conditions ?? {}, input.facts));
+  const applicableArguments = typedArguments.filter((item) => matchesTrigger(item.trigger_conditions ?? {}, input.facts));
   const sourceIds = new Set(applicableRules.map((r) => r.source_id));
-  const applicableSources = (sources ?? []).filter((source) => sourceIds.has(source.id));
+  const applicableSources = typedSources.filter((source) => sourceIds.has(source.id));
 
   return {
     libraryVersion: '2026.08.24-v1',
