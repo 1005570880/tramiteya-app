@@ -1,4 +1,4 @@
-import { getSupabaseServer } from './supabaseServer';
+import { getSupabaseServer } from './supabaseServerClient';
 
 export type LegalContextInput = {
   vertical: 'salud' | 'transito' | 'habeas-data' | 'contratos' | string;
