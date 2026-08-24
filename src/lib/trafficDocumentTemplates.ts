@@ -10,57 +10,37 @@ export function buildTrafficDocument(slug:string,a:FormAnswers){
 
  const structured=Array.isArray(a.comparendos);
  if(slug==='prescripcion-comparendo' && structured){
-   const comparendos=a.comparendos as Array<{number:string;violationDate?:string;coactiveDate:string;origin?:string;infraction?:string;totalFine?:number;paymentOrderNoticeDate?:string}>;
+   const comparendos=a.comparendos as Array<{number:string;violationDate?:string;coactiveDate?:string;origin?:string;infraction?:string;totalFine?:number;paymentOrderNoticeDate?:string}>;
    const result=runTransitLegalQualityGate({
      applicant:{fullName:v(a,'fullName'),documentType:v(a,'documentType','CC'),documentNumber:v(a,'documentNumber'),email:v(a,'email')},
      authority:{name:v(a,'authorityName'),municipality:v(a,'authorityMunicipality'),department:v(a,'authorityDepartment')},
      comparendos,
    });
-   const rows=comparendos.map((c,i)=>`${i+1}. Comparendo ${c.number || 'sin número'} — infracción ${c.infraction || 'no indicada'} — fecha de infracción ${fmt(c.violationDate)||'no indicada'} — fecha de cobro coactivo ${fmt(c.coactiveDate)} — notificación del mandamiento ${fmt(c.paymentOrderNoticeDate)||'no indicada'}${c.origin?` — origen ${c.origin}`:''}${c.totalFine!==undefined?` — valor reportado $${Number(c.totalFine).toLocaleString('es-CO')}`:''}`).join('\n');
+   const rows=comparendos.map((c,i)=>`${i+1}. Comparendo ${c.number || 'sin número'}${c.infraction?` — infracción ${c.infraction}`:''}${c.violationDate?` — fecha de infracción ${fmt(c.violationDate)}`:''}${c.coactiveDate?` — fecha de cobro coactivo ${fmt(c.coactiveDate)}`:''}${c.paymentOrderNoticeDate?` — notificación del mandamiento ${fmt(c.paymentOrderNoticeDate)}`:''}${c.origin?` — origen ${c.origin}`:''}${c.totalFine!==undefined?` — valor reportado $${Number(c.totalFine).toLocaleString('es-CO')}`:''}`).join('\n');
    const analyses=result.analyses.map((analysis:any,i:number)=>`• Comparendo ${i+1}: ${analysis.summary || analysis.reason || 'Revisión del término y del expediente requerida.'}`).join('\n');
    const warning=result.issues.filter((i:any)=>i.severity==='warning').map((i:any)=>`• ${i.message}`).join('\n');
    const petitioner=`${v(a,'fullName')}, identificado(a) con ${v(a,'documentType','CC')} No. ${v(a,'documentNumber')}`;
    return [
-     v(a,'authorityMunicipality','Ciudad'),
-     new Date().toLocaleDateString('es-CO'),
-     '',
-     v(a,'authorityName','AUTORIDAD DE TRÁNSITO'),
-     v(a,'authorityMunicipality',''),
-     v(a,'authorityDepartment',''),
-     '',
-     title,
-     '',
-     petitioner,
-     '',
+     v(a,'authorityMunicipality','Ciudad'), new Date().toLocaleDateString('es-CO'), '',
+     v(a,'authorityName',`AUTORIDAD DE TRÁNSITO COMPETENTE DE ${v(a,'authorityMunicipality','')}`),
+     v(a,'authorityMunicipality',''), v(a,'authorityDepartment',''), '', title, '', petitioner, '',
      'I. OBJETO',
-     `Por medio del presente escrito solicito la revisión y, si se encuentran acreditados los presupuestos legales, la declaratoria de prescripción de las obligaciones de tránsito relacionadas en este documento, así como el archivo de las actuaciones de cobro y la actualización de los registros que legalmente corresponda.`,
-     '',
-     'II. INFORMACIÓN DE LAS OBLIGACIONES',
-     rows,
-     '',
+     'Por medio del presente escrito solicito la revisión y, si se encuentran acreditados los presupuestos legales, la declaratoria de prescripción de las obligaciones de tránsito relacionadas, así como el archivo de las actuaciones de cobro y la actualización de los registros que legalmente corresponda.', '',
+     'II. INFORMACIÓN DE LAS OBLIGACIONES', rows, '',
      'III. HECHOS Y ANTECEDENTES',
-     `El solicitante registra las obligaciones de tránsito anteriormente relacionadas y solicita que la autoridad contraste la información suministrada con los expedientes administrativos correspondientes. La solicitud se formula a partir del transcurso del tiempo y de la necesidad de verificar integralmente las actuaciones de cobro, sus notificaciones y cualquier actuación que pueda incidir en el término aplicable.`,
-     '',
+     'El solicitante registra las obligaciones de tránsito anteriormente relacionadas y solicita que la autoridad contraste la información suministrada con los expedientes administrativos correspondientes. La solicitud se formula a partir del transcurso del tiempo y de la necesidad de verificar integralmente las actuaciones de cobro, sus notificaciones y cualquier actuación que pueda incidir en el término aplicable.', '',
      'IV. FUNDAMENTO Y VERIFICACIÓN',
-     `TrámiteYa realizó una verificación preliminar con base exclusivamente en los datos suministrados. El resultado de preparación del trámite es ${result.score}%. Esta valoración no sustituye el examen del expediente administrativo ni constituye por sí misma una declaración de prescripción.`,
+     `TrámiteYa realizó una verificación preliminar con base exclusivamente en los datos disponibles. El resultado de preparación del trámite es ${result.score}%. Esta valoración no sustituye el examen del expediente administrativo ni constituye por sí misma una declaración de prescripción.`,
      analyses || '• Se requiere revisión individual del expediente de cada obligación.',
-     warning ? `\nAdvertencias de verificación:\n${warning}` : '',
-     '',
+     warning ? `\nAdvertencias de verificación:\n${warning}` : '', '',
      'V. PETICIONES',
      'PRIMERO. Que se verifique, respecto de cada obligación relacionada, la configuración de la prescripción de la acción de cobro conforme al régimen jurídico aplicable y las actuaciones efectivamente surtidas dentro de cada expediente.',
      'SEGUNDO. Que, de encontrarse configurada la prescripción, se declare la misma y se ordene el archivo definitivo de las actuaciones de cobro correspondientes.',
      'TERCERO. Que se actualicen o depuren los registros administrativos y sistemas de información que correspondan, conforme a la decisión adoptada.',
      'CUARTO. Que, si alguna obligación se considera vigente, se remita copia íntegra y legible del expediente, incluyendo título ejecutivo, mandamiento de pago, constancias de notificación, actuaciones posteriores, acuerdos de pago y medidas cautelares, si existen.',
-     'QUINTO. Que la respuesta sea de fondo, clara, congruente y completa respecto de cada obligación individualmente considerada.',
-     '',
-     'VI. NOTIFICACIONES',
-     `El solicitante recibirá respuesta en el correo electrónico ${v(a,'email')}.`,
-     '',
-     'Atentamente',
-     '',
-     v(a,'fullName'),
-     `${v(a,'documentType','CC')} No. ${v(a,'documentNumber')}`,
-     `Correo: ${v(a,'email')}`,
+     'QUINTO. Que la respuesta sea de fondo, clara, congruente y completa respecto de cada obligación individualmente considerada.', '',
+     'VI. NOTIFICACIONES', `El solicitante recibirá respuesta en el correo electrónico ${v(a,'email')}.`, '',
+     'Atentamente', '', v(a,'fullName'), `${v(a,'documentType','CC')} No. ${v(a,'documentNumber')}`, `Correo: ${v(a,'email')}`,
    ].join('\n');
  }
 
