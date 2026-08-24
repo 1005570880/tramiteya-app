@@ -24,7 +24,8 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
         setInstance(data);
         const latest = data.document;
         if (latest?.id) {
-          const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&documentVersionId=${encodeURIComponent(latest.id)}`, { cache: "no-store" });
+          const procedureId = data.procedureId || data.procedureSlug || params.slug;
+          const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&documentVersionId=${encodeURIComponent(latest.id)}`, { cache: "no-store" });
           if (paymentResponse.ok) setPaid(Boolean((await paymentResponse.json()).approved));
         }
         return;
@@ -33,8 +34,9 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
       const local = procedureStorage.get(params.id);
       setInstance(local);
       const latest = local?.document;
-      if (latest?.id) {
-        const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(local.procedureId || local.procedureSlug || params.slug)}&documentVersionId=${encodeURIComponent(latest.id)}`, { cache: "no-store" });
+      if (latest?.id && local) {
+        const procedureId = local.procedureId || local.procedureSlug || params.slug;
+        const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&documentVersionId=${encodeURIComponent(latest.id)}`, { cache: "no-store" });
         if (paymentResponse.ok) setPaid(Boolean((await paymentResponse.json()).approved));
       }
     } finally { setLoading(false); }
