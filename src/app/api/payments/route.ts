@@ -9,10 +9,12 @@ export async function GET(request: Request) {
     if (!procedureKey || !documentVersionId) return NextResponse.json({ error: 'procedureId y documentVersionId son requeridos.' }, { status: 400 });
 
     const supabase = getSupabaseServer();
-    const { data: procedure } = await supabase.from('procedures').select('id').eq('slug', procedureKey).limit(1).maybeSingle();
+    const proceduresTable = supabase.from('procedures') as any;
+    const { data: procedure } = await proceduresTable.select('id').eq('slug', procedureKey).limit(1).maybeSingle();
     const procedureId = procedure?.id || procedureKey;
 
-    const { data, error } = await supabase.from('payments')
+    const paymentsTable = supabase.from('payments') as any;
+    const { data, error } = await paymentsTable
       .select('id,status,amount,currency,procedure_id,document_version_id,provider,created_at,approved_at')
       .eq('procedure_id', procedureId)
       .eq('document_version_id', documentVersionId)
