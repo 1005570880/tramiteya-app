@@ -11,6 +11,16 @@ const titles: Record<string, string> = {
   'solicitud-soportes-comparendo': 'Solicitud de información y soportes de comparendo',
   fotomultas: 'Solicitud relacionada con fotodetección / fotomulta',
   'reclamacion-laboral': 'Reclamación laboral',
+  'peticion-salud': 'Derecho de petición en salud',
+  'tutela-salud': 'Acción de tutela por salud',
+  'negativa-medicamentos': 'Negativa de medicamentos',
+  'negativa-procedimiento': 'Negativa de procedimiento o servicio',
+  'habeas-data-reporte': 'Hábeas data financiero',
+  'caducidad-datacredito': 'Revisión de permanencia de reporte crediticio',
+  'rectificacion-reporte-crediticio': 'Rectificación de reporte crediticio',
+  'contrato-de-arrendamiento': 'Contrato de arrendamiento comercial',
+  'contrato-prestacion-servicios': 'Contrato de prestación de servicios',
+  'contrato-compraventa': 'Contrato de compraventa',
 };
 
 export function getDynamicFormDefinition(slug: string): FormDefinition | undefined {
@@ -24,7 +34,7 @@ export function getDynamicFormDefinition(slug: string): FormDefinition | undefin
   if (!module) return undefined;
   return {
     procedureSlug: slug,
-    title: module.title,
+    title: titles[slug] ?? module.title,
     steps: module.steps.map((step) => ({
       id: step.id,
       title: step.title,
