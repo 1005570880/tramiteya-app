@@ -14,30 +14,26 @@ export const transitPrescriptionInterview: FormStep[] = [
   },
   {
     id: 'authority',
-    title: '¿A quién le vamos a presentar la solicitud?',
+    title: '¿Dónde fue el comparendo?',
+    description: 'No necesitas saber el nombre jurídico exacto de la Secretaría. TrámiteYa lo resolverá a partir del lugar.',
     fields: [
-      { id: 'authorityName', label: 'Secretaría u organismo de tránsito', type: 'text', required: true, placeholder: 'Ej. Secretaría de Tránsito y Transporte Departamental de Sucre' },
       { id: 'authorityMunicipality', label: 'Municipio', type: 'text', required: true, placeholder: 'Ej. Sampués' },
       { id: 'authorityDepartment', label: 'Departamento', type: 'text', required: true, placeholder: 'Ej. Sucre' },
     ],
   },
   {
     id: 'comparendos',
-    title: 'Cuéntanos qué comparendos tienes',
-    description: 'Puedes agregar uno, dos, tres o todos los que quieras incluir en la misma solicitud. No necesitas redactar nada.',
+    title: 'Tus comparendos',
+    description: 'Solo escribe el número de cada comparendo. No necesitas fechas, valores ni información jurídica.',
     fields: [
       { id: 'comparendos', label: 'Comparendos', type: 'textarea', required: true, placeholder: 'Los datos se cargarán mediante el formulario dinámico de comparendos.' },
     ],
   },
   {
     id: 'evidence',
-    title: 'Información para revisar el caso',
-    description: 'Estas preguntas evitan que TrámiteYa genere una solicitud sin verificar posibles interrupciones del término.',
-    fields: [
-      { id: 'hasPaymentOrderNotice', label: '¿Conoces la fecha en que te notificaron el mandamiento de pago?', type: 'radio', required: true, options: [{ label: 'Sí', value: 'yes' }, { label: 'No', value: 'no' }] },
-      { id: 'hasSubsequentActions', label: '¿Después del mandamiento de pago hubo alguna actuación de cobro, acuerdo de pago o medida cautelar que conozcas?', type: 'radio', required: true, options: [{ label: 'Sí', value: 'yes' }, { label: 'No', value: 'no' }, { label: 'No lo sé', value: 'unknown' }] },
-      { id: 'notes', label: '¿Hay algo importante que quieras contarnos?', type: 'textarea', required: false, placeholder: 'Opcional. Escríbelo con tus propias palabras; TrámiteYa se encarga de organizarlo jurídicamente.' },
-    ],
+    title: 'Revisión automática',
+    description: 'TrámiteYa verificará los datos que normalmente requieren consultar el expediente. No tienes que adivinarlos.',
+    fields: [],
   },
 ];
 
@@ -46,19 +42,19 @@ export type TransitPrescriptionAnswers = {
   documentType: string;
   documentNumber: string;
   email: string;
-  authorityName: string;
+  authorityName?: string;
   authorityMunicipality: string;
   authorityDepartment: string;
   comparendos: Array<{
     number: string;
     violationDate?: string;
-    coactiveDate: string;
+    coactiveDate?: string;
     origin?: string;
     infraction?: string;
     totalFine?: number;
     paymentOrderNoticeDate?: string;
   }>;
-  hasPaymentOrderNotice?: 'yes' | 'no';
+  hasPaymentOrderNotice?: 'yes' | 'no' | 'unknown';
   hasSubsequentActions?: 'yes' | 'no' | 'unknown';
   notes?: string;
 };
