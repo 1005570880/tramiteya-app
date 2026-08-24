@@ -34,8 +34,11 @@ export const supabaseDocumentRepo: DocumentRepository = {
       if (UUID_RE.test(document.procedureId)) {
         procedureId = document.procedureId;
       } else {
-        const { data: procedure } = await supabase
-          .from('procedures')
+        // The generated Supabase database typings currently infer an empty/never
+        // row shape for this table. Keep the lookup runtime-safe while preserving
+        // the application's domain type at the repository boundary.
+        const proceduresTable = supabase.from('procedures') as any;
+        const { data: procedure } = await proceduresTable
           .select('id')
           .eq('slug', document.procedureId)
           .limit(1)
