@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { lookupSimitByDocumentStrict } from "@/lib/simitVerifikStrict";
 
 // Deployment trigger: strict SIMIT identity validation must run in the deployed build.
+// The provider response is fail-closed when identity cannot be independently verified.
 export async function POST(req: NextRequest) {
   let body: { documentType?: string; documentNumber?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, code: "INVALID_RESPONSE", message: "Cuerpo de solicitud inválido." }, { status: 400 }); }
@@ -15,7 +16,9 @@ export async function POST(req: NextRequest) {
     console.log("[SIMIT AUDIT] normalized", JSON.stringify({ documentType, documentNumber, provider: result.provider, found: result.found, pendingCount: result.pendingCount, recordCount: result.comparendos?.length ?? 0, status: result.status }));
     return NextResponse.json({ ok: true, code: result.status ?? (result.found ? "SUCCESS" : "NO_RESULTS"), ...safeResult });
   } catch (err) {
-    console.error("[SIMIT AUDIT] provider_error", JSON.stringify({ documentType, documentNumber, message: err instanceof Error ? err.message : String(err) }));
-    return NextResponse.json({ ok: false, code: "PROVIDER_ERROR", message: err instanceof Error ? err.message : "Error inesperado consultando SIMIT." }, { status: 502 });
+    const message = err instanceof Error ? err.message : "Error inesperado consultando SIMIT.";
+    const code = message.startsWith("SIMIT_DATA_INTEGRITY_ERROR") ? "SIMIT_DATA_INTEGRITY_ERROR" : "PROVIDER_ERROR";
+    console.error("[SIMIT AUDIT] provider_error", JSON.stringify({ documentType, documentNumber, code, message }));
+    return NextResponse.json({ ok: false, code, message }, { status: 502 });
   }
 }
