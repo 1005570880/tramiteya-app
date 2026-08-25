@@ -5,80 +5,77 @@ import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
-import { analyzeLegalBasis } from './normativeEngine';
+import { runLegalAiEngine } from './legalAiEngine';
 
-function generateId() {
-  // Supabase public.documents.id is a UUID. Keep generated document identifiers
-  // compatible with that schema so guest generation can be persisted safely.
-  return crypto.randomUUID();
-}
+function generateId() { return crypto.randomUUID(); }
 
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
+
+function inferVertical(procedure: Procedure) {
+  const value = `${procedure.slug} ${procedure.category} ${procedure.title}`.toLowerCase();
+  if (/salud|medic|eps|tutela/.test(value)) return 'salud';
+  if (/habeas|datacredito|transunion|credit|reporte/.test(value)) return 'habeas-data';
+  if (/contrato|arrendamiento|laboral|prestaci[oó]n|compraventa/.test(value)) return 'contratos';
+  if (/transito|tr[aá]nsito|comparendo|multa|fotomulta|embargo/.test(value)) return 'transito';
+  if (/petici[oó]n/.test(value)) return 'derecho-de-peticion';
+  if (/tutela/.test(value)) return 'tutela';
+  return procedure.category || 'general';
+}
 
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
 }
 
-function appendLegalBasis(content: string, procedure: Procedure, answers: FormAnswers): string {
-  const analysis = analyzeLegalBasis(procedure.slug, answers);
-  if (!analysis.norms.length) return content;
-
-  const normativeLines = analysis.norms.flatMap((norm) => [
-    `${norm.title}${norm.article ? ` — ${norm.article}` : ''}`,
-    norm.description,
-    `Fuente: ${norm.authority} — ${norm.sourceUrl}`,
-    '',
-  ]);
-
-  return [
-    content,
-    '',
-    'FUNDAMENTO NORMATIVO DE REFERENCIA',
-    ...normativeLines,
-    'CRITERIO DE SELECCIÓN',
-    ...analysis.rationale,
-    '',
-    'ADVERTENCIA DE REVISIÓN',
-    ...analysis.alerts,
-  ].join('\n');
+function cleanInternalMetadata(content: string) {
+  return content
+    .replace(/\n?CRITERIO DE SELECCIÓN[\s\S]*$/i, '')
+    .replace(/\n?ADVERTENCIA DE REVISIÓN[\s\S]*$/i, '')
+    .replace(/\n?FUNDAMENTO NORMATIVO DE REFERENCIA\s*$/i, '')
+    .replace(/\n?Fuente:\s*https?:\/\/\S+/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
-function buildFinalContent(procedure: Procedure, answers: FormAnswers): string {
-  return appendLegalBasis(documentContent(procedure, answers), procedure, answers);
+async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
+  const baseContent = documentContent(procedure, answers);
+  const ai = await runLegalAiEngine({
+    vertical: inferVertical(procedure),
+    procedure: procedure.slug,
+    facts: answers as unknown as Record<string, unknown>,
+    documentType: procedure.title,
+    draftingInstructions: [
+      'Redacta el documento final como un abogado colombiano: hechos, procedencia cuando corresponda, fundamentos constitucionales y legales, jurisprudencia pertinente, aplicación al caso, pretensiones o solicitudes, pruebas/anexos, notificaciones y cierre.',
+      'Relaciona cada regla jurídica con los hechos concretos. No agregues hechos que el usuario no suministró.',
+      'Usa únicamente las normas y providencias que estén en la biblioteca jurídica versionada recibida por el motor.',
+      'No incluyas URLs, fuentes, metadatos, criterios de selección, advertencias del sistema ni texto sobre la IA dentro del documento.',
+      `DOCUMENTO BASE:\n${baseContent.slice(0, 18000)}`,
+    ].join('\n\n'),
+  });
+
+  if (ai.verified && ai.draft.trim().length > 100) return cleanInternalMetadata(ai.draft);
+  return cleanInternalMetadata(baseContent);
 }
 
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
-  const content = buildFinalContent(procedure, answers);
-  return {
-    id: generateId(),
-    title: `${procedure.title} - Documento generado`,
-    procedureId: procedure.id,
-    content,
-    createdAt: generatedAt,
-    generatedAt,
-    version,
-    status: 'ready',
-    instanceId,
-    sourceVersion: `v${version}`,
-    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content },
-  };
+  const content = await buildFinalContent(procedure, answers);
+  return { id: generateId(), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content } };
 }
 
 export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
-  return renderDocx(buildFinalContent(procedure, answers));
+  return renderDocx(await buildFinalContent(procedure, answers));
 }
 
 export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> {
-  return renderPdf(buildFinalContent(procedure, answers));
+  return renderPdf(await buildFinalContent(procedure, answers));
 }
 
-export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
-export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
+export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(cleanInternalMetadata(content)); }
+export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(cleanInternalMetadata(content)); }
 
 function isHeading(line: string) {
-  return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|FUNDAMENTO NORMATIVO DE REFERENCIA|CRITERIO DE SELECCIÓN|ADVERTENCIA DE REVISIÓN|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.)/.test(line);
+  return /^(HECHOS|PETICIÓN|PRETENSIONES|FUNDAMENTOS DE DERECHO|FUNDAMENTOS JURÍDICOS|DERECHOS FUNDAMENTALES|PRUEBAS|ANEXOS|NOTIFICACIONES|JURAMENTO|MEDIDA PROVISIONAL|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.)/.test(line);
 }
 
 function renderDocx(content: string): Uint8Array | Promise<Uint8Array> {
