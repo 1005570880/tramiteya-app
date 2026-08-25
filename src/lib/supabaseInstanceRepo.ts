@@ -22,7 +22,8 @@ export const supabaseInstanceRepo: InstanceRepository = {
       created_at: now,
       updated_at: now,
     };
-    const { error } = await supabase.from('procedure_instances').insert(payload);
+    const instancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await instancesTable.insert(payload);
     if (error) throw error;
     const inst: ProcedureInstance = {
       id,
@@ -42,7 +43,7 @@ export const supabaseInstanceRepo: InstanceRepository = {
     const { data, error } = await supabase.from('procedure_instances').select('*').eq('id', id).limit(1).single();
     if (error) return null;
     const row: any = data;
-    const inst: ProcedureInstance = {
+    return {
       id: row.id,
       procedureId: row.procedure_id,
       procedureSlug: row.procedure_slug,
@@ -53,8 +54,7 @@ export const supabaseInstanceRepo: InstanceRepository = {
       completedAt: row.completed_at || undefined,
       userId: row.user_id || undefined,
       document: row.document || undefined,
-    };
-    return inst;
+    } as ProcedureInstance;
   },
 
   async list() {
@@ -77,21 +77,21 @@ export const supabaseInstanceRepo: InstanceRepository = {
 
   async update(id: string, patch) {
     const supabase = getSupabaseServer();
-    // prevent updating protected fields
-    const safePatch = { ...patch };
-    delete (safePatch as any).userId;
-    delete (safePatch as any).createdAt;
-    delete (safePatch as any).id;
+    const safePatch: Record<string, unknown> = { ...(patch as Record<string, unknown>) };
+    delete safePatch.userId;
+    delete safePatch.createdAt;
+    delete safePatch.id;
     safePatch.updated_at = new Date().toISOString();
-    const { error } = await supabase.from('procedure_instances').update(safePatch).eq('id', id);
+    const instancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await instancesTable.update(safePatch).eq('id', id);
     if (error) return null;
-    const inst = await this.get(id);
-    return inst;
+    return this.get(id);
   },
 
   async remove(id: string) {
     const supabase = getSupabaseServer();
-    const { error } = await supabase.from('procedure_instances').delete().eq('id', id);
+    const instancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await instancesTable.delete().eq('id', id);
     if (error) return false;
     return true;
   },

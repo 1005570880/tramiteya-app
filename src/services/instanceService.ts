@@ -1,4 +1,4 @@
-import { getRepositoryFactory } from '../../lib/repositoryFactory';
+import { getRepositoryFactory } from '../lib/repositoryFactory';
 
 const factory = getRepositoryFactory();
 

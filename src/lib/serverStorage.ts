@@ -21,7 +21,7 @@ export function readInstances() {
   }
 }
 
-export function writeInstances(data) {
+export function writeInstances(data: unknown) {
   ensureDir();
   fs.writeFileSync(INSTANCES_FILE, JSON.stringify(data, null, 2));
 }

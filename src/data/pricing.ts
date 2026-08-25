@@ -3,10 +3,11 @@ export type ProcedurePricing = {
   currency: 'COP';
 };
 
+export const DEFAULT_PROCEDURE_PRICING: ProcedurePricing = { price: 49900, currency: 'COP' };
+
 /**
  * Precio vigente de venta por trámite.
- * No existe precio de lanzamiento ni descuento implícito.
- * El checkout debe consultar este catálogo en servidor y nunca confiar
+ * El checkout consulta este catálogo en servidor y nunca confía
  * en un monto enviado por el navegador.
  */
 export const PRICING_CATALOG: Record<string, ProcedurePricing> = {
@@ -19,8 +20,6 @@ export const PRICING_CATALOG: Record<string, ProcedurePricing> = {
   'tutela-derecho-peticion': { price: 89900, currency: 'COP' },
   'tutela-salud-vital-proceso': { price: 99900, currency: 'COP' },
   'contrato-arrendamiento-comercial': { price: 129900, currency: 'COP' },
-
-  // IDs técnicos actualmente utilizados por el catálogo jurídico.
   'derecho-peticion': { price: 49900, currency: 'COP' },
   'derecho-eliminar-multa': { price: 79900, currency: 'COP' },
   'derecho-eliminar-comparendo': { price: 79900, currency: 'COP' },
@@ -36,6 +35,6 @@ export const PRICING_CATALOG: Record<string, ProcedurePricing> = {
   'poder-especial': { price: 49900, currency: 'COP' },
 };
 
-export function getProcedurePrice(procedureId: string): ProcedurePricing | null {
-  return PRICING_CATALOG[procedureId] ?? null;
+export function getProcedurePrice(procedureId: string): ProcedurePricing {
+  return PRICING_CATALOG[procedureId] ?? DEFAULT_PROCEDURE_PRICING;
 }

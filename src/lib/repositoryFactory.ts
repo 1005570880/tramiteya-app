@@ -1,23 +1,34 @@
+import type { DocumentRepository, InstanceRepository, ProcedureRepository } from './repository';
+import { procedures } from '../data/procedures';
+import { supabaseDocumentRepo } from './supabaseDocumentRepo';
 import { supabaseInstanceRepo } from './supabaseInstanceRepo';
 import { supabaseProcedureRepo } from './supabaseProcedureRepo';
-import { supabaseDocumentRepo } from './supabaseDocumentRepo';
 import { serverInstanceRepo } from './serverInstanceRepo';
-import { procedures } from '../data/procedures';
 
-export function getRepositoryFactory() {
-  const useSupabase = !!process.env.SUPABASE_SERVICE_ROLE_KEY && !!process.env.NEXT_PUBLIC_SUPABASE_URL;
+export interface RepositoryFactory {
+  getInstanceRepo(): InstanceRepository;
+  getProcedureRepo(): ProcedureRepository;
+  getDocumentRepo(): DocumentRepository | null;
+}
+
+export function getRepositoryFactory(): RepositoryFactory {
+  const useSupabase = Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL,
+  );
+
   return {
-    getInstanceRepo() {
+    getInstanceRepo(): InstanceRepository {
       return useSupabase ? supabaseInstanceRepo : serverInstanceRepo;
     },
-    getProcedureRepo() {
-      return useSupabase ? supabaseProcedureRepo : {
+    getProcedureRepo(): ProcedureRepository {
+      if (useSupabase) return supabaseProcedureRepo;
+      return {
         listProcedures: async () => procedures,
         getProcedureBySlug: async (slug: string) => procedures.find((p) => p.slug === slug) || null,
       };
     },
-    getDocumentRepo() {
+    getDocumentRepo(): DocumentRepository | null {
       return useSupabase ? supabaseDocumentRepo : null;
-    }
+    },
   };
 }
