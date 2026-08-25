@@ -38,6 +38,7 @@ function cleanInternalMetadata(content: string) {
 
 async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
   const baseContent = documentContent(procedure, answers);
+  const hasSimitData = Boolean((answers as any).__simitData?.source === 'SIMIT');
   const ai = await runLegalAiEngine({
     vertical: inferVertical(procedure),
     procedure: procedure.slug,
@@ -48,6 +49,10 @@ async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Pr
       'Relaciona cada regla jurídica con los hechos concretos. No agregues hechos que el usuario no suministró.',
       'Usa únicamente las normas y providencias que estén en la biblioteca jurídica versionada recibida por el motor.',
       'No incluyas URLs, fuentes, metadatos, criterios de selección, advertencias del sistema ni texto sobre la IA dentro del documento.',
+      hasSimitData
+        ? 'DATOS SIMIT: existe información estructurada obtenida mediante la integración de consulta SIMIT. Trátala como información externa verificable del sistema, no como una declaración del usuario. Úsala para reconstruir cronologías y hechos objetivos (número de comparendo, fecha, organismo, infracción, estado, resolución y valores) únicamente cuando el dato exista. Si existe contradicción entre SIMIT y lo manifestado por el usuario, no la resuelvas inventando: formula la discrepancia de manera prudente y solicita/propone verificar el soporte oficial.'
+        : 'No existe información SIMIT disponible. No inventes datos de comparendos ni cronologías.',
+      'Si SIMIT aporta una fecha o estado, no la conviertas automáticamente en una conclusión jurídica. La consecuencia jurídica debe derivarse de la biblioteca normativa y jurisprudencial vigente y de los hechos acreditados.',
       `DOCUMENTO BASE:\n${baseContent.slice(0, 18000)}`,
     ].join('\n\n'),
   });
