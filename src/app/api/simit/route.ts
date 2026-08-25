@@ -27,7 +27,10 @@ function normalizeVerifikRecords(raw: any, kind: 'multa' | 'comparendo') {
 }
 function mergeRecords(primary: any[], secondary: any[]) {
   const seen = new Set<string>();
-  return [...primary, ...secondary].filter((item) => { const key = `${item.kind}|${item.number || `${item.date}|${item.plate}|${item.infractionCode}|${item.value}`}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  return [...primary, ...secondary].filter((item) => {
+    const key = item.number?.trim() || item.resolutionNumber?.trim() || `${item.date}|${item.plate}|${item.infractionCode}|${item.value}`;
+    if (seen.has(key)) return false; seen.add(key); return true;
+  });
 }
 
 export async function POST(request: Request) {
