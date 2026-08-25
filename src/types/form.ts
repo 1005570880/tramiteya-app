@@ -19,6 +19,13 @@ export type FormField = {
   condition?: { questionId: string; operator: "equals" | "notEquals" | "contains"; value: string };
 };
 
+export type FormStep = {
+  id: string;
+  title: string;
+  description?: string;
+  fields: FormField[];
+};
+
 /**
  * Form answers may also contain structured internal enrichment data (for
  * example the normalized SIMIT result). Keeping that metadata in the same
