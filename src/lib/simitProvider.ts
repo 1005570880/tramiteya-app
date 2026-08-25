@@ -39,10 +39,21 @@ function requiredEnv(name: string) {
   return value;
 }
 
+// Verifik documents both VERIFIK_API_TOKEN and VERIFIK_TOKEN in different
+// examples/accounts. Accept both so a correctly configured production token
+// cannot silently fall back to the manual SIMIT mode.
+function getVerifikToken() {
+  return process.env.VERIFIK_API_TOKEN?.trim() || process.env.VERIFIK_TOKEN?.trim() || '';
+}
+
 export async function lookupSimitByDocument(documentType: string, documentNumber: string): Promise<SimitLookupResult> {
   const normalizedNumber = documentNumber.replace(/[^0-9A-Za-z]/g, '');
   if (!normalizedNumber) throw new Error('El número de documento es obligatorio.');
-  const provider = (process.env.SIMIT_PROVIDER || '').toLowerCase();
+  const configuredProvider = (process.env.SIMIT_PROVIDER || '').toLowerCase().trim();
+  const verifikToken = getVerifikToken();
+  const provider = verifikToken && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual')
+    ? 'verifik'
+    : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
 
   if (!provider) {
@@ -50,7 +61,7 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   }
 
   if (provider === 'verifik') {
-    const token = requiredEnv('VERIFIK_API_TOKEN');
+    const token = verifikToken || requiredEnv('VERIFIK_API_TOKEN');
     const headers = { Accept: 'application/json', Authorization: `Bearer ${token}` };
     const query = `documentType=${encodeURIComponent(documentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
 
@@ -160,10 +171,10 @@ function normalizeProviderResult(provider: Exclude<SimitLookupResult['provider']
       kind,
       number: String(firstDefined(item?.numeroComparendo, item?.NúmeroComparendo, item?.comparendoId, item?.numero, item?.number, item?.comparendo, item?.numeroMulta, item?.notificacion) ?? '').trim() || undefined,
       date: String(firstDefined(item?.fechaComparendo, item?.fecha, item?.date) ?? '').trim() || undefined,
-      authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
+      authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
       department: String(firstDefined(item?.departamento, item?.department) ?? '').trim() || undefined,
       plate: String(firstDefined(item?.placa, item?.Placa, item?.placavehiculo, item?.vehiclePlate, item?.vehiculo?.placa) ?? '').trim() || undefined,
-      ownerName: String(firstDefined(item?.nombrePropietario, item?.propietario, item?.titular, item?.nombreCompleto, item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '', personName) ?? '').trim() || undefined,
+      ownerName: String(firstDefined(item?.nombrePropietario, item?.propietario, item?.titular, item?.nombreCompleto, item?.infractorComparendo, item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '', personName) ?? '').trim() || undefined,
       infractionCode: String(firstDefined(item?.codigoInfraccion, item?.codigo, item?.infraccion, firstInfraction?.codigoInfraccion) ?? '').trim() || undefined,
       description: String(firstDefined(item?.descripcionInfraccion, item?.descripcion, firstInfraction?.descripcionInfraccion) ?? '').trim() || undefined,
       status: String(firstDefined(item?.estadoComparendo, item?.estado, item?.status) ?? '').trim() || undefined,
