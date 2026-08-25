@@ -22,7 +22,8 @@ export const supabaseInstanceRepo: InstanceRepository = {
       created_at: now,
       updated_at: now,
     };
-    const { error } = await supabase.from('procedure_instances').insert(payload);
+    const procedureInstancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await procedureInstancesTable.insert(payload);
     if (error) throw error;
     const inst: ProcedureInstance = {
       id,
@@ -77,13 +78,13 @@ export const supabaseInstanceRepo: InstanceRepository = {
 
   async update(id: string, patch) {
     const supabase = getSupabaseServer();
-    // prevent updating protected fields
     const safePatch = { ...patch };
     delete (safePatch as any).userId;
     delete (safePatch as any).createdAt;
     delete (safePatch as any).id;
     safePatch.updated_at = new Date().toISOString();
-    const { error } = await supabase.from('procedure_instances').update(safePatch).eq('id', id);
+    const procedureInstancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await procedureInstancesTable.update(safePatch).eq('id', id);
     if (error) return null;
     const inst = await this.get(id);
     return inst;
@@ -91,7 +92,8 @@ export const supabaseInstanceRepo: InstanceRepository = {
 
   async remove(id: string) {
     const supabase = getSupabaseServer();
-    const { error } = await supabase.from('procedure_instances').delete().eq('id', id);
+    const procedureInstancesTable = supabase.from('procedure_instances') as any;
+    const { error } = await procedureInstancesTable.delete().eq('id', id);
     if (error) return false;
     return true;
   },
