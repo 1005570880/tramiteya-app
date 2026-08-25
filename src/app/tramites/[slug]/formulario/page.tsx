@@ -98,9 +98,9 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer /></main>;
   }
 
+  const currentProcedure = procedure;
+
   function analyze(a: FormAnswers) {
-    if (!procedure) return [];
-    const currentProcedure = procedure;
     const text = `${params.slug} ${currentProcedure.title} ${currentProcedure.category}`;
     const decisions = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(text) ? evaluateTrafficCase(a) : [];
     setAnalysis(decisions);
@@ -124,7 +124,6 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   }
 
   async function ensureInstance(a: FormAnswers) {
-    const currentProcedure = procedure;
     const supabase = getSupabaseBrowser();
     const saved = localDraftStorage.load(draftKey) as any;
     if (supabase) {
@@ -144,14 +143,14 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   }
 
   async function generate(a: FormAnswers) {
-    const issues = validateProcedureAnswers(procedure, a);
+    const issues = validateProcedureAnswers(currentProcedure, a);
     if (issues.length) { alert(`Faltan ${issues.length} campo(s) obligatorio(s).`); return; }
     setLoading(true);
     try {
       const decisions = analyze(a);
       const instance = await ensureInstance(a);
       const enrichedAnswers = { ...a, __legalDecisionEngine: { version: 1, generatedAt: new Date().toISOString(), decisions } } as unknown as FormAnswers;
-      const r = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: procedure.slug, answers: enrichedAnswers, instanceId: instance.id }) });
+      const r = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: currentProcedure.slug, answers: enrichedAnswers, instanceId: instance.id }) });
       if (!r.ok) throw new Error("Document generation failed");
       const document = await r.json();
       if (getSupabaseBrowser()) {
@@ -161,7 +160,7 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       }
       procedureStorage.update(instance.id, { answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() });
       localDraftStorage.remove(draftKey);
-      router.push(`/tramites/${procedure.slug}/resultado/${instance.id}`);
+      router.push(`/tramites/${currentProcedure.slug}/resultado/${instance.id}`);
     } catch (e) { console.error(e); alert("No fue posible generar el documento. Inténtalo nuevamente."); }
     finally { setLoading(false); }
   }
@@ -179,29 +178,12 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       <Header />
       <section className="max-w-4xl mx-auto px-4 py-12">
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow">
-          <div className="mb-6"><p className="text-sm font-medium text-blue-600">{procedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
+          <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
           <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
-
           {requiresSimitFirst && !selectedSimit ? (
-            <div className="space-y-6">
-              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta inteligente</p><h2 className="text-xl font-bold mt-1">Primero buscamos tus multas y comparendos</h2><p className="text-sm text-slate-600 mt-2">Ingresa la cédula. TrámiteYa consultará SIMIT y te mostrará los registros encontrados para que selecciones exactamente el que quieres revisar.</p></div>
-              <div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div>
-              <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Consultando SIMIT..." : "Consultar SIMIT"}</button>
-              {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
-              {simitChecked && simitRecords.length > 0 && <div className="space-y-3"><div><h2 className="text-lg font-bold">Registros encontrados</h2><p className="text-sm text-slate-500">Selecciona uno para continuar. Los datos se cargarán automáticamente en el formulario.</p></div>{simitRecords.map((record, index) => <button type="button" key={`${record.number || "registro"}-${index}`} onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-2xl border border-slate-200 p-4 hover:border-blue-500 hover:bg-blue-50 transition"><div className="flex items-center justify-between gap-4"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="text-sm font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm"><div><span className="text-slate-400 block">Placa</span>{record.plate || "—"}</div><div><span className="text-slate-400 block">Fecha</span>{record.date || "—"}</div><div><span className="text-slate-400 block">Organismo</span>{record.authority || "—"}</div><div><span className="text-slate-400 block">Estado</span>{record.status || "—"}</div></div></button>)}</div>}
-            </div>
-          ) : !preview ? (
-            <>
-              {requiresSimitFirst && selectedSimit && <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase text-emerald-700">Registro SIMIT seleccionado</p><strong>{selectedSimit.number || "Comparendo"}</strong><p className="text-sm text-slate-600 mt-1">{selectedSimit.plate || "Sin placa"} · {selectedSimit.authority || "Sin organismo"} · {money(selectedSimit.value)}</p></div><button type="button" onClick={() => setSelectedSimit(null)} className="text-sm font-semibold text-emerald-800">Cambiar</button></div></div>}
-              <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} />
-            </>
-          ) : (
-            <div className="space-y-6">
-              <div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div>
-              {analysis.length > 0 && <div className="rounded-xl border border-blue-100 bg-blue-50 p-4"><p className="font-semibold">Análisis preliminar</p><p className="text-sm text-slate-600 mt-1">TrámiteYa identificó {analysis.length} criterio(s) jurídico(s) aplicable(s). El documento se generará con base en la información suministrada.</p></div>}
-              <div className="rounded-xl border p-4 bg-slate-50"><pre className="whitespace-pre-wrap text-sm">{JSON.stringify(preview, null, 2)}</pre></div>
-              <div className="flex justify-between gap-3"><button onClick={() => setPreview(null)} className="px-4 py-2 rounded-md border">Volver a editar</button><button onClick={() => generate(preview)} disabled={loading} className="px-5 py-2 rounded-md bg-blue-600 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div>
-            </div>
+            <div className="space-y-6"><div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta inteligente</p><h2 className="text-xl font-bold mt-1">Primero buscamos tus multas y comparendos</h2><p className="text-sm text-slate-600 mt-2">Ingresa la cédula. TrámiteYa consultará SIMIT y te mostrará los registros encontrados para que selecciones exactamente el que quieres revisar.</p></div><div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div><button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Consultando SIMIT..." : "Consultar SIMIT"}</button>{simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}{simitChecked && simitRecords.length > 0 && <div className="space-y-3"><div><h2 className="text-lg font-bold">Registros encontrados</h2><p className="text-sm text-slate-500">Selecciona uno para continuar. Los datos se cargarán automáticamente en el formulario.</p></div>{simitRecords.map((record, index) => <button type="button" key={`${record.number || "registro"}-${index}`} onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-2xl border border-slate-200 p-4 hover:border-blue-500 hover:bg-blue-50 transition"><div className="flex items-center justify-between gap-4"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="text-sm font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm"><div><span className="text-slate-400 block">Placa</span>{record.plate || "—"}</div><div><span className="text-slate-400 block">Fecha</span>{record.date || "—"}</div><div><span className="text-slate-400 block">Organismo</span>{record.authority || "—"}</div><div><span className="text-slate-400 block">Estado</span>{record.status || "—"}</div></div></button>)}</div>}</div>
+          ) : !preview ? (<><StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /></>) : (
+            <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>
           )}
         </div>
       </section>
