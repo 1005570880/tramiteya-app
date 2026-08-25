@@ -37,8 +37,11 @@ export const supabaseDocumentRepo: DocumentRepository = {
         snapshot: document.snapshot,
       },
     };
-    const { data, error } = await supabase
-      .from('documents')
+
+    // The current Supabase client is intentionally untyped, so the generic
+    // table schema resolves inserts to never[]. Keep this boundary local.
+    const documentsTable = supabase.from('documents') as any;
+    const { data, error } = await documentsTable
       .insert(payload)
       .select('*')
       .single();
