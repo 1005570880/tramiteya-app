@@ -1,127 +1,88 @@
 import React from 'react';
+import Link from 'next/link';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import { procedures } from '../data/procedures';
-import ProcedureCard from '../components/ProcedureCard';
-import Link from 'next/link';
+
+const features = [
+  { n: '01', title: 'Cuéntanos qué necesitas', text: 'Un flujo guiado convierte tu situación en información jurídica útil, sin formularios interminables.' },
+  { n: '02', title: 'TrámiteYa analiza', text: 'El motor identifica la información relevante y adapta el trámite a los datos que suministras.' },
+  { n: '03', title: 'Revisa antes de presentar', text: 'Obtén un documento profesional, editable y listo para revisar antes de descargarlo.' },
+];
 
 export default function Home() {
-  const featured = procedures.filter((p) => p.available).slice(0, 3);
+  const available = procedures.filter((p) => p.available);
+  const traffic = available.find((p) => p.slug.includes('multa') || p.slug.includes('comparendo'));
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+    <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
       <Header />
 
-      <section className="bg-white py-16">
-        <div className="max-w-6xl mx-auto px-4 grid gap-8 grid-cols-1 lg:grid-cols-2 items-center">
-          <div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 leading-tight">TrámiteYa — Automatiza tus trámites jurídicos en minutos</h1>
-            <p className="mt-4 text-slate-600 max-w-xl">Genera solicitudes, derechos de petición y documentos legales con un flujo guiado, claro y adaptado a Colombia. Ahorra tiempo y reduce errores formales.</p>
-
-            <div className="mt-6 flex flex-col sm:flex-row gap-3">
-              <Link href="/tramites" className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md font-semibold">Iniciar mi trámite</Link>
-              <Link href="/tramites" className="inline-block text-blue-600 px-6 py-3 rounded-md border border-blue-100">Ver trámites disponibles</Link>
+      <section className="relative overflow-hidden bg-slate-950 text-white">
+        <div className="absolute -right-32 -top-40 h-[30rem] w-[30rem] rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="absolute -bottom-48 left-1/3 h-[25rem] w-[25rem] rounded-full bg-blue-400/10 blur-3xl" />
+        <div className="relative mx-auto grid max-w-7xl gap-14 px-5 py-20 lg:grid-cols-[1.08fr_.92fr] lg:px-8 lg:py-28">
+          <div className="flex flex-col justify-center">
+            <div className="mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-slate-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Automatización jurídica en Colombia
             </div>
-
-            <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 bg-slate-50 rounded-lg border">
-                <div className="text-sm font-semibold text-slate-700">Tiempo estimado</div>
-                <div className="mt-1 text-lg font-bold">15-30 minutos</div>
-              </div>
-              <div className="p-4 bg-slate-50 rounded-lg border">
-                <div className="text-sm font-semibold text-slate-700">Documentos</div>
-                <div className="mt-1 text-lg font-bold">Plantillas profesionales</div>
-              </div>
-              <div className="p-4 bg-slate-50 rounded-lg border">
-                <div className="text-sm font-semibold text-slate-700">Control</div>
-                <div className="mt-1 text-lg font-bold">Revisión antes de presentar</div>
-              </div>
+            <h1 className="max-w-3xl text-5xl font-black leading-[1.02] tracking-[-0.04em] sm:text-6xl lg:text-7xl">Tu trámite jurídico.<br /><span className="text-indigo-300">Más simple.</span></h1>
+            <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-300 sm:text-xl">TrámiteYa transforma información y situaciones concretas en documentos jurídicos estructurados mediante un flujo inteligente, guiado y pensado para Colombia.</p>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+              <Link href="/tramites" className="rounded-2xl bg-white px-6 py-3.5 text-center text-sm font-extrabold text-slate-950 shadow-xl shadow-black/20 transition hover:-translate-y-0.5">Iniciar un trámite →</Link>
+              <Link href="/tramites" className="rounded-2xl border border-white/15 bg-white/5 px-6 py-3.5 text-center text-sm font-bold text-white transition hover:bg-white/10">Explorar soluciones</Link>
+            </div>
+            <div className="mt-10 flex flex-wrap gap-x-8 gap-y-3 text-sm text-slate-400">
+              <span>✓ Flujo guiado</span><span>✓ Revisión antes de descargar</span><span>✓ Word y PDF</span>
             </div>
           </div>
 
-          <div>
-            <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl p-6 shadow-lg">
-              <h3 className="text-lg font-bold">¿Qué trámite necesitas?</h3>
-              <p className="text-sm text-slate-500 mt-2">Selecciona una categoría y comienza con un formulario guiado.</p>
-
-              <div className="mt-4 grid gap-4">
-                {featured.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between bg-white p-3 rounded-lg border">
-                    <div>
-                      <div className="text-sm font-semibold">{p.title}</div>
-                      <div className="text-xs text-slate-400">{p.category} • {p.estimatedTime}</div>
-                    </div>
-                    <Link href={`/tramites/${p.slug}`} className="px-3 py-2 bg-blue-600 text-white rounded-md">Iniciar</Link>
-                  </div>
-                ))}
+          <div className="relative lg:pt-6">
+            <div className="rounded-[2rem] border border-white/10 bg-white/[0.07] p-3 shadow-2xl shadow-black/30 backdrop-blur">
+              <div className="rounded-[1.5rem] bg-white p-6 text-slate-950 sm:p-7">
+                <div className="flex items-center justify-between">
+                  <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Nuevo trámite</p><h2 className="mt-1 text-xl font-black">¿Qué necesitas resolver?</h2></div>
+                  <div className="rounded-xl bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700">Paso 1 de 5</div>
+                </div>
+                <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full w-1/5 rounded-full bg-indigo-600" /></div>
+                <div className="mt-7 space-y-3">
+                  <Link href="/tramites" className="group flex items-center gap-4 rounded-2xl border border-slate-200 p-4 transition hover:border-indigo-300 hover:bg-indigo-50/50">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-lg">⚖</div>
+                    <div className="min-w-0"><p className="font-bold">Quiero hacer un trámite</p><p className="mt-0.5 text-sm text-slate-500">Encuentra la ruta jurídica adecuada</p></div><span className="ml-auto text-slate-300 transition group-hover:translate-x-1 group-hover:text-indigo-600">→</span>
+                  </Link>
+                  {traffic && <Link href={`/tramites/${traffic.slug}`} className="group flex items-center gap-4 rounded-2xl border border-slate-200 p-4 transition hover:border-indigo-300 hover:bg-indigo-50/50">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-lg">🚗</div>
+                    <div className="min-w-0"><p className="font-bold">Tengo una multa o comparendo</p><p className="mt-0.5 text-sm text-slate-500">Consulta y revisa tu caso de tránsito</p></div><span className="ml-auto text-slate-300 transition group-hover:translate-x-1 group-hover:text-indigo-600">→</span>
+                  </Link>}
+                </div>
+                <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-500">Tus respuestas se utilizan para construir el flujo y el documento correspondiente. Siempre podrás revisar la información antes de finalizar.</div>
               </div>
-
-              <div className="mt-6 text-sm text-slate-500">¿No encuentras tu trámite? Escríbenos y te ayudamos a ubicarlo.</div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="max-w-6xl mx-auto px-4 py-12">
-        <h2 className="text-2xl font-bold">Cómo funciona</h2>
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-6">
-          <div className="p-4 bg-white rounded-lg border">
-            <div className="font-semibold">1. Selecciona</div>
-            <div className="text-sm text-slate-500 mt-2">Elige el trámite que necesitas.</div>
-          </div>
-          <div className="p-4 bg-white rounded-lg border">
-            <div className="font-semibold">2. Completa</div>
-            <div className="text-sm text-slate-500 mt-2">Responde a preguntas claras y simples.</div>
-          </div>
-          <div className="p-4 bg-white rounded-lg border">
-            <div className="font-semibold">3. Revisa y descarga</div>
-            <div className="text-sm text-slate-500 mt-2">Revisa el resultado y, una vez confirmado el pago, descarga tu documento en Word o PDF.</div>
-          </div>
+      <section className="border-b border-slate-200 bg-white">
+        <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x divide-slate-200 px-5 sm:grid-cols-4 lg:px-8">
+          {[['01', 'Flujos inteligentes'], ['02', 'Documentos profesionales'], ['03', 'Revisión antes de descargar'], ['04', 'Diseñado para Colombia']].map(([n, t]) => <div key={n} className="px-4 py-7 first:pl-0 sm:px-7"><p className="text-xs font-black tracking-[0.18em] text-indigo-600">{n}</p><p className="mt-1 text-sm font-bold text-slate-800">{t}</p></div>)}
         </div>
       </section>
 
-      <section className="bg-white py-12">
-        <div className="max-w-6xl mx-auto px-4">
-          <h2 className="text-2xl font-bold">Trámites destacados</h2>
-          <div className="mt-6 grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {featured.map((p) => (
-              <ProcedureCard key={p.id} procedure={p} />
-            ))}
-          </div>
+      <section className="mx-auto max-w-7xl px-5 py-20 lg:px-8 lg:py-24">
+        <div className="max-w-2xl"><p className="text-sm font-black uppercase tracking-[0.16em] text-indigo-600">Así funciona</p><h2 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Menos burocracia.<br />Más claridad.</h2><p className="mt-5 text-lg leading-8 text-slate-500">No necesitas saber cómo redactar el documento. TrámiteYa organiza el proceso para que tú te concentres en aportar la información correcta.</p></div>
+        <div className="mt-12 grid gap-5 md:grid-cols-3">{features.map((f) => <article key={f.n} className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm"><div className="text-sm font-black text-indigo-600">{f.n}</div><h3 className="mt-12 text-xl font-black">{f.title}</h3><p className="mt-3 leading-7 text-slate-500">{f.text}</p></article>)}</div>
+      </section>
+
+      <section className="bg-white py-20 lg:py-24">
+        <div className="mx-auto max-w-7xl px-5 lg:px-8">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="text-sm font-black uppercase tracking-[0.16em] text-indigo-600">Soluciones</p><h2 className="mt-2 text-4xl font-black tracking-tight">Empieza por lo que necesitas.</h2></div><Link href="/tramites" className="text-sm font-bold text-indigo-600 hover:text-indigo-800">Ver todos los trámites →</Link></div>
+          <div className="mt-10 grid gap-5 md:grid-cols-3">{available.slice(0, 3).map((p, i) => <Link key={p.id} href={`/tramites/${p.slug}`} className="group rounded-3xl border border-slate-200 bg-[#f8f9fb] p-7 transition hover:-translate-y-1 hover:border-indigo-200 hover:bg-white hover:shadow-xl"><div className="flex items-center justify-between"><span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 shadow-sm">{p.category}</span><span className="text-slate-300 transition group-hover:text-indigo-600">0{i + 1}</span></div><h3 className="mt-12 text-xl font-black leading-tight">{p.title}</h3><p className="mt-3 text-sm leading-6 text-slate-500">{p.description}</p><div className="mt-7 text-sm font-extrabold text-slate-950 group-hover:text-indigo-600">Iniciar trámite →</div></Link>)}</div>
         </div>
       </section>
 
-      <section className="max-w-6xl mx-auto px-4 py-12">
-        <h2 className="text-2xl font-bold">Preguntas frecuentes</h2>
-        <div className="mt-4 grid gap-4">
-          <details className="bg-white p-4 rounded-lg border">
-            <summary className="font-semibold">¿TrámiteYa garantiza el resultado del trámite?</summary>
-            <div className="mt-2 text-sm text-slate-600">No. TrámiteYa facilita la elaboración del documento a partir de la información suministrada por el usuario. La decisión de la autoridad competente y el resultado del trámite no dependen de la plataforma.</div>
-          </details>
+      <section className="mx-auto max-w-7xl px-5 py-20 lg:px-8"><div className="rounded-[2rem] bg-indigo-600 px-7 py-12 text-white sm:px-12 lg:flex lg:items-center lg:justify-between lg:py-14"><div><p className="text-sm font-bold uppercase tracking-[0.16em] text-indigo-200">TrámiteYa</p><h2 className="mt-3 max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">Empieza tu trámite sin enfrentarte solo a la burocracia.</h2></div><Link href="/tramites" className="mt-7 inline-block rounded-2xl bg-white px-6 py-3.5 text-sm font-extrabold text-indigo-700 lg:mt-0">Iniciar ahora →</Link></div></section>
 
-          <details className="bg-white p-4 rounded-lg border">
-            <summary className="font-semibold">¿Los documentos tienen validez legal automáticamente?</summary>
-            <div className="mt-2 text-sm text-slate-600">La plataforma genera documentos jurídicos en formatos editables y descargables. Su eficacia depende del contenido, la información suministrada, los requisitos aplicables y, cuando corresponda, la firma, radicación o presentación ante la autoridad competente.</div>
-          </details>
-
-          <details className="bg-white p-4 rounded-lg border">
-            <summary className="font-semibold">¿Puedo revisar el documento antes de descargarlo?</summary>
-            <div className="mt-2 text-sm text-slate-600">Sí. Puedes revisar la vista previa, editar tus respuestas y consultar las versiones generadas antes de descargar el documento final.</div>
-          </details>
-
-          <details className="bg-white p-4 rounded-lg border">
-            <summary className="font-semibold">¿TrámiteYa presenta el documento por mí?</summary>
-            <div className="mt-2 text-sm text-slate-600">No en esta versión. La plataforma genera el documento para que el usuario lo revise y lo presente por el canal correspondiente.</div>
-          </details>
-        </div>
-      </section>
-
-      <section className="border-t bg-slate-100 py-6">
-        <div className="max-w-6xl mx-auto px-4 text-xs leading-5 text-slate-500">
-          TrámiteYa es una herramienta tecnológica de automatización documental. La generación de un documento no constituye por sí misma asesoría jurídica personalizada ni garantiza el resultado de un procedimiento administrativo, judicial o extrajudicial. El usuario es responsable de verificar la información suministrada y de cumplir los requisitos y términos aplicables.
-        </div>
-      </section>
-
+      <section className="border-t border-slate-200 bg-[#f7f8fa] py-7"><div className="mx-auto max-w-7xl px-5 text-xs leading-5 text-slate-500 lg:px-8">TrámiteYa es una herramienta tecnológica de automatización documental. La generación de un documento no constituye por sí misma asesoría jurídica personalizada ni garantiza el resultado de un procedimiento. El usuario es responsable de verificar la información suministrada y cumplir los requisitos y términos aplicables.</div></section>
       <Footer />
     </main>
   );
