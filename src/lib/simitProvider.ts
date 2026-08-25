@@ -64,15 +64,69 @@ function isEmptyVerifikPayload(raw:any){const direct=unwrapVerifik(raw);return A
 function hasExplicitSandboxSignal(raw:any){return /sandbox|demo environment|test environment|simulated response|mock data/.test(JSON.stringify(raw??'').toLowerCase());}
 function classifyVerifikHttpError(status:number):SimitProviderErrorCode{if(status===401||status===403)return'AUTH_ERROR';if(status===402||status===429)return'CREDITS_ERROR';if(status>=500)return'PROVIDER_ERROR';return'PROVIDER_ERROR';}
 async function fetchVerifik(url:string,token:string){let response:Response;try{response=await fetch(url,{headers:{Accept:'application/json',Authorization:`Bearer ${token}`},cache:'no-store'});}catch(error){console.error('[SIMIT AUDIT] verifik_network_error',JSON.stringify({url,message:error instanceof Error?error.message:String(error)}));throw new SimitProviderError('NETWORK_ERROR','No fue posible comunicarse con el proveedor SIMIT.');}const bodyText=await response.text().catch(()=> '');let parsedBody:unknown=null;try{parsedBody=bodyText?JSON.parse(bodyText):null;}catch{parsedBody=bodyText||null;}console.log('[SIMIT AUDIT] verifikResponse',JSON.stringify({url,status:response.status,ok:response.ok,headers:Object.fromEntries(['content-type','x-request-id','x-verifik-request-id'].map(name=>[name,response.headers.get(name)]).filter(([,value])=>value)),rawResponse:parsedBody}));if(!response.ok){throw new SimitProviderError(classifyVerifikHttpError(response.status),`Proveedor SIMIT respondió ${response.status}.`);}if(parsedBody===null||typeof parsedBody==='string')throw new SimitProviderError('INVALID_RESPONSE','El proveedor SIMIT devolvió una respuesta que no es JSON válido.');return parsedBody;}
-export async function lookupSimitByDocument(documentType:string,documentNumber:string):Promise<SimitLookupResult>{const normalizedNumber=documentNumber.replace(/[^0-9A-Za-z]/g,'');if(!normalizedNumber)throw new SimitProviderError('INVALID_RESPONSE','El número de documento es obligatorio.');const configuredProvider=(process.env.SIMIT_PROVIDER||'').toLowerCase().trim();const token=getVerifikToken();const provider=token&&(!configuredProvider||configuredProvider==='official-manual'||configuredProvider==='manual')?'verifik':configuredProvider;const officialUrl='https://www.fcm.org.co/simit/';if(!provider)throw new SimitProviderError('CONFIGURATION_ERROR','La consulta automática de SIMIT no está configurada. Falta el proveedor y/o la credencial del servicio SIMIT.');if(provider==='official-manual'||provider==='manual')throw new SimitProviderError('CONFIGURATION_ERROR',`La consulta automática de SIMIT no está habilitada en TrámiteYa. Configura VERIFIK_TOKEN o VERIFIK_API_TOKEN. Consulta oficial: ${officialUrl}`);if(provider==='verifik'){const verifikToken=token||requiredEnv('VERIFIK_API_TOKEN');const effectiveDocumentType=(documentType||'CC').trim().toUpperCase();const query=`documentType=${encodeURIComponent(effectiveDocumentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;const consultarUrl=`https://api.verifik.co/v2/co/simit/consultar?${query}`;const comparendosUrl=`https://api.verifik.co/v2/co/simit/comparendos?${query}`;const [generalRaw,comparendosRaw]=await Promise.all([fetchVerifik(consultarUrl,verifikToken),fetchVerifik(comparendosUrl,verifikToken)]);const general=normalizeRecords('verifik',normalizedNumber,generalRaw,'multa');const tickets=normalizeRecords('verifik',normalizedNumber,comparendosRaw,'comparendo');const bothEmpty=isEmptyVerifikPayload(generalRaw)&&isEmptyVerifikPayload(comparendosRaw);const comparendos=mergeRecords(general.records,tickets.records);const generalData=unwrapVerifik(generalRaw);const ticketData=unwrapVerifik(comparendosRaw);const rawDebt=firstDefined(generalData?.totalMultasPagar,ticketData?.totalMultasPagar);const totalDebt=general.totalDebt??tickets.totalDebt??(rawDebt!==undefined?Number(rawDebt)||undefined:undefined);const providerCount=Math.max(general.pendingCount??0,tickets.pendingCount??0,comparendos.length,Number(firstDefined(generalData?.multas?.length,ticketData?.comparendos?.length)??0));if(bothEmpty&&(hasExplicitSandboxSignal(generalRaw)||hasExplicitSandboxSignal(comparendosRaw)))throw new SimitProviderError('SANDBOX_EMPTY','Verifik respondió vacío en un entorno Sandbox/prueba; no se puede afirmar que el ciudadano no tenga comparendos.');
-    // Regla crítica: jamás mostramos registros si Verifik no entregó ninguna evidencia de identidad.
-    // Esto evita que una respuesta genérica/demo/fija (por ejemplo, registros de otra persona) sea presentada como perteneciente a la cédula consultada.
-    const identityEvidence = Boolean(general.payloadDocument || tickets.payloadDocument || comparendos.some(r=>r.documentNumber));
-    if (comparendos.length > 0 && !identityEvidence) {
-      console.error('[SIMIT AUDIT] identity_unverified', JSON.stringify({ documentType:effectiveDocumentType, documentNumber:normalizedNumber, personName:general.personName??tickets.personName, recordCount:comparendos.length }));
-      throw new SimitDataIntegrityError('Verifik devolvió registros pero no entregó el documento de identidad asociado. TrámiteYa bloqueó esos registros para evitar mostrar comparendos de otra persona.');
+
+async function verifyComparendoWithDetail(documentType:string,documentNumber:string,record:SimitComparendo,token:string) {
+  if (!record.number || !record.organismId) return {valid:false, reason:'missing_detail_parameters'} as const;
+  const query = new URLSearchParams({documentType,documentNumber,numeroComparendo:record.number,idOrganismoTransito:record.organismId});
+  try {
+    const raw = await fetchVerifik(`https://api.verifik.co/v2/co/simit/comparendo?${query.toString()}`,token);
+    const data = unwrapVerifik(raw);
+    const returnedDocument = extractDocument(data);
+    if (returnedDocument && returnedDocument !== normalizeIdentity(documentNumber)) return {valid:false,reason:'detail_document_mismatch'} as const;
+    const returnedNumber = String(firstDefined(data?.numeroComparendo,data?.NúmeroComparendo,record.number) ?? '').trim();
+    const returnedOrganism = String(firstDefined(data?.idOrganismoTransito,record.organismId) ?? '').trim();
+    if (returnedNumber !== record.number || returnedOrganism !== record.organismId) return {valid:false,reason:'detail_record_mismatch'} as const;
+    return {valid:true,data,raw} as const;
+  } catch (error) {
+    console.warn('[SIMIT AUDIT] comparendo_detail_not_verified',JSON.stringify({documentType,documentNumber,number:record.number,organismId:record.organismId,reason:error instanceof Error?error.message:String(error)}));
+    return {valid:false,reason:'detail_not_found'} as const;
+  }
+}
+
+export async function lookupSimitByDocument(documentType:string,documentNumber:string):Promise<SimitLookupResult>{
+  const normalizedNumber=documentNumber.replace(/[^0-9A-Za-z]/g,'');if(!normalizedNumber)throw new SimitProviderError('INVALID_RESPONSE','El número de documento es obligatorio.');
+  const configuredProvider=(process.env.SIMIT_PROVIDER||'').toLowerCase().trim();const token=getVerifikToken();const provider=token&&(!configuredProvider||configuredProvider==='official-manual'||configuredProvider==='manual')?'verifik':configuredProvider;const officialUrl='https://www.fcm.org.co/simit/';
+  if(!provider)throw new SimitProviderError('CONFIGURATION_ERROR','La consulta automática de SIMIT no está configurada. Falta el proveedor y/o la credencial del servicio SIMIT.');
+  if(provider==='official-manual'||provider==='manual')throw new SimitProviderError('CONFIGURATION_ERROR',`La consulta automática de SIMIT no está habilitada en TrámiteYa. Configura VERIFIK_TOKEN o VERIFIK_API_TOKEN. Consulta oficial: ${officialUrl}`);
+  if(provider==='verifik'){
+    const verifikToken=token||requiredEnv('VERIFIK_API_TOKEN');const effectiveDocumentType=(documentType||'CC').trim().toUpperCase();const query=`documentType=${encodeURIComponent(effectiveDocumentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
+    const consultarUrl=`https://api.verifik.co/v2/co/simit/consultar?${query}`;const comparendosUrl=`https://api.verifik.co/v2/co/simit/comparendos?${query}`;
+    const [generalRaw,comparendosRaw]=await Promise.all([fetchVerifik(consultarUrl,verifikToken),fetchVerifik(comparendosUrl,verifikToken)]);
+    const general=normalizeRecords('verifik',normalizedNumber,generalRaw,'multa');const tickets=normalizeRecords('verifik',normalizedNumber,comparendosRaw,'comparendo');
+    const bothEmpty=isEmptyVerifikPayload(generalRaw)&&isEmptyVerifikPayload(comparendosRaw);const generalData=unwrapVerifik(generalRaw);const ticketData=unwrapVerifik(comparendosRaw);
+
+    // Las respuestas de /comparendos pueden no repetir el documento. Verifik dispone de
+    // /comparendo, que recibe documento + número + organismo y sirve como validación fuerte.
+    const validatedTickets:SimitComparendo[]=[];
+    for (const record of tickets.records) {
+      const result=await verifyComparendoWithDetail(effectiveDocumentType,normalizedNumber,record,verifikToken);
+      if(result.valid) {
+        const detail=result.data;
+        validatedTickets.push({...record,
+          documentNumber:extractDocument(detail) ?? normalizedNumber,
+          ownerName:String(firstDefined(detail?.infractorComparendo,record.ownerName)??'').trim()||record.ownerName,
+          plate:String(firstDefined(detail?.placaVehiculo,detail?.placa,record.plate)??'').trim()||record.plate,
+          authority:String(firstDefined(detail?.secretariaComparendo,record.authority)??'').trim()||record.authority,
+          organismId:String(firstDefined(detail?.idOrganismoTransito,record.organismId)??'').trim()||record.organismId,
+        });
+      }
     }
-    const found=comparendos.length>0||providerCount>0||Boolean(generalData?.tiene_deuda)||Boolean(ticketData?.tiene_deuda);return{provider:'verifik',source:'SIMIT',documentType:effectiveDocumentType,documentNumber:normalizedNumber,found,totalDebt,pendingCount:providerCount,personName:general.personName??tickets.personName,comparendos,status:found?'SUCCESS':'NO_RESULTS',raw:{general:generalRaw,comparendos:comparendosRaw}};
+
+    // /consultar sí incluye infractor.numeroDocumento. Solo aceptamos multas cuya identidad
+    // coincida exactamente con la cédula consultada; nunca inferimos identidad por nombre.
+    const validatedGeneral=general.records.filter(record=>!record.documentNumber || record.documentNumber===normalizedNumber);
+    const unverifiableGeneral=general.records.filter(record=>!record.documentNumber);
+    if(unverifiableGeneral.length>0) console.warn('[SIMIT AUDIT] general_identity_missing',JSON.stringify({documentType:effectiveDocumentType,documentNumber:normalizedNumber,count:unverifiableGeneral.length}));
+
+    const comparendos=mergeRecords(validatedGeneral,validatedTickets);
+    const rawDebt=firstDefined(generalData?.totalMultasPagar,ticketData?.totalMultasPagar);const totalDebt=general.totalDebt??tickets.totalDebt??(rawDebt!==undefined?Number(rawDebt)||undefined:undefined);
+    const providerCount=Math.max(validatedGeneral.length,validatedTickets.length,Number(firstDefined(generalData?.multas?.length,0)??0),Number(firstDefined(ticketData?.comparendos?.length,0)??0));
+    if(bothEmpty&&(hasExplicitSandboxSignal(generalRaw)||hasExplicitSandboxSignal(comparendosRaw)))throw new SimitProviderError('SANDBOX_EMPTY','Verifik respondió vacío en un entorno Sandbox/prueba; no se puede afirmar que el ciudadano no tenga comparendos.');
+    if(comparendos.length===0 && (general.records.length>0 || tickets.records.length>0)) {
+      throw new SimitDataIntegrityError('Verifik devolvió registros de SIMIT, pero ninguno pudo ser validado inequívocamente para la cédula consultada. TrámiteYa no mostrará datos de terceros.');
+    }
+    const found=comparendos.length>0||providerCount>0||Boolean(generalData?.tiene_deuda)||Boolean(ticketData?.tiene_deuda);
+    return {provider:'verifik',source:'SIMIT',documentType:effectiveDocumentType,documentNumber:normalizedNumber,found,totalDebt,pendingCount:comparendos.length,personName:general.personName??tickets.personName,comparendos,status:found?'SUCCESS':'NO_RESULTS',raw:{general:generalRaw,comparendos:comparendosRaw}};
   }
   throw new SimitProviderError('CONFIGURATION_ERROR',`Proveedor SIMIT no soportado: ${provider}`);
 }
