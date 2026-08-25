@@ -14,6 +14,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'El número de documento es obligatorio.' }, { status: 422 });
     }
 
+    if (!process.env.SIMIT_PROVIDER?.trim() && process.env.VERIFIK_API_TOKEN?.trim()) {
+      process.env.SIMIT_PROVIDER = 'verifik';
+    }
+
     const result = await lookupSimitByDocument(documentType, documentNumber);
     const { raw: _raw, ...safeResult } = result;
     return NextResponse.json(safeResult);
