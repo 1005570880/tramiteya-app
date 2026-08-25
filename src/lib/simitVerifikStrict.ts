@@ -11,8 +11,16 @@ const doc = (x: any): string | undefined => {
     x?.titular?.documentNumber,x?.titular?.numeroDocumento);
   const n = clean(v); return n || undefined;
 };
+const nestedDoc = (x: any): string | undefined => {
+  const v = first(x?.infractor?.documentNumber,x?.infractor?.numeroDocumento,x?.infractor?.documento,x?.infractor?.cedula,
+    x?.persona?.documentNumber,x?.persona?.numeroDocumento,x?.persona?.documento,
+    x?.titular?.documentNumber,x?.titular?.numeroDocumento,x?.titular?.documento,
+    x?.ciudadano?.documentNumber,x?.ciudadano?.numeroDocumento);
+  const n = clean(v); return n || undefined;
+};
 const name = (x: any): string | undefined => {
   const v = first(x?.nombreCompleto,x?.nombre,x?.nombres,x?.fullName,x?.infractorComparendo,x?.infractor?.nombreCompleto,
+    x?.infractor?.nombre && x?.infractor?.apellido ? `${x.infractor.nombre} ${x.infractor.apellido}` : undefined,
     x?.persona?.nombreCompleto,x?.titular?.nombreCompleto);
   return v ? String(v).trim() : undefined;
 };
@@ -63,24 +71,30 @@ export async function lookupSimitByDocumentStrict(documentType:string,documentNu
   const generalName=name(general);
   if(generalDoc && generalDoc!==dn) throw new Error(`SIMIT_DATA_INTEGRITY_ERROR: /consultar identificó ${generalDoc}, no ${dn}.`);
 
-  // Verifik has returned responses where the top-level documentNumber matches the
-  // requested CC but nested infractor.numeroDocumento belongs to another person.
-  // Never accept such data merely because the URL/query echoes the requested CC.
+  // IMPORTANT: the top-level documentNumber can echo the requested CC while a nested
+  // infractor/person belongs to somebody else. Nested identity is authoritative.
   const generalMultas=Array.isArray(general?.multas)?general.multas:[];
   const mismatchedGeneral=generalMultas.find((m:any)=>{
-    const nested=doc(m?.infractor ?? m);
+    const nested=nestedDoc(m);
     return nested && nested!==dn;
   });
   if(mismatchedGeneral){
-    const nested=doc(mismatchedGeneral?.infractor ?? mismatchedGeneral);
-    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor.numeroDocumento',returnedDocument:nested,returnedName:name(mismatchedGeneral?.infractor),message:'Verifik devolvió una multa cuyo infractor.numeroDocumento no coincide con la cédula consultada.'}));
+    const nested=nestedDoc(mismatchedGeneral);
+    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor/persona/titular',returnedDocument:nested,returnedName:name(mismatchedGeneral?.infractor ?? mismatchedGeneral),message:'Verifik devolvió una multa cuyo documento del infractor no coincide con la cédula consultada.'}));
     throw new Error('SIMIT_DATA_INTEGRITY_ERROR: Verifik devolvió registros asociados a otro documento.');
   }
 
   const rawRecords=arrays(list,'comparendos');
   const directRecords=rawRecords.map(x=>item(x,'comparendo'));
   const accepted:SimitComparendo[]=[];
-  for(const r of directRecords){
+  for(let i=0;i<directRecords.length;i++){
+    const r=directRecords[i];
+    const rawRecord=rawRecords[i];
+    const rawNestedDoc=nestedDoc(rawRecord);
+    if(rawNestedDoc && rawNestedDoc!==dn){
+      console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:rawNestedDoc,returnedName:name(rawRecord?.infractor ?? rawRecord),reason:'nested_infractor_document_mismatch'}));
+      continue;
+    }
     if(r.documentNumber){
       if(r.documentNumber===dn && (!generalName || !r.ownerName || cleanName(r.ownerName)===cleanName(generalName))) accepted.push(r);
       else console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:r.documentNumber,returnedName:r.ownerName??null,generalName:generalName??null,reason:'document_or_name_mismatch'}));
@@ -90,14 +104,15 @@ export async function lookupSimitByDocumentStrict(documentType:string,documentNu
     const q=new URLSearchParams({documentType:dt,documentNumber:dn,numeroComparendo:String(r.number),idOrganismoTransito:String(r.organismId)});
     try{
       const detailRaw=await call(`${BASE}/comparendo?${q}`,token,'comparendo-detail');
-      const detail=unwrap(detailRaw); const returnedDoc=doc(detail); const returnedName=name(detail);
+      const detail=unwrap(detailRaw); const returnedDoc=doc(detail); const returnedNestedDoc=nestedDoc(detail); const returnedName=name(detail);
+      if(returnedNestedDoc && returnedNestedDoc!==dn){
+        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedNestedDoc,returnedName:returnedName??null,reason:'detail_nested_infractor_document_mismatch'}));
+        continue;
+      }
       if(!returnedDoc || returnedDoc!==dn){
         console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc??null,returnedName:returnedName??null,reason:returnedDoc?'document_mismatch':'detail_without_document'}));
         continue;
       }
-      // If detail identifies a person by name but /consultar did not provide a
-      // matching person name, do not manufacture identity from the query parameter.
-      // A query echo is not proof of ownership.
       if(returnedName && !generalName){
         console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc,returnedName,reason:'detail_name_without_general_identity'}));
         continue;
