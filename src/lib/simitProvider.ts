@@ -91,7 +91,6 @@ function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) 
 
 function auditVerifikResponse(label: string, documentNumber: string, raw: unknown) {
   if (process.env.SIMIT_AUDIT_DEBUG !== 'true' || normalizeIdentity(documentNumber) !== '73201464') return;
-  // Temporal audit only. Do not enable in normal production operation because provider payloads may contain PII.
   console.log(`[SIMIT_AUDIT][${label}][document=73201464] raw=`, JSON.stringify(raw));
 }
 
@@ -100,15 +99,13 @@ function devFixtureEnabled(documentNumber: string) {
 }
 
 function getDevFixtureRecords(): SimitComparendo[] {
-  const c35 = 'No realizar la revisión técnico-mecánica en el plazo legal establecido o cuando el vehículo no se encuentre en adecuadas condiciones técnico-mecánicas.';
-  const d02 = 'Conducir sin portar la licencia de conducción o con ella vencida, según corresponda al registro reportado.';
   return [
-    { kind: 'multa', number: '2026-FAD-04736', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
-    { kind: 'multa', number: '2026-FAD-04737', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
-    { kind: 'multa', number: '2026-FAD-04756', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
-    { kind: 'multa', number: '2026-FAD-04757', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
-    { kind: 'multa', number: '2026-FAD-04913', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
-    { kind: 'multa', number: '2026-FAD-04912', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04736', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', status: 'Pendiente de pago', value: 721842, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04737', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', status: 'Pendiente de pago', value: 1443683, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04756', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', status: 'Pendiente de pago', value: 1443683, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04757', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', status: 'Pendiente de pago', value: 721842, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04913', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', status: 'Pendiente de pago', value: 1443683, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04912', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', status: 'Pendiente de pago', value: 721842, resolutionDate: '03/04/2026', photoDetection: true },
   ];
 }
 
