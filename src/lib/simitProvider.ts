@@ -1,5 +1,20 @@
 export type SimitRecordKind = 'multa' | 'comparendo';
 
+export type SimitProviderErrorCode =
+  | 'AUTH_ERROR'
+  | 'CREDITS_ERROR'
+  | 'PROVIDER_ERROR'
+  | 'NETWORK_ERROR'
+  | 'INVALID_RESPONSE'
+  | 'SANDBOX_EMPTY';
+
+export class SimitProviderError extends Error {
+  constructor(public readonly code: SimitProviderErrorCode, message: string) {
+    super(message);
+    this.name = 'SimitProviderError';
+  }
+}
+
 export class SimitDataIntegrityError extends Error {
   code = 'SIMIT_DATA_INTEGRITY_ERROR';
 }
@@ -15,6 +30,7 @@ export type SimitLookupResult = {
   provider: 'verifik' | 'placapi' | 'coresoft' | 'official-manual'; source: 'SIMIT'; documentType: string;
   documentNumber: string; found: boolean; verificationRequired?: boolean; officialUrl?: string; totalDebt?: number;
   pendingCount?: number; personName?: string; comparendos: SimitComparendo[]; raw?: unknown;
+  status?: 'SUCCESS' | 'NO_RESULTS' | 'SANDBOX_EMPTY';
 };
 
 function requiredEnv(name: string) { const value = process.env[name]?.trim(); if (!value) throw new Error(`Falta configurar ${name} en las variables de entorno del servidor.`); return value; }
@@ -95,6 +111,11 @@ function isEmptyVerifikPayload(raw: any) {
     Array.isArray(direct?.multas) && direct.multas.length === 0 || Array.isArray(direct?.comparendos) && direct.comparendos.length === 0;
 }
 
+function hasExplicitSandboxSignal(raw: any) {
+  const text = JSON.stringify(raw ?? '').toLowerCase();
+  return /sandbox|demo environment|test environment|simulated response|mock data/.test(text);
+}
+
 function buildTemporarySimitDebugFallback(documentNumber: string): SimitComparendo[] {
   if (normalizeIdentity(documentNumber) !== '73201464') return [];
   const common = {
@@ -118,20 +139,40 @@ function buildTemporarySimitDebugFallback(documentNumber: string): SimitComparen
   ];
 }
 
+function classifyVerifikHttpError(status: number): SimitProviderErrorCode {
+  if (status === 401 || status === 403) return 'AUTH_ERROR';
+  if (status === 402 || status === 429) return 'CREDITS_ERROR';
+  if (status >= 500) return 'PROVIDER_ERROR';
+  return 'PROVIDER_ERROR';
+}
+
 async function fetchVerifik(url: string, token: string) {
-  const response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, cache: 'no-store' });
-  if (!response.ok) { const body = await response.text().catch(() => ''); throw new Error(`Proveedor SIMIT respondió ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`); }
-  return response.json();
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, cache: 'no-store' });
+  } catch {
+    throw new SimitProviderError('NETWORK_ERROR', 'No fue posible comunicarse con el proveedor SIMIT.');
+  }
+  const bodyText = await response.text().catch(() => '');
+  if (!response.ok) {
+    const code = classifyVerifikHttpError(response.status);
+    throw new SimitProviderError(code, `Proveedor SIMIT respondió ${response.status}.`);
+  }
+  try {
+    return bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    throw new SimitProviderError('INVALID_RESPONSE', 'El proveedor SIMIT devolvió una respuesta que no es JSON válido.');
+  }
 }
 
 export async function lookupSimitByDocument(documentType: string, documentNumber: string): Promise<SimitLookupResult> {
   const normalizedNumber = documentNumber.replace(/[^0-9A-Za-z]/g, '');
-  if (!normalizedNumber) throw new Error('El número de documento es obligatorio.');
+  if (!normalizedNumber) throw new SimitProviderError('INVALID_RESPONSE', 'El número de documento es obligatorio.');
   const configuredProvider = (process.env.SIMIT_PROVIDER || '').toLowerCase().trim();
   const token = getVerifikToken();
   const provider = token && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual') ? 'verifik' : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
-  if (!provider) return { provider: 'official-manual', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: false, verificationRequired: true, officialUrl, comparendos: [] };
+  if (!provider) return { provider: 'official-manual', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: false, verificationRequired: true, officialUrl, comparendos: [], status: 'NO_RESULTS' };
 
   if (provider === 'verifik') {
     const verifikToken = token || requiredEnv('VERIFIK_API_TOKEN');
@@ -144,7 +185,6 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
       fetchVerifik(comparendosUrl, verifikToken),
     ]);
 
-    // TEMPORARY AUDIT LOG: intentionally restricted to the requested test document.
     if (normalizeIdentity(normalizedNumber) === '73201464') {
       console.log('[SIMIT AUDIT] Verifik /consultar', { url: consultarUrl, documentType: effectiveDocumentType, documentNumber: normalizedNumber, rawResponse: generalRaw });
       console.log('[SIMIT AUDIT] Verifik /comparendos', { url: comparendosUrl, documentType: effectiveDocumentType, documentNumber: normalizedNumber, rawResponse: comparendosRaw });
@@ -152,33 +192,41 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
 
     const general = normalizeRecords('verifik', normalizedNumber, generalRaw, 'multa');
     const tickets = normalizeRecords('verifik', normalizedNumber, comparendosRaw, 'comparendo');
-    // Temporary DEV/DEBUG fallback: only the exact test document and only when both Verifik payloads are empty.
-    const shouldUseDebugFallback = normalizeIdentity(normalizedNumber) === '73201464' && isEmptyVerifikPayload(generalRaw) && isEmptyVerifikPayload(comparendosRaw);
+    const bothEmpty = isEmptyVerifikPayload(generalRaw) && isEmptyVerifikPayload(comparendosRaw);
+    const debugFallbackEnabled = process.env.SIMIT_DEBUG_FALLBACK === 'true';
+    const shouldUseDebugFallback = debugFallbackEnabled && normalizeIdentity(normalizedNumber) === '73201464' && bothEmpty;
     const debugFallback = shouldUseDebugFallback ? buildTemporarySimitDebugFallback(normalizedNumber) : [];
-    if (shouldUseDebugFallback) console.warn('[SIMIT AUDIT] Verifik returned empty payloads; using temporary 73201464 six-record debug fallback.');
+    if (shouldUseDebugFallback) console.warn('[SIMIT AUDIT] Empty Verifik payloads; using temporary 73201464 debug fixture because SIMIT_DEBUG_FALLBACK=true.');
     const comparendos = debugFallback.length ? debugFallback : mergeRecords(general.records, tickets.records);
     const generalData = unwrapVerifik(generalRaw);
     const ticketData = unwrapVerifik(comparendosRaw);
     const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
     const totalDebt = debugFallback.length ? 6496575 : general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
     const providerCount = debugFallback.length ? debugFallback.length : Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
-    return { provider: 'verifik', source: 'SIMIT', documentType: effectiveDocumentType, documentNumber: normalizedNumber, found: comparendos.length > 0 || providerCount > 0 || Boolean(generalData?.tiene_deuda) || Boolean(ticketData?.tiene_deuda), totalDebt, pendingCount: providerCount, personName: debugFallback.length ? 'LU** GUIL****' : general.personName ?? tickets.personName, comparendos, raw: { general: generalRaw, comparendos: comparendosRaw } };
+    if (debugFallback.length) return { provider: 'verifik', source: 'SIMIT', documentType: effectiveDocumentType, documentNumber: normalizedNumber, found: true, totalDebt, pendingCount: providerCount, personName: 'LU** GUIL****', comparendos, status: 'SUCCESS', raw: { general: generalRaw, comparendos: comparendosRaw } };
+    if (bothEmpty && (hasExplicitSandboxSignal(generalRaw) || hasExplicitSandboxSignal(comparendosRaw))) {
+      throw new SimitProviderError('SANDBOX_EMPTY', 'Verifik respondió vacío en un entorno Sandbox/prueba; no se puede afirmar que el ciudadano no tenga comparendos.');
+    }
+    const found = comparendos.length > 0 || providerCount > 0 || Boolean(generalData?.tiene_deuda) || Boolean(ticketData?.tiene_deuda);
+    return { provider: 'verifik', source: 'SIMIT', documentType: effectiveDocumentType, documentNumber: normalizedNumber, found, totalDebt, pendingCount: providerCount, personName: general.personName ?? tickets.personName, comparendos, status: found ? 'SUCCESS' : 'NO_RESULTS', raw: { general: generalRaw, comparendos: comparendosRaw } };
   }
 
   if (provider === 'placapi') {
     const key = requiredEnv('PLACAPI_API_KEY');
-    const response = await fetch('https://placapi.com/api/comparendos', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key }, body: JSON.stringify({ docType: documentType, docNumber: normalizedNumber }), cache: 'no-store' });
-    if (!response.ok) throw new Error(`Proveedor SIMIT respondió ${response.status}.`);
-    const raw = await response.json(); const normalized = normalizeRecords('placapi', normalizedNumber, raw);
-    return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, raw };
+    let response: Response;
+    try { response = await fetch('https://placapi.com/api/comparendos', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key }, body: JSON.stringify({ docType: documentType, docNumber: normalizedNumber }), cache: 'no-store' }); } catch { throw new SimitProviderError('NETWORK_ERROR', 'No fue posible comunicarse con el proveedor SIMIT.'); }
+    if (!response.ok) throw new SimitProviderError('PROVIDER_ERROR', `Proveedor SIMIT respondió ${response.status}.`);
+    const raw = await response.json().catch(() => { throw new SimitProviderError('INVALID_RESPONSE', 'El proveedor SIMIT devolvió JSON inválido.'); }); const normalized = normalizeRecords('placapi', normalizedNumber, raw);
+    return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, status: normalized.records.length > 0 ? 'SUCCESS' : 'NO_RESULTS', raw };
   }
 
   if (provider === 'coresoft') {
     const key = requiredEnv('CORESOFT_API_KEY');
-    const response = await fetch(`https://api.coresoft.co/v1/infracciones?documento=${encodeURIComponent(normalizedNumber)}`, { headers: { Accept: 'application/json', 'X-API-Key': key }, cache: 'no-store' });
-    if (!response.ok) throw new Error(`Proveedor SIMIT respondió ${response.status}.`);
-    const raw = await response.json(); const normalized = normalizeRecords('coresoft', normalizedNumber, raw);
-    return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, raw };
+    let response: Response;
+    try { response = await fetch(`https://api.coresoft.co/v1/infracciones?documento=${encodeURIComponent(normalizedNumber)}`, { headers: { Accept: 'application/json', 'X-API-Key': key }, cache: 'no-store' }); } catch { throw new SimitProviderError('NETWORK_ERROR', 'No fue posible comunicarse con el proveedor SIMIT.'); }
+    if (!response.ok) throw new SimitProviderError('PROVIDER_ERROR', `Proveedor SIMIT respondió ${response.status}.`);
+    const raw = await response.json().catch(() => { throw new SimitProviderError('INVALID_RESPONSE', 'El proveedor SIMIT devolvió JSON inválido.'); }); const normalized = normalizeRecords('coresoft', normalizedNumber, raw);
+    return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, status: normalized.records.length > 0 ? 'SUCCESS' : 'NO_RESULTS', raw };
   }
-  throw new Error(`SIMIT_PROVIDER no soportado: ${provider}. Usa verifik, placapi o coresoft.`);
+  throw new SimitProviderError('PROVIDER_ERROR', `SIMIT_PROVIDER no soportado: ${provider}. Usa verifik, placapi o coresoft.`);
 }
