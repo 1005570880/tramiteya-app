@@ -38,6 +38,9 @@ const trafficData: FormStep = {
     ] },
     { id: 'fecha_audiencia', label: 'Fecha de audiencia (si existe)', type: 'date' },
     { id: 'fecha_mandamiento_pago', label: 'Fecha del mandamiento de pago (si existe)', type: 'date' },
+    { id: 'valor_multa', label: 'Valor registrado (COP)', type: 'text' },
+    { id: 'numero_resolucion', label: 'Número de resolución, si existe', type: 'text' },
+    { id: 'fecha_resolucion', label: 'Fecha de resolución, si existe', type: 'date' },
   ],
 };
 
@@ -62,6 +65,7 @@ const process: FormStep = {
 const legalIssue: FormStep = {
   id: 'legal',
   title: 'Situación jurídica',
+  description: 'Ahora sí: cuéntanos qué pasó. TrámiteYa usará los datos recuperados y el contexto jurídico para estructurar la solicitud.',
   fields: [
     { id: 'causal_principal', label: '¿Qué deseas revisar?', type: 'select', required: true, options: [
       { label: 'Prescripción', value: 'prescripcion' },
@@ -76,16 +80,23 @@ const legalIssue: FormStep = {
     ] },
     { id: 'error_identificacion', label: '¿Existe un error en placa, documento, nombre u otro dato?', type: 'radio', options: [{ label: 'Sí', value: 'si' }, { label: 'No', value: 'no' }] },
     { id: 'tipo_error', label: 'Describe el error', type: 'textarea', condition: { questionId: 'error_identificacion', operator: 'equals', value: 'si' } },
-    { id: 'hechos', label: 'Explique los hechos', type: 'textarea', required: true },
-    { id: 'solicitud', label: '¿Qué quieres obtener?', type: 'textarea', required: true },
+    { id: 'hechos', label: 'Cuéntanos qué pasó', type: 'textarea', required: true, placeholder: 'Escríbelo como se lo contarías a un abogado. No necesitas usar lenguaje jurídico.' },
+    { id: 'solicitud', label: '¿Qué quieres obtener?', type: 'textarea', required: true, placeholder: 'Por ejemplo: que revisen el comparendo, lo retiren del sistema, reconozcan la prescripción o corrijan un dato.' },
     { id: 'solicitar_soportes', label: '¿Deseas solicitar copia de los soportes?', type: 'radio', options: [{ label: 'Sí', value: 'si' }, { label: 'No', value: 'no' }] },
   ],
 };
 
-export const trafficSpecialForms: Record<string, FormStep[]> = {
-  'prescripcion-comparendo': [identity, contact, trafficData, process, legalIssue],
-  'caducidad-comparendo': [identity, contact, trafficData, process, legalIssue],
-  'revocatoria-comparendo': [identity, contact, trafficData, process, legalIssue],
-  'solicitud-soportes-comparendo': [identity, contact, trafficData, process, legalIssue],
-  fotomultas: [identity, contact, trafficData, process, legalIssue],
-};
+const trafficSlugs = [
+  'prescripcion-comparendo',
+  'caducidad-comparendo',
+  'revocatoria-comparendo',
+  'solicitud-soportes-comparendo',
+  'fotomultas',
+  'derecho-de-peticion-eliminar-multa',
+  'derecho-de-peticion-eliminar-comparendo',
+  'impugnacion-comparendos',
+];
+
+export const trafficSpecialForms: Record<string, FormStep[]> = Object.fromEntries(
+  trafficSlugs.map((slug) => [slug, [identity, contact, trafficData, process, legalIssue]])
+);
