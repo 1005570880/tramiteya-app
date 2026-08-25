@@ -71,78 +71,125 @@ export async function lookupSimitByDocumentStrict(documentType:string,documentNu
   const generalName=name(general);
   if(generalDoc && generalDoc!==dn) throw new Error(`SIMIT_DATA_INTEGRITY_ERROR: /consultar identificó ${generalDoc}, no ${dn}.`);
 
-  // Never trust the top-level documentNumber by itself: Verifik can echo the requested
-  // document while an individual multa contains another infractor.
+  // /consultar es la única fuente de estas dos respuestas que trae el documento
+  // del infractor dentro de cada multa. Por seguridad, ese dato es el ancla primaria.
   const generalMultas=Array.isArray(general?.multas)?general.multas:[];
-  const mismatchedGeneral=generalMultas.find((m:any)=>{
-    const nested=nestedDoc(m);
-    return nested && nested!==dn;
-  });
-  if(mismatchedGeneral){
-    const nested=nestedDoc(mismatchedGeneral);
-    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor',returnedDocument:nested,returnedName:name(mismatchedGeneral?.infractor ?? mismatchedGeneral),message:'Verifik devolvió una multa cuyo documento del infractor no coincide con la cédula consultada.'}));
-    throw new Error('SIMIT_DATA_INTEGRITY_ERROR: Verifik devolvió registros asociados a otro documento.');
+  const matchingGeneral:any[]=[];
+  let rejectedGeneral=0;
+  for(const multa of generalMultas){
+    const nested=nestedDoc(multa);
+    if(nested && nested===dn) {
+      matchingGeneral.push(multa);
+      continue;
+    }
+    rejectedGeneral++;
+    console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:multa?.numeroComparendo??null,returnedDocument:nested??null,returnedName:name(multa?.infractor ?? multa)??null,reason:nested?'general_infractor_document_mismatch':'general_infractor_document_missing'}));
   }
-
-  // If /consultar returned multas, at least one must explicitly identify the requested
-  // document inside the infractor/persona object. Otherwise there is no trustworthy
-  // identity anchor with which to validate /comparendos.
-  const matchingGeneral = generalMultas.filter((m:any)=>nestedDoc(m)===dn);
   if(generalMultas.length>0 && matchingGeneral.length===0){
-    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor',message:'La respuesta contiene multas, pero ninguna está asociada explícitamente al documento consultado.'}));
-    throw new Error('SIMIT_DATA_INTEGRITY_ERROR: Verifik no pudo acreditar que las multas pertenecen a la cédula consultada.');
+    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor',rejectedGeneral,message:'Verifik devolvió multas, pero ninguna acredita explícitamente la cédula consultada.'}));
+    throw new Error('SIMIT_DATA_INTEGRITY_ERROR: Verifik devolvió registros que no pueden acreditarse como pertenecientes a la cédula consultada.');
   }
 
+  // Construimos una identidad confiable solamente desde multas que contienen el documento
+  // solicitado. Nunca usamos el nombre por sí solo para identificar a una persona.
   const trustedNames = new Set<string>();
-  for(const m of matchingGeneral){ const n=name(m?.infractor ?? m); if(n) trustedNames.add(cleanName(n)); }
+  for(const m of matchingGeneral){
+    const n=name(m?.infractor ?? m);
+    if(n) trustedNames.add(cleanName(n));
+  }
+
   const rawRecords=arrays(list,'comparendos');
   const directRecords=rawRecords.map(x=>item(x,'comparendo'));
   const accepted:SimitComparendo[]=[];
+  let rejectedList=0;
+
   for(let i=0;i<directRecords.length;i++){
     const r=directRecords[i];
     const rawRecord=rawRecords[i];
     const rawNestedDoc=nestedDoc(rawRecord);
     const rawName=name(rawRecord);
+
     if(rawNestedDoc && rawNestedDoc!==dn){
+      rejectedList++;
       console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:rawNestedDoc,returnedName:rawName??null,reason:'nested_infractor_document_mismatch'}));
       continue;
     }
-    if(rawName && trustedNames.size>0 && !trustedNames.has(cleanName(rawName))){
+
+    // CRITICAL FIX: /comparendos no devuelve el documento del infractor de forma fiable.
+    // Si no tenemos una identidad confiable desde /consultar, NO mostramos sus registros.
+    // Esto evita que el endpoint de detalle, que puede reflejar el documentNumber de la
+    // consulta, se use como falsa prueba de identidad.
+    if(trustedNames.size===0){
+      rejectedList++;
+      console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedName:rawName??null,reason:'no_trusted_identity_from_consultar'}));
+      continue;
+    }
+
+    if(rawName && !trustedNames.has(cleanName(rawName))){
+      rejectedList++;
       console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedName:rawName,reason:'name_not_in_trusted_identity'}));
       continue;
     }
+
+    // Si la lista coincide por nombre con una identidad ya acreditada, aceptamos el registro.
+    // Si además trae documento explícito, exigimos coincidencia exacta.
     if(r.documentNumber){
-      if(r.documentNumber===dn && (trustedNames.size===0 || !r.ownerName || trustedNames.has(cleanName(r.ownerName)))) accepted.push(r);
-      else console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:r.documentNumber,returnedName:r.ownerName??null,reason:'document_or_name_mismatch'}));
+      if(r.documentNumber===dn && (!r.ownerName || trustedNames.has(cleanName(r.ownerName)))) accepted.push(r);
+      else {
+        rejectedList++;
+        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:r.documentNumber,returnedName:r.ownerName??null,reason:'document_or_name_mismatch'}));
+      }
       continue;
     }
+
+    // Validación adicional por detalle: el endpoint /comparendo requiere documento + número + organismo,
+    // pero su respuesta puede repetir el documento solicitado. Por eso el detalle SOLO sirve como
+    // comprobación complementaria, nunca como ancla primaria de identidad.
     if(!r.number || !r.organismId) continue;
     const q=new URLSearchParams({documentType:dt,documentNumber:dn,numeroComparendo:String(r.number),idOrganismoTransito:String(r.organismId)});
     try{
       const detailRaw=await call(`${BASE}/comparendo?${q}`,token,'comparendo-detail');
-      const detail=unwrap(detailRaw); const returnedDoc=doc(detail); const returnedNestedDoc=nestedDoc(detail); const returnedName=name(detail);
+      const detail=unwrap(detailRaw);
+      const returnedDoc=doc(detail);
+      const returnedNestedDoc=nestedDoc(detail);
+      const returnedName=name(detail);
       if(returnedNestedDoc && returnedNestedDoc!==dn){
+        rejectedList++;
         console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedNestedDoc,returnedName:returnedName??null,reason:'detail_nested_infractor_document_mismatch'}));
         continue;
       }
-      if(!returnedDoc || returnedDoc!==dn){
-        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc??null,returnedName:returnedName??null,reason:returnedDoc?'document_mismatch':'detail_without_document'}));
+      if(returnedDoc && returnedDoc!==dn){
+        rejectedList++;
+        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc,returnedName:returnedName??null,reason:'detail_document_mismatch'}));
         continue;
       }
-      if(!returnedName || trustedNames.size===0 || !trustedNames.has(cleanName(returnedName))){
-        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc,returnedName:returnedName??null,trustedNames:[...trustedNames],reason:'detail_name_not_verified'}));
+      if(returnedName && !trustedNames.has(cleanName(returnedName))){
+        rejectedList++;
+        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc??null,returnedName, trustedNames:[...trustedNames],reason:'detail_name_not_verified'}));
         continue;
       }
       const returnedNumber=String(first(detail?.numeroComparendo,detail?.NúmeroComparendo,r.number));
       const returnedOrg=String(first(detail?.idOrganismoTransito,r.organismId));
       if(clean(returnedNumber)!==clean(r.number)||clean(returnedOrg)!==clean(r.organismId)) continue;
-      accepted.push({...r,documentNumber:returnedDoc,ownerName:returnedName,plate:(first(detail?.placaVehiculo,detail?.placa,r.plate) as string|undefined)});
-    }catch{}
+      accepted.push({...r,documentNumber:dn,ownerName:returnedName ?? r.ownerName,plate:(first(detail?.placaVehiculo,detail?.placa,r.plate) as string|undefined)});
+    }catch{
+      rejectedList++;
+    }
   }
-  const unique=new Map<string,SimitComparendo>(); for(const r of accepted) unique.set(r.number?`n:${r.number}`:JSON.stringify(r),r);
+
+  // /consultar puede ser correcto aunque /comparendos sea una respuesta parcial. En ese caso
+  // conservamos las multas acreditadas directamente por documento para no perder datos reales.
+  for(const m of matchingGeneral){
+    const normalized=item(m,'multa');
+    if(normalized.number && !accepted.some(r=>r.number===normalized.number)) accepted.push({...normalized,documentNumber:dn});
+  }
+
+  const unique=new Map<string,SimitComparendo>();
+  for(const r of accepted) unique.set(r.number?`n:${r.number}`:JSON.stringify(r),r);
   const comparendos=[...unique.values()];
   const personName=generalName || (trustedNames.size ? [...trustedNames][0] : undefined);
   const totalDebt=Number(first(general?.totalMultasPagar,general?.total_deuda,general?.totalDeuda,general?.total_pendiente)??0)||undefined;
-  console.log('[SIMIT AUDIT] strict-normalized',JSON.stringify({documentType:dt,documentNumber:dn,candidates:directRecords.length,accepted:comparendos.length,generalDocument:generalDoc??null,trustedIdentityCount:trustedNames.size,status:comparendos.length?'SUCCESS':'NO_RESULTS'}));
-  return {provider:'verifik',source:'SIMIT',documentType:dt,documentNumber:dn,found:comparendos.length>0,verificationRequired:false,officialUrl:'https://www.fcm.org.co/simit/',totalDebt,pendingCount:comparendos.length,personName,comparendos,status:comparendos.length?'SUCCESS':'NO_RESULTS',raw:{consultar:generalRaw,comparendos:listRaw}};
+  const status=comparendos.length?'SUCCESS':'NO_RESULTS';
+  console.log('[SIMIT AUDIT] strict-normalized',JSON.stringify({documentType:dt,documentNumber:dn,candidates:directRecords.length,accepted:comparendos.length,rejectedGeneral,rejectedList,generalDocument:generalDoc??null,trustedIdentityCount:trustedNames.size,status}));
+  return {provider:'verifik',source:'SIMIT',documentType:dt,documentNumber:dn,found:comparendos.length>0,verificationRequired:false,officialUrl:'https://www.fcm.org.co/simit/',totalDebt,pendingCount:comparendos.length,personName,comparendos,status,raw:{consultar:generalRaw,comparendos:listRaw}};
 }
