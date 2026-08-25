@@ -132,19 +132,32 @@ async function fetchVerifik(url: string, token: string) {
   let response: Response;
   try {
     response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, cache: 'no-store' });
-  } catch {
+  } catch (error) {
+    console.error('[SIMIT AUDIT] verifik_network_error', JSON.stringify({ url, message: error instanceof Error ? error.message : String(error) }));
     throw new SimitProviderError('NETWORK_ERROR', 'No fue posible comunicarse con el proveedor SIMIT.');
   }
   const bodyText = await response.text().catch(() => '');
+  let parsedBody: unknown = null;
+  try { parsedBody = bodyText ? JSON.parse(bodyText) : null; } catch { parsedBody = bodyText || null; }
+
+  // Capturamos SIEMPRE la respuesta cruda antes de clasificar un HTTP != 2xx.
+  // Nunca registramos el token de autenticación.
+  console.log('[SIMIT AUDIT] verifikResponse', JSON.stringify({
+    url,
+    status: response.status,
+    ok: response.ok,
+    headers: Object.fromEntries(['content-type', 'x-request-id', 'x-verifik-request-id'].map((name) => [name, response.headers.get(name)]).filter(([, value]) => value)),
+    rawResponse: parsedBody,
+  }));
+
   if (!response.ok) {
     const code = classifyVerifikHttpError(response.status);
     throw new SimitProviderError(code, `Proveedor SIMIT respondió ${response.status}.`);
   }
-  try {
-    return bodyText ? JSON.parse(bodyText) : null;
-  } catch {
+  if (parsedBody === null || typeof parsedBody === 'string') {
     throw new SimitProviderError('INVALID_RESPONSE', 'El proveedor SIMIT devolvió una respuesta que no es JSON válido.');
   }
+  return parsedBody;
 }
 
 export async function lookupSimitByDocument(documentType: string, documentNumber: string): Promise<SimitLookupResult> {
@@ -155,7 +168,6 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   const provider = token && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual') ? 'verifik' : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
 
-  // Nunca devolver falsamente "sin multas" por falta de configuración.
   if (!provider) {
     throw new SimitProviderError('CONFIGURATION_ERROR', 'La consulta automática de SIMIT no está configurada. Falta el proveedor y/o la credencial del servicio SIMIT.');
   }
