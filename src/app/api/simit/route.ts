@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { lookupSimitByDocumentDirect } from "@/lib/simitVerifikDirect";
+import { lookupSimitByDocumentStrict } from "@/lib/simitVerifikStrict";
 
 export async function POST(req: NextRequest) {
   let body: { documentType?: string; documentNumber?: string };
@@ -9,9 +9,8 @@ export async function POST(req: NextRequest) {
   if (!documentNumber) return NextResponse.json({ ok: false, code: "INVALID_RESPONSE", message: "documentNumber es requerido." }, { status: 400 });
   console.log("[SIMIT AUDIT] request", JSON.stringify({ documentType, documentNumber, timestamp: new Date().toISOString() }));
   try {
-    const result = await lookupSimitByDocumentDirect(documentType, documentNumber);
+    const result = await lookupSimitByDocumentStrict(documentType, documentNumber);
     const { raw, ...safeResult } = result;
-    if (raw !== undefined) console.log("[SIMIT AUDIT] rawResponse", JSON.stringify({ documentType, documentNumber, raw }));
     console.log("[SIMIT AUDIT] normalized", JSON.stringify({ documentType, documentNumber, provider: result.provider, found: result.found, pendingCount: result.pendingCount, recordCount: result.comparendos?.length ?? 0, status: result.status }));
     return NextResponse.json({ ok: true, code: result.status ?? (result.found ? "SUCCESS" : "NO_RESULTS"), ...safeResult });
   } catch (err) {
