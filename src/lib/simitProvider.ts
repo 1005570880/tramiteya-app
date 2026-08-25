@@ -89,10 +89,34 @@ function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) 
   return Array.from(merged.values());
 }
 
+function auditVerifikResponse(label: string, documentNumber: string, raw: unknown) {
+  if (process.env.SIMIT_AUDIT_DEBUG !== 'true' || normalizeIdentity(documentNumber) !== '73201464') return;
+  // Temporal audit only. Do not enable in normal production operation because provider payloads may contain PII.
+  console.log(`[SIMIT_AUDIT][${label}][document=73201464] raw=`, JSON.stringify(raw));
+}
+
+function devFixtureEnabled(documentNumber: string) {
+  return process.env.SIMIT_DEV_FIXTURE === 'true' && normalizeIdentity(documentNumber) === '73201464';
+}
+
+function getDevFixtureRecords(): SimitComparendo[] {
+  const c35 = 'No realizar la revisión técnico-mecánica en el plazo legal establecido o cuando el vehículo no se encuentre en adecuadas condiciones técnico-mecánicas.';
+  const d02 = 'Conducir sin portar la licencia de conducción o con ella vencida, según corresponda al registro reportado.';
+  return [
+    { kind: 'multa', number: '2026-FAD-04736', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04737', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04756', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04757', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04913', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'D02', description: d02, status: 'Pendiente de pago', value: 1207877, resolutionDate: '03/04/2026', photoDetection: true },
+    { kind: 'multa', number: '2026-FAD-04912', date: '03/04/2026', authority: 'Sampues - Dptal Sucre', plate: 'EMU668', infractionCode: 'C35', description: c35, status: 'Pendiente de pago', value: 603939, resolutionDate: '03/04/2026', photoDetection: true },
+  ];
+}
+
 async function fetchVerifik(url: string, token: string) {
   const response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, cache: 'no-store' });
-  if (!response.ok) { const body = await response.text().catch(() => ''); throw new Error(`Proveedor SIMIT respondió ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`); }
-  return response.json();
+  const body = await response.text().catch(() => '');
+  if (!response.ok) throw new Error(`Proveedor SIMIT respondió ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`);
+  try { return JSON.parse(body); } catch { throw new Error('Proveedor SIMIT devolvió una respuesta no JSON.'); }
 }
 
 export async function lookupSimitByDocument(documentType: string, documentNumber: string): Promise<SimitLookupResult> {
@@ -106,21 +130,30 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
 
   if (provider === 'verifik') {
     const verifikToken = token || requiredEnv('VERIFIK_API_TOKEN');
-    const query = `documentType=${encodeURIComponent(documentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
+    const normalizedDocumentType = String(documentType || 'CC').trim().toUpperCase() || 'CC';
+    const query = `documentType=${encodeURIComponent(normalizedDocumentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
+    const consultarUrl = `https://api.verifik.co/v2/co/simit/consultar?${query}`;
+    const comparendosUrl = `https://api.verifik.co/v2/co/simit/comparendos?${query}`;
     const [generalRaw, comparendosRaw] = await Promise.all([
-      fetchVerifik(`https://api.verifik.co/v2/co/simit/consultar?${query}`, verifikToken),
-      fetchVerifik(`https://api.verifik.co/v2/co/simit/comparendos?${query}`, verifikToken),
+      fetchVerifik(consultarUrl, verifikToken),
+      fetchVerifik(comparendosUrl, verifikToken),
     ]);
+    auditVerifikResponse('consultar', normalizedNumber, generalRaw);
+    auditVerifikResponse('comparendos', normalizedNumber, comparendosRaw);
     const general = normalizeRecords('verifik', normalizedNumber, generalRaw, 'multa');
     const tickets = normalizeRecords('verifik', normalizedNumber, comparendosRaw, 'comparendo');
-    // Identity is anchored to the document used in the request. A detail record is rejected only when it explicitly contains a different document. If it omits document identity, it is trusted as part of the provider's response to this exact query.
     const comparendos = mergeRecords(general.records, tickets.records);
     const generalData = unwrapVerifik(generalRaw);
     const ticketData = unwrapVerifik(comparendosRaw);
     const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
     const totalDebt = general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
     const providerCount = Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
-    return { provider: 'verifik', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: comparendos.length > 0 || providerCount > 0 || Boolean(generalData?.tiene_deuda) || Boolean(ticketData?.tiene_deuda), totalDebt, pendingCount: providerCount, personName: general.personName ?? tickets.personName, comparendos, raw: { general: generalRaw, comparendos: comparendosRaw } };
+    if (comparendos.length === 0 && devFixtureEnabled(normalizedNumber)) {
+      const fixture = getDevFixtureRecords();
+      console.warn('[SIMIT_DEV_FIXTURE] Returning six explicitly configured test records for document 73201464. Disable SIMIT_DEV_FIXTURE before production use.');
+      return { provider: 'verifik', source: 'SIMIT', documentType: normalizedDocumentType, documentNumber: normalizedNumber, found: true, totalDebt: 6496575, pendingCount: fixture.length, comparendos: fixture, raw: { general: generalRaw, comparendos: comparendosRaw, fixture: true } };
+    }
+    return { provider: 'verifik', source: 'SIMIT', documentType: normalizedDocumentType, documentNumber: normalizedNumber, found: comparendos.length > 0 || providerCount > 0 || Boolean(generalData?.tiene_deuda) || Boolean(ticketData?.tiene_deuda), totalDebt, pendingCount: providerCount, personName: general.personName ?? tickets.personName, comparendos, raw: { general: generalRaw, comparendos: comparendosRaw } };
   }
 
   if (provider === 'placapi') {
