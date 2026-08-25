@@ -36,11 +36,12 @@ export type LegalAiResult = {
   libraryVersion: string;
   reasoning: LegalReasoning;
   draft: string;
+  citationsUsed: string[];
   verified: boolean;
   verificationWarnings: string[];
 };
 
-const ENGINE_VERSION = 'legal-ai-engine-v1.1.0';
+const ENGINE_VERSION = 'legal-ai-engine-v2.0.0';
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
 
 function compact(value: unknown, max = 12000) {
@@ -133,6 +134,61 @@ function validateReasoning(raw: any, context: Awaited<ReturnType<typeof getLegal
   return { reasoning, warnings };
 }
 
+const LEGAL_AI_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    legalIssues: { type: 'array', items: { type: 'string' } },
+    rightsAffected: { type: 'array', items: { type: 'string' } },
+    applicableRules: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          sourceId: { type: 'string' },
+          citation: { type: 'string' },
+          article: { type: ['string', 'null'] },
+          proposition: { type: 'string' },
+        },
+        required: ['sourceId', 'citation', 'article', 'proposition'],
+      },
+    },
+    jurisprudence: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          sourceId: { type: 'string' },
+          citation: { type: 'string' },
+          proposition: { type: 'string' },
+        },
+        required: ['sourceId', 'citation', 'proposition'],
+      },
+    },
+    arguments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          factsApplied: { type: 'array', items: { type: 'string' } },
+          legalBasis: { type: 'array', items: { type: 'string' } },
+          conclusion: { type: 'string' },
+          riskLevel: { type: 'string' },
+        },
+        required: ['title', 'factsApplied', 'legalBasis', 'conclusion', 'riskLevel'],
+      },
+    },
+    draftingNotes: { type: 'array', items: { type: 'string' } },
+    draft: { type: 'string' },
+    citationsUsed: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['legalIssues', 'rightsAffected', 'applicableRules', 'jurisprudence', 'arguments', 'draftingNotes', 'draft', 'citationsUsed'],
+} as const;
+
 export async function runLegalAiEngine(input: LegalAiInput): Promise<LegalAiResult> {
   const context = await getLegalContext(input);
 
@@ -150,16 +206,37 @@ export async function runLegalAiEngine(input: LegalAiInput): Promise<LegalAiResu
       arguments: context.arguments.map((a) => ({ title: a.title, factsApplied: [], legalBasis: [], conclusion: a.argument_text, riskLevel: a.risk_level })),
       draftingNotes: ['OPENAI_API_KEY no está configurada; se utilizó fallback determinístico.'],
     });
-    return { engineVersion: ENGINE_VERSION, provider: 'deterministic-fallback', model: null, libraryVersion: context.libraryVersion, reasoning, draft: deterministicDraft(input, reasoning), verified: true, verificationWarnings: [] };
+    return {
+      engineVersion: ENGINE_VERSION,
+      provider: 'deterministic-fallback',
+      model: null,
+      libraryVersion: context.libraryVersion,
+      reasoning,
+      draft: deterministicDraft(input, reasoning),
+      citationsUsed: reasoning.applicableRules.map((rule) => rule.sourceId),
+      verified: true,
+      verificationWarnings: [],
+    };
   }
 
-  const system = `Eres el motor jurídico de TrámiteYa. Relaciona hechos del usuario con LEGAL_CONTEXT, una biblioteca jurídica colombiana versionada. NO inventes normas, artículos, sentencias, radicados, fechas ni hechos. Solo puedes usar fuentes que aparezcan en LEGAL_CONTEXT. No prometas resultados. Devuelve exclusivamente JSON válido con: legalIssues, rightsAffected, applicableRules, jurisprudence, arguments, draftingNotes, draft y citationsUsed. citationsUsed debe contener únicamente los sourceId realmente usados. El campo draft debe ser el escrito jurídico solicitado, pero solo con fundamentos presentes en LEGAL_CONTEXT.`;
+  const system = `Eres el motor jurídico de TrámiteYa. Trabajas exclusivamente con LEGAL_CONTEXT, una biblioteca jurídica colombiana versionada. NO inventes normas, artículos, sentencias, radicados, fechas, citas ni hechos. Solo puedes citar fuentes cuyo sourceId aparezca en LEGAL_CONTEXT. Si una cuestión no está suficientemente soportada, indícalo como requiere verificación. Distingue hechos aportados, norma aplicable, jurisprudencia, subsunción y conclusión. No prometas resultados. Redacta el documento solicitado con lenguaje profesional colombiano. citationsUsed debe contener únicamente los sourceId que realmente sustentan el análisis y el draft.`;
   const prompt = `${system}\n\nDOCUMENT_TYPE:\n${input.documentType}\n\nFACTS:\n${compact(input.facts)}\n\nLEGAL_CONTEXT:\n${compact(context)}\n\nDRAFTING_INSTRUCTIONS:\n${input.draftingInstructions ?? 'Relaciona los hechos con las normas y precedentes aplicables, explica la subsunción y redacta de forma profesional, clara y prudente.'}`;
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    body: JSON.stringify({ model: DEFAULT_MODEL, input: prompt }),
+    body: JSON.stringify({
+      model: DEFAULT_MODEL,
+      input: prompt,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'tramiteya_legal_analysis',
+          strict: true,
+          schema: LEGAL_AI_SCHEMA,
+        },
+      },
+    }),
   });
 
   if (!response.ok) {
@@ -173,11 +250,33 @@ export async function runLegalAiEngine(input: LegalAiInput): Promise<LegalAiResu
   const allowedSourceIds = new Set(context.statutes.concat(context.jurisprudence).map((source) => source.id));
   const citationsUsed = Array.isArray(raw?.citationsUsed) ? raw.citationsUsed.map(String) : [];
   const invalidCitationIds = citationsUsed.filter((id: string) => !allowedSourceIds.has(id));
-  if (invalidCitationIds.length) warnings.push('La IA reportó fuentes que no existen en la biblioteca jurídica; se activó el redactor seguro.');
+
+  if (invalidCitationIds.length) {
+    warnings.push('La IA reportó fuentes que no existen en la biblioteca jurídica; se activó el redactor seguro.');
+  }
+
+  const referencedSourceIds = new Set([
+    ...reasoning.applicableRules.map((item) => item.sourceId),
+    ...reasoning.jurisprudence.map((item) => item.sourceId),
+  ]);
+  const unsupportedUsedIds = citationsUsed.filter((id: string) => !referencedSourceIds.has(id));
+  if (unsupportedUsedIds.length) {
+    warnings.push('La IA declaró fuentes utilizadas que no aparecen realmente en sus reglas o jurisprudencia verificadas.');
+  }
 
   const aiDraft = typeof raw?.draft === 'string' ? raw.draft.trim() : '';
-  const verified = warnings.length === 0 && invalidCitationIds.length === 0 && aiDraft.length > 100;
+  const verified = warnings.length === 0 && invalidCitationIds.length === 0 && unsupportedUsedIds.length === 0 && aiDraft.length > 100;
   const draft = verified ? aiDraft : deterministicDraft(input, reasoning);
 
-  return { engineVersion: ENGINE_VERSION, provider: 'openai', model: DEFAULT_MODEL, libraryVersion: context.libraryVersion, reasoning, draft, verified, verificationWarnings: warnings };
+  return {
+    engineVersion: ENGINE_VERSION,
+    provider: 'openai',
+    model: DEFAULT_MODEL,
+    libraryVersion: context.libraryVersion,
+    reasoning,
+    draft,
+    citationsUsed: verified ? citationsUsed : [...referencedSourceIds],
+    verified,
+    verificationWarnings: warnings,
+  };
 }
