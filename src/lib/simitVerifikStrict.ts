@@ -63,6 +63,20 @@ export async function lookupSimitByDocumentStrict(documentType:string,documentNu
   const generalName=name(general);
   if(generalDoc && generalDoc!==dn) throw new Error(`SIMIT_DATA_INTEGRITY_ERROR: /consultar identificó ${generalDoc}, no ${dn}.`);
 
+  // Verifik has returned responses where the top-level documentNumber matches the
+  // requested CC but nested infractor.numeroDocumento belongs to another person.
+  // Never accept such data merely because the URL/query echoes the requested CC.
+  const generalMultas=Array.isArray(general?.multas)?general.multas:[];
+  const mismatchedGeneral=generalMultas.find((m:any)=>{
+    const nested=doc(m?.infractor ?? m);
+    return nested && nested!==dn;
+  });
+  if(mismatchedGeneral){
+    const nested=doc(mismatchedGeneral?.infractor ?? mismatchedGeneral);
+    console.error('[SIMIT AUDIT] integrity_error',JSON.stringify({documentType:dt,documentNumber:dn,code:'SIMIT_DATA_INTEGRITY_ERROR',source:'consultar.multas[].infractor.numeroDocumento',returnedDocument:nested,returnedName:name(mismatchedGeneral?.infractor),message:'Verifik devolvió una multa cuyo infractor.numeroDocumento no coincide con la cédula consultada.'}));
+    throw new Error('SIMIT_DATA_INTEGRITY_ERROR: Verifik devolvió registros asociados a otro documento.');
+  }
+
   const rawRecords=arrays(list,'comparendos');
   const directRecords=rawRecords.map(x=>item(x,'comparendo'));
   const accepted:SimitComparendo[]=[];
@@ -79,6 +93,13 @@ export async function lookupSimitByDocumentStrict(documentType:string,documentNu
       const detail=unwrap(detailRaw); const returnedDoc=doc(detail); const returnedName=name(detail);
       if(!returnedDoc || returnedDoc!==dn){
         console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc??null,returnedName:returnedName??null,reason:returnedDoc?'document_mismatch':'detail_without_document'}));
+        continue;
+      }
+      // If detail identifies a person by name but /consultar did not provide a
+      // matching person name, do not manufacture identity from the query parameter.
+      // A query echo is not proof of ownership.
+      if(returnedName && !generalName){
+        console.error('[SIMIT AUDIT] rejected_identity',JSON.stringify({documentNumber:dn,number:r.number,returnedDocument:returnedDoc,returnedName,reason:'detail_name_without_general_identity'}));
         continue;
       }
       if(generalName && returnedName && cleanName(returnedName)!==cleanName(generalName)){
