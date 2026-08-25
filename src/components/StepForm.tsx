@@ -30,16 +30,19 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
+  const [simitStatus, setSimitStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [simitSummary, setSimitSummary] = useState<{ count: number; totalDebt?: number } | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const step = steps[index];
   const visibleFields = step.fields.filter((f) => visible(f, answers));
   const total = steps.length;
   const progress = Math.round(((index + 1) / total) * 100);
+  const isTrafficForm = steps.some((s) => s.fields.some((f) => f.id === "numero_comparendo"));
 
   useEffect(() => { if (initialAnswers) setAnswers(initialAnswers); }, [initialAnswers]);
   useEffect(() => { if (!draftKey) return; const saved = localDraftStorage.load(draftKey) as any; if (saved?.data && !initialAnswers) setAnswers(saved.data as FormAnswers); setSavedAt(saved?.savedAt || null); }, [draftKey, initialAnswers]);
-  useEffect(() => { if (typeof resetSignal === "number") { setAnswers({}); setIndex(0); setSavedAt(null); setError(null); } }, [resetSignal]);
+  useEffect(() => { if (typeof resetSignal === "number") { setAnswers({}); setIndex(0); setSavedAt(null); setError(null); setSimitStatus("idle"); setSimitSummary(null); } }, [resetSignal]);
   useEffect(() => { inputRef.current?.focus(); }, [index]);
   useEffect(() => {
     if (!draftKey) return;
@@ -59,7 +62,43 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   }, [answers, draftKey, instanceId]);
 
   function setField(id: string, value: FormAnswers[string]) { setAnswers((current) => ({ ...current, [id]: value })); setError(null); }
-  function blurField(id: string) { onFieldBlur?.(id, answers[id], answers); }
+
+  async function blurField(id: string, valueOverride?: FormAnswers[string]) {
+    const value = valueOverride ?? answers[id];
+    const currentAnswers = { ...answers, [id]: value };
+    onFieldBlur?.(id, value, currentAnswers);
+
+    if (!isTrafficForm || id !== "documento") return;
+    const documentNumber = String(value ?? "").replace(/[^0-9]/g, "");
+    if (documentNumber.length < 6) return;
+
+    setSimitStatus("loading");
+    try {
+      const response = await fetch("/api/simit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentType: "CC", documentNumber }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "No fue posible consultar SIMIT.");
+      const normalized = {
+        source: "SIMIT",
+        provider: data.provider,
+        found: data.found,
+        pendingCount: data.pendingCount ?? 0,
+        totalDebt: data.totalDebt,
+        comparendos: Array.isArray(data.comparendos) ? data.comparendos : [],
+        consultedAt: new Date().toISOString(),
+      };
+      setAnswers((current) => ({ ...current, __simitData: normalized }));
+      setSimitSummary({ count: normalized.comparendos.length, totalDebt: normalized.totalDebt });
+      setSimitStatus("ready");
+    } catch (lookupError) {
+      console.warn("SIMIT enrichment unavailable", lookupError);
+      setSimitStatus("error");
+    }
+  }
+
   function hasValue(value: FormAnswers[string]) { if (value === null || value === undefined || value === false) return false; if (Array.isArray(value)) return value.length > 0; return String(value).trim().length > 0; }
   function next() {
     const missing = visibleFields.find((f) => f.required && !hasValue(answers[f.id]));
@@ -75,7 +114,7 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
     const common = "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-[16px] outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
     if (field.type === "textarea") return <textarea ref={inputRef as React.RefObject<HTMLTextAreaElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} className={`${common} min-h-36 resize-y`} />;
     if (field.type === "select") return <select ref={inputRef as React.RefObject<HTMLSelectElement>} value={typeof value === "string" ? value : ""} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} className={common}><option value="">Selecciona una opción</option>{field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
-    if (field.type === "radio") return <div className="grid gap-3 sm:grid-cols-2">{field.options?.map((o) => { const active = value === o.value; return <button type="button" key={o.value} onClick={() => { setField(field.id, o.value); setTimeout(() => blurField(field.id), 0); }} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-slate-300 hover:-translate-y-0.5"}`}><span className="font-medium">{o.label}</span></button>; })}</div>;
+    if (field.type === "radio") return <div className="grid gap-3 sm:grid-cols-2">{field.options?.map((o) => { const active = value === o.value; return <button type="button" key={o.value} onClick={() => { setField(field.id, o.value); setTimeout(() => blurField(field.id, o.value), 0); }} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-slate-300 hover:-translate-y-0.5"}`}><span className="font-medium">{o.label}</span></button>; })}</div>;
     if (field.type === "checkbox") return <button type="button" onClick={() => { const next = value !== true; setField(field.id, next); setTimeout(() => onFieldBlur?.(field.id, next, { ...answers, [field.id]: next }), 0); }} className={`w-full rounded-2xl border p-4 text-left transition ${value === true ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}><span className="font-medium">{value === true ? "✓ Sí" : "○ No"}</span></button>;
     return <input ref={inputRef as React.RefObject<HTMLInputElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className={common} />;
   }
@@ -83,6 +122,11 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   return <div className="space-y-6">
     <div className="flex items-center justify-between gap-4"><span className="text-xs font-semibold uppercase tracking-wider text-blue-600">Paso {index + 1} de {total}</span><span className="text-xs text-slate-500">{savedAt ? "Guardado automáticamente" : "Guardando..."}</span></div>
     <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${progress}%` }} /></div>
+    {isTrafficForm && simitStatus !== "idle" && <div className={`rounded-2xl border px-4 py-3 text-sm ${simitStatus === "loading" ? "border-blue-200 bg-blue-50 text-blue-800" : simitStatus === "ready" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+      {simitStatus === "loading" && "Consultando automáticamente la información disponible en SIMIT…"}
+      {simitStatus === "ready" && (simitSummary?.count ? `SIMIT consultado: ${simitSummary.count} comparendo(s) identificado(s)${simitSummary.totalDebt ? ` · deuda reportada: $${simitSummary.totalDebt.toLocaleString("es-CO")}` : ""}. TrámiteYa usará estos datos como insumo para reconstruir el caso.` : "SIMIT consultado: no se identificaron comparendos en la respuesta recibida.")}
+      {simitStatus === "error" && "No fue posible consultar SIMIT en este momento. Puedes continuar manualmente; no se inventarán datos."}
+    </div>}
     <div className={`rounded-3xl border border-slate-200 bg-slate-50/80 p-5 md:p-7 transition-all duration-300 ${direction === "forward" ? "translate-x-0" : "translate-x-0"}`}>
       <div className="mb-7"><div className="mb-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">TrámiteYa te acompaña</div><h3 className="text-2xl font-bold tracking-tight md:text-3xl">{step.title}</h3>{step.description && <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{step.description}</p>}<p className="mt-3 text-sm font-medium text-slate-500">Responde en lenguaje normal. Nosotros hacemos la traducción jurídica.</p></div>
       {error && <div role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
