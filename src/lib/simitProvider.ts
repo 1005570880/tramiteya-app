@@ -58,6 +58,30 @@ function firstDefined(...values: unknown[]) {
   return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
 }
 
+function normalizeIdentity(value: unknown) {
+  return String(value ?? '').replace(/[^0-9A-Za-z]/g, '').trim().toUpperCase();
+}
+
+function collectIdentityDocuments(value: unknown, out = new Set<string>(), depth = 0): Set<string> {
+  if (!value || depth > 8) return out;
+  if (Array.isArray(value)) {
+    for (const item of value) collectIdentityDocuments(item, out, depth + 1);
+    return out;
+  }
+  if (typeof value !== 'object') return out;
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isIdentityKey = /^(numerodocumento|documentnumber|documento|cedula|identificacion|identification|numeroidentificacion|docnumber)$/.test(normalizedKey);
+    if (isIdentityKey && (typeof child === 'string' || typeof child === 'number')) {
+      const candidate = normalizeIdentity(child);
+      if (candidate) out.add(candidate);
+    }
+    if (child && typeof child === 'object') collectIdentityDocuments(child, out, depth + 1);
+  }
+  return out;
+}
+
 function toArray(value: any): any[] {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.items)) return value.items;
@@ -104,23 +128,15 @@ function normalizeRecords(
 
   const records: SimitComparendo[] = allItems.map(({ item, kind }) => {
     const inf = Array.isArray(item?.infracciones) ? item.infracciones[0] : null;
-    const explicitDocument = String(firstDefined(
+    const explicitDocument = normalizeIdentity(firstDefined(
       item?.infractor?.numeroDocumento,
       item?.numeroDocumento,
       item?.documentNumber,
       item?.documento,
       item?.persona?.numeroDocumento,
-    ) ?? '').replace(/[^0-9A-Za-z]/g, '').trim() || undefined;
+    )) || undefined;
 
-    const number = String(firstDefined(
-      item?.numeroComparendo,
-      item?.NúmeroComparendo,
-      item?.comparendoId,
-      item?.numero,
-      item?.number,
-      item?.comparendo,
-      item?.numeroMulta,
-    ) ?? '').trim() || undefined;
+    const number = String(firstDefined(item?.numeroComparendo, item?.NúmeroComparendo, item?.comparendoId, item?.numero, item?.number, item?.comparendo, item?.numeroMulta) ?? '').trim() || undefined;
 
     return {
       kind,
@@ -129,15 +145,7 @@ function normalizeRecords(
       authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
       department: String(firstDefined(item?.departamento, item?.department) ?? '').trim() || undefined,
       plate: String(firstDefined(item?.placa, item?.Placa, item?.placavehiculo, item?.vehiclePlate, item?.vehiculo?.placa) ?? '').trim() || undefined,
-      ownerName: String(firstDefined(
-        item?.nombrePropietario,
-        item?.propietario,
-        item?.titular,
-        item?.nombreCompleto,
-        item?.infractorComparendo,
-        item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '',
-        personName,
-      ) ?? '').trim() || undefined,
+      ownerName: String(firstDefined(item?.nombrePropietario, item?.propietario, item?.titular, item?.nombreCompleto, item?.infractorComparendo, item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '', personName) ?? '').trim() || undefined,
       documentNumber: explicitDocument,
       infractionCode: String(firstDefined(item?.codigoInfraccion, item?.codigo, item?.infraccion, inf?.codigoInfraccion) ?? '').trim() || undefined,
       description: String(firstDefined(item?.descripcionInfraccion, item?.descripcion, inf?.descripcionInfraccion) ?? '').trim() || undefined,
@@ -152,23 +160,29 @@ function normalizeRecords(
     };
   });
 
-  // The endpoints are already scoped by the supplied document. Reject only an explicit mismatch;
-  // /comparendos can legitimately omit documentNumber in older SIMIT records.
-  const valid = records.filter((item) => !item.documentNumber || item.documentNumber === documentNumber);
-  if (records.length > 0 && valid.length === 0) throw new SimitDataIntegrityError('El proveedor devolvió registros que no pertenecen al documento consultado.');
+  const requestedDocument = normalizeIdentity(documentNumber);
+  const payloadDocuments = collectIdentityDocuments(raw);
+  const mismatchedPayloadDocuments = [...payloadDocuments].filter((candidate) => candidate !== requestedDocument);
+  if (mismatchedPayloadDocuments.length > 0) {
+    throw new SimitDataIntegrityError('El proveedor devolvió una identidad documental distinta a la consultada. TrámiteYa bloqueó la respuesta.');
+  }
+
+  const recordsWithoutIdentity = records.filter((item) => !item.documentNumber);
+  const mismatchedRecords = records.filter((item) => item.documentNumber && item.documentNumber !== requestedDocument);
+  if (mismatchedRecords.length > 0 || recordsWithoutIdentity.length > 0) {
+    throw new SimitDataIntegrityError('TrámiteYa no pudo verificar que todos los registros pertenecen a la cédula consultada. Los datos fueron bloqueados para evitar mezclar información de terceros.');
+  }
 
   const totalDebt = Number(firstDefined(data?.total_deuda, data?.totalDeuda, data?.total_pendiente, data?.totalMultasPagar, data?.total) ?? 0) || undefined;
   const providerCount = Number(firstDefined(data?.totalMultas, data?.cantMultasPagar, data?.pendingCount) ?? 0) || 0;
 
-  return { records: valid, personName, totalDebt, pendingCount: providerCount || valid.length || undefined };
+  return { records, personName, totalDebt, pendingCount: providerCount || records.length || undefined };
 }
 
 function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) {
   const merged = new Map<string, SimitComparendo>();
   for (const record of [...primary, ...secondary]) {
-    const number = record.number?.trim();
-    const resolution = record.resolutionNumber?.trim();
-    const key = number ? `number:${number}` : resolution ? `resolution:${resolution}` : [record.date, record.plate, record.infractionCode, record.authority, record.value].join('|');
+    const key = record.number ? `number:${record.number}` : record.resolutionNumber ? `resolution:${record.resolutionNumber}` : [record.date, record.plate, record.infractionCode, record.authority, record.value].join('|');
     const previous = merged.get(key);
     if (!previous) {
       merged.set(key, record);
@@ -200,14 +214,11 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   const token = getVerifikToken();
   const provider = token && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual') ? 'verifik' : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
-
   if (!provider) return { provider: 'official-manual', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: false, verificationRequired: true, officialUrl, comparendos: [] };
 
   if (provider === 'verifik') {
     const verifikToken = token || requiredEnv('VERIFIK_API_TOKEN');
     const query = `documentType=${encodeURIComponent(documentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
-
-    // /consultar gives the document-level fines/person view; /comparendos gives the ticket list.
     const [generalRaw, comparendosRaw] = await Promise.all([
       fetchVerifik(`https://api.verifik.co/v2/co/simit/consultar?${query}`, verifikToken),
       fetchVerifik(`https://api.verifik.co/v2/co/simit/comparendos?${query}`, verifikToken),
@@ -220,12 +231,7 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
     const ticketData = unwrapVerifik(comparendosRaw);
     const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
     const totalDebt = general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
-    const providerCount = Math.max(
-      general.pendingCount ?? 0,
-      tickets.pendingCount ?? 0,
-      comparendos.length,
-      Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0),
-    );
+    const providerCount = Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
 
     return {
       provider: 'verifik',
