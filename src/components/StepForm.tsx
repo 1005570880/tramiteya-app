@@ -24,7 +24,7 @@ function questionHint(field: FormField) {
   return "No necesitas utilizar lenguaje jurídico. Responde como se lo explicarías a un abogado.";
 }
 
-export default function StepForm({ steps, onComplete, draftKey, resetSignal, instanceId, onInstanceReady, initialAnswers }: { steps: FormStep[]; onComplete: (data: FormAnswers) => void; draftKey?: string; resetSignal?: number; instanceId?: string; onInstanceReady?: (id: string) => void; initialAnswers?: FormAnswers }) {
+export default function StepForm({ steps, onComplete, draftKey, resetSignal, instanceId, onInstanceReady, initialAnswers, onFieldBlur }: { steps: FormStep[]; onComplete: (data: FormAnswers) => void; draftKey?: string; resetSignal?: number; instanceId?: string; onInstanceReady?: (id: string) => void; initialAnswers?: FormAnswers; onFieldBlur?: (id: string, value: FormAnswers[string], answers: FormAnswers) => void }) {
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<FormAnswers>(initialAnswers || {});
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -59,6 +59,7 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   }, [answers, draftKey, instanceId]);
 
   function setField(id: string, value: FormAnswers[string]) { setAnswers((current) => ({ ...current, [id]: value })); setError(null); }
+  function blurField(id: string) { onFieldBlur?.(id, answers[id], answers); }
   function hasValue(value: FormAnswers[string]) { if (value === null || value === undefined || value === false) return false; if (Array.isArray(value)) return value.length > 0; return String(value).trim().length > 0; }
   function next() {
     const missing = visibleFields.find((f) => f.required && !hasValue(answers[f.id]));
@@ -72,11 +73,11 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   function renderField(field: FormField) {
     const value = answers[field.id];
     const common = "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-[16px] outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100";
-    if (field.type === "textarea") return <textarea ref={inputRef as React.RefObject<HTMLTextAreaElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} className={`${common} min-h-36 resize-y`} />;
-    if (field.type === "select") return <select ref={inputRef as React.RefObject<HTMLSelectElement>} value={typeof value === "string" ? value : ""} onChange={(e) => setField(field.id, e.target.value)} className={common}><option value="">Selecciona una opción</option>{field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
-    if (field.type === "radio") return <div className="grid gap-3 sm:grid-cols-2">{field.options?.map((o) => { const active = value === o.value; return <button type="button" key={o.value} onClick={() => setField(field.id, o.value)} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-slate-300 hover:-translate-y-0.5"}`}><span className="font-medium">{o.label}</span></button>; })}</div>;
-    if (field.type === "checkbox") return <button type="button" onClick={() => setField(field.id, value !== true)} className={`w-full rounded-2xl border p-4 text-left transition ${value === true ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}><span className="font-medium">{value === true ? "✓ Sí" : "○ No"}</span></button>;
-    return <input ref={inputRef as React.RefObject<HTMLInputElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className={common} />;
+    if (field.type === "textarea") return <textarea ref={inputRef as React.RefObject<HTMLTextAreaElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} className={`${common} min-h-36 resize-y`} />;
+    if (field.type === "select") return <select ref={inputRef as React.RefObject<HTMLSelectElement>} value={typeof value === "string" ? value : ""} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} className={common}><option value="">Selecciona una opción</option>{field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
+    if (field.type === "radio") return <div className="grid gap-3 sm:grid-cols-2">{field.options?.map((o) => { const active = value === o.value; return <button type="button" key={o.value} onClick={() => { setField(field.id, o.value); setTimeout(() => blurField(field.id), 0); }} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-slate-300 hover:-translate-y-0.5"}`}><span className="font-medium">{o.label}</span></button>; })}</div>;
+    if (field.type === "checkbox") return <button type="button" onClick={() => { const next = value !== true; setField(field.id, next); setTimeout(() => onFieldBlur?.(field.id, next, { ...answers, [field.id]: next }), 0); }} className={`w-full rounded-2xl border p-4 text-left transition ${value === true ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}><span className="font-medium">{value === true ? "✓ Sí" : "○ No"}</span></button>;
+    return <input ref={inputRef as React.RefObject<HTMLInputElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={() => blurField(field.id)} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className={common} />;
   }
 
   return <div className="space-y-6">
