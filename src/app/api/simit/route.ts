@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupSimitByDocumentStrict } from "@/lib/simitVerifikStrict";
 
+// Deployment trigger: strict SIMIT identity validation must run in the deployed build.
 export async function POST(req: NextRequest) {
   let body: { documentType?: string; documentNumber?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, code: "INVALID_RESPONSE", message: "Cuerpo de solicitud inválido." }, { status: 400 }); }
