@@ -7,6 +7,7 @@ import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
 import { analyzeLegalBasis } from './normativeEngine';
 import { getProcedureModule, renderConfiguredDocument } from './genericProcedureEngine';
+import { runLegalAiEngine } from './legalAiEngine';
 import '../data/procedureModules';
 
 function generateId(prefix = 'doc') {
@@ -15,6 +16,17 @@ function generateId(prefix = 'doc') {
 }
 
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
+
+function inferLegalVertical(procedure: Procedure): string {
+  const value = `${procedure.slug} ${procedure.category} ${procedure.title}`.toLowerCase();
+  if (/salud|medic|eps|tutela/.test(value)) return 'salud';
+  if (/habeas|datacredito|transunion|credit|reporte/.test(value)) return 'habeas-data';
+  if (/contrato|arrendamiento|laboral|prestaci[oó]n|compraventa/.test(value)) return 'contratos';
+  if (/transito|tr[aá]nsito|comparendo|multa|fotomulta|embargo/.test(value)) return 'transito';
+  if (/petici[oó]n/.test(value)) return 'derecho-de-peticion';
+  if (/tutela/.test(value)) return 'tutela';
+  return procedure.category || 'general';
+}
 
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
   const module = getProcedureModule(procedure.slug);
@@ -34,17 +46,75 @@ function appendLegalBasis(content: string, procedure: Procedure, answers: FormAn
   return [content, '', 'FUNDAMENTO NORMATIVO DE REFERENCIA', ...normativeLines, 'CRITERIO DE SELECCIÓN', ...analysis.rationale, '', 'ADVERTENCIA DE REVISIÓN', ...analysis.alerts].join('\n');
 }
 
-function buildFinalContent(procedure: Procedure, answers: FormAnswers): string { return appendLegalBasis(documentContent(procedure, answers), procedure, answers); }
+function buildFinalContent(procedure: Procedure, answers: FormAnswers): string {
+  return appendLegalBasis(documentContent(procedure, answers), procedure, answers);
+}
+
+async function buildAiEnhancedContent(procedure: Procedure, answers: FormAnswers, baseContent: string): Promise<string> {
+  // La IA es una capa de razonamiento/redacción sobre la biblioteca jurídica versionada.
+  // Si no hay clave o la salida no supera la validación, conservamos el documento determinista.
+  if (!process.env.OPENAI_API_KEY) return baseContent;
+
+  try {
+    const result = await runLegalAiEngine({
+      vertical: inferLegalVertical(procedure),
+      procedure: procedure.slug,
+      facts: answers as unknown as Record<string, unknown>,
+      documentType: procedure.title,
+      draftingInstructions: [
+        'Redacta el documento final de TrámiteYa a partir de los hechos suministrados.',
+        'Usa exclusivamente normas y jurisprudencia que aparezcan en LEGAL_CONTEXT.',
+        'No inventes hechos, artículos, sentencias, radicados, fechas ni autoridades.',
+        'Conserva la finalidad y estructura jurídica del documento base cuando sea compatible con el caso.',
+        'Distingue hechos acreditados de hechos que requieren prueba y formula solicitudes concretas.',
+        'El resultado debe ser directamente utilizable como escrito jurídico colombiano, con lenguaje profesional y prudente.',
+        `DOCUMENTO BASE GENERADO POR LAS PLANTILLAS Y EL MOTOR NORMATIVO:\n${baseContent.slice(0, 16000)}`,
+      ].join('\n\n'),
+    });
+
+    if (result.provider === 'openai' && result.verified && result.draft.trim().length > 100) {
+      return result.draft.trim();
+    }
+
+    console.warn('Legal AI validation did not pass; deterministic document retained.', result.verificationWarnings);
+  } catch (error) {
+    console.warn('Legal AI enhancement failed; deterministic document retained.', error);
+  }
+
+  return baseContent;
+}
 
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
-  const content = buildFinalContent(procedure, answers);
-  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content } };
+  const baseContent = buildFinalContent(procedure, answers);
+  const content = await buildAiEnhancedContent(procedure, answers, baseContent);
+
+  return {
+    id: generateId('doc'),
+    title: `${procedure.title} - Documento generado`,
+    procedureId: procedure.id,
+    content,
+    createdAt: generatedAt,
+    generatedAt,
+    version,
+    status: 'ready',
+    instanceId,
+    sourceVersion: `v${version}`,
+    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content },
+  };
 }
 
-export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(buildFinalContent(procedure, answers)); }
-export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(buildFinalContent(procedure, answers)); }
+export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
+  const baseContent = buildFinalContent(procedure, answers);
+  return renderDocx(await buildAiEnhancedContent(procedure, answers, baseContent));
+}
+
+export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> {
+  const baseContent = buildFinalContent(procedure, answers);
+  return renderPdf(await buildAiEnhancedContent(procedure, answers, baseContent));
+}
+
 export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
 
