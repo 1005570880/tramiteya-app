@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
         NETWORK_ERROR: 504,
         INVALID_RESPONSE: 502,
         SANDBOX_EMPTY: 502,
+        CONFIGURATION_ERROR: 500,
       };
 
       return NextResponse.json(
