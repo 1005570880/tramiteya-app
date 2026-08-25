@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { runLegalAiEngine } from '../../../../lib/legalAiEngine';
+import { runLegalAiEngine } from '../../../lib/legalAiEngine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
