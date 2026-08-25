@@ -15,7 +15,8 @@ export async function POST(request: Request) {
     }
 
     const result = await lookupSimitByDocument(documentType, documentNumber);
-    return NextResponse.json(result);
+    const { raw: _raw, ...safeResult } = result;
+    return NextResponse.json(safeResult);
   } catch (error) {
     console.error('SIMIT lookup failed:', error);
     return NextResponse.json(
