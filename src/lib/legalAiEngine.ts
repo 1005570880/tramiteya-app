@@ -44,6 +44,28 @@ function sanitizeDraft(draft: string) {
     .trim();
 }
 
+function trafficCitationWarnings(draft: string, input: LegalAiInput) {
+  const traffic = input.vertical === 'transito' || /tr[aá]nsito|comparendo|multa|fotomulta|prescripci[oó]n-comparendo|caducidad-comparendo/i.test(`${input.vertical} ${input.procedure}`);
+  if (!traffic) return [];
+
+  const warnings: string[] = [];
+  const text = draft.toLowerCase();
+  const fiveYears = /cinco\s*\(?5\)?\s*años|5\s*años/;
+  const art91Num5 = /art(?:í|i)culo\s*91\s*(?:,|del)?\s*numeral\s*5|art\.?\s*91\s*(?:,|del)?\s*numeral\s*5/;
+  const oldArt159 = /art(?:í|i)culo\s*159[^.\n]{0,180}(presentaci[oó]n\s+de\s+la\s+demanda|interrumpir[aá].{0,30}demanda)/;
+
+  if (art91Num5.test(text) && fiveYears.test(text)) {
+    warnings.push('Citación jurídica inválida: los cinco años corresponden al artículo 91 numeral 3 del CPACA, no al numeral 5.');
+  }
+  if (oldArt159.test(text)) {
+    warnings.push('Citación jurídica desactualizada: para el texto vigente del artículo 159 de la Ley 769 de 2002, la interrupción de la prescripción ocurre con la notificación del mandamiento de pago.');
+  }
+  if (/art(?:í|i)culo\s*159/.test(text) && /prescrib.{0,80}cinco\s*años/.test(text)) {
+    warnings.push('Citación jurídica inválida: el término especial del artículo 159 de la Ley 769 de 2002 es de tres años, sujeto a sus reglas de interrupción.');
+  }
+  return warnings;
+}
+
 function fallbackDraft(input: LegalAiInput, context: Awaited<ReturnType<typeof getLegalContext>>) {
   const sourceById = new Map(context.statutes.concat(context.jurisprudence).map((source) => [source.id, source]));
   const rules = context.rules
@@ -79,7 +101,7 @@ export async function runLegalAiEngine(input: LegalAiInput): Promise<LegalAiResu
     };
   }
 
-  const system = `Eres el motor jurídico de TrámiteYa para Colombia. Tu tarea es relacionar los hechos concretos con la biblioteca jurídica proporcionada y redactar un documento jurídico utilizable. REGLAS ABSOLUTAS: no inventes hechos, normas, artículos, sentencias, radicados, fechas ni autoridades; solo puedes citar sourceId presentes en LEGAL_CONTEXT; no conviertas una hipótesis en un hecho probado; si falta información, formula una pregunta o utiliza una redacción prudente; no incluyas URLs, fuentes, metadatos internos ni explicaciones sobre el motor dentro de DRAFT. Devuelve únicamente JSON con draft y citationsUsed.`;
+  const system = `Eres el motor jurídico de TrámiteYa para Colombia. Relaciona hechos concretos con la biblioteca jurídica proporcionada y redacta un documento jurídico utilizable. REGLAS ABSOLUTAS: no inventes hechos, normas, artículos, sentencias, radicados, fechas ni autoridades; solo puedes citar sourceId presentes en LEGAL_CONTEXT; no conviertas una hipótesis en un hecho probado; si falta información, formula una pregunta o utiliza una redacción prudente; no incluyas URLs, fuentes, metadatos internos ni explicaciones sobre el motor dentro de DRAFT.\n\nCONTROL ESPECIAL PARA TRÁNSITO: el artículo 159 de la Ley 769 de 2002 establece un término de tres (3) años desde la ocurrencia del hecho y que la prescripción se interrumpe con la notificación del mandamiento de pago; el artículo 818 del Estatuto Tributario regula los efectos de la interrupción y el reinicio del término de la acción de cobro; el artículo 91 numeral 3 del CPACA es la causal de cinco (5) años por inactividad de la autoridad respecto de un acto en firme; el artículo 91 numeral 5 se refiere a pérdida de vigencia y NO es la causal de los cinco años. Nunca atribuyas los cinco años al numeral 5. No uses el texto histórico del artículo 159 que hablaba de interrupción con la presentación de la demanda. Devuelve únicamente JSON con draft y citationsUsed.`;
   const prompt = `${system}\n\nTIPO DE DOCUMENTO:\n${input.documentType}\n\nHECHOS Y RESPUESTAS:\n${compact(input.facts)}\n\nLEGAL_CONTEXT:\n${compact(context)}\n\nINSTRUCCIONES:\n${input.draftingInstructions ?? 'Construye la argumentación mediante norma + regla jurisprudencial + hecho acreditado + aplicación al caso + conclusión. Mantén estructura jurídica profesional colombiana.'}`;
 
   const response = await fetch('https://api.openai.com/v1/responses', {
@@ -97,6 +119,7 @@ export async function runLegalAiEngine(input: LegalAiInput): Promise<LegalAiResu
   if (invalid.length) warnings.push(`La IA intentó usar fuentes no presentes en la biblioteca: ${invalid.join(', ')}.`);
 
   const draft = sanitizeDraft(typeof raw?.draft === 'string' ? raw.draft : '');
+  warnings.push(...trafficCitationWarnings(draft, input));
   if (draft.length < 200) warnings.push('La IA no produjo un documento suficientemente extenso.');
 
   const verified = warnings.length === 0 && draft.length >= 200;
