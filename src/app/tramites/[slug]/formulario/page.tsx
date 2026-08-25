@@ -22,12 +22,12 @@ type SimitRecord = {
   organismId?: string; photoDetection?: boolean;
 };
 
-function formatMoney(value?: number) {
+function money(value?: number) {
   if (value == null) return "—";
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
 }
 
-function simitAnswers(documentNumber: string, record: SimitRecord): FormAnswers {
+function fromSimit(documentNumber: string, record: SimitRecord): FormAnswers {
   return {
     documentType: "CC", documentNumber, cedula: documentNumber, numeroDocumento: documentNumber,
     nombreCompleto: record.ownerName || "", nombres: record.ownerName || "",
@@ -43,19 +43,6 @@ function simitAnswers(documentNumber: string, record: SimitRecord): FormAnswers 
 }
 
 export default function ProcedureForm({ params }: { params: { slug: string } }) {
-  const [loading, setLoading] = useState(false);
-  const [resetSignal, setResetSignal] = useState(0);
-  const [instanceId, setInstanceId] = useState<string | undefined>();
-  const [remoteAnswers, setRemoteAnswers] = useState<FormAnswers | undefined>();
-  const [analysis, setAnalysis] = useState<any[]>([]);
-  const [preview, setPreview] = useState<FormAnswers | null>(null);
-  const [simitDocument, setSimitDocument] = useState("");
-  const [simitLoading, setSimitLoading] = useState(false);
-  const [simitError, setSimitError] = useState("");
-  const [simitRecords, setSimitRecords] = useState<SimitRecord[]>([]);
-  const [selectedSimit, setSelectedSimit] = useState<SimitRecord | null>(null);
-  const [simitChecked, setSimitChecked] = useState(false);
-
   const router = useRouter();
   const search = useSearchParams();
   const definition = getDynamicFormDefinition(params.slug);
@@ -63,11 +50,24 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const draftKey = `procedure:${params.slug}`;
   const requiresSimitFirst = params.slug === "derecho-de-peticion-eliminar-multa";
 
+  const [resetSignal, setResetSignal] = useState(0);
+  const [instanceId, setInstanceId] = useState<string | undefined>();
+  const [remoteAnswers, setRemoteAnswers] = useState<FormAnswers | undefined>();
+  const [preview, setPreview] = useState<FormAnswers | null>(null);
+  const [analysis, setAnalysis] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [simitDocument, setSimitDocument] = useState("");
+  const [simitLoading, setSimitLoading] = useState(false);
+  const [simitError, setSimitError] = useState("");
+  const [simitRecords, setSimitRecords] = useState<SimitRecord[]>([]);
+  const [selectedSimit, setSelectedSimit] = useState<SimitRecord | null>(null);
+  const [simitChecked, setSimitChecked] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
-        const requested = search.get("instance");
         const saved = localDraftStorage.load(draftKey) as any;
+        const requested = search.get("instance");
         const supabase = getSupabaseBrowser();
         if (!supabase) return;
         const { data: { session } } = await supabase.auth.getSession();
@@ -95,12 +95,14 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   }, [search, draftKey, params.slug, requiresSimitFirst]);
 
   if (!definition || !procedure) {
-    return <main className="min-h-screen bg-slate-50"><Header/><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer/></main>;
+    return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer /></main>;
   }
 
   function analyze(a: FormAnswers) {
+    if (!procedure) return [];
     const currentProcedure = procedure;
-    const decisions = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(`${params.slug} ${currentProcedure.title} ${currentProcedure.category}`) ? evaluateTrafficCase(a) : [];
+    const text = `${params.slug} ${currentProcedure.title} ${currentProcedure.category}`;
+    const decisions = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(text) ? evaluateTrafficCase(a) : [];
     setAnalysis(decisions);
     return decisions;
   }
@@ -123,10 +125,10 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
 
   async function ensureInstance(a: FormAnswers) {
     const currentProcedure = procedure;
-    const s = getSupabaseBrowser();
+    const supabase = getSupabaseBrowser();
     const saved = localDraftStorage.load(draftKey) as any;
-    if (s) {
-      const { data: { session } } = await s.auth.getSession();
+    if (supabase) {
+      const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         if (instanceId) {
           const r = await fetch(`/api/instances/${instanceId}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
@@ -136,8 +138,8 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
         if (r.ok) { const x = await r.json(); setInstanceId(x.id); return x; }
       }
     }
-    const id = saved?.data?.__instanceId;
-    if (id) { const x = procedureStorage.get(id); if (x) return x; }
+    const savedId = saved?.data?.__instanceId;
+    if (savedId) { const x = procedureStorage.get(savedId); if (x) return x; }
     const x = procedureStorage.create(currentProcedure.id, currentProcedure.slug, a); setInstanceId(x.id); return x;
   }
 
@@ -152,54 +154,58 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       const r = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: procedure.slug, answers: enrichedAnswers, instanceId: instance.id }) });
       if (!r.ok) throw new Error("Document generation failed");
       const document = await r.json();
-      const s = getSupabaseBrowser();
-      if (s) {
-        const { data: { session } } = await s.auth.getSession();
+      if (getSupabaseBrowser()) {
+        const supabase = getSupabaseBrowser();
+        const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() }) });
       }
       procedureStorage.update(instance.id, { answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() });
       localDraftStorage.remove(draftKey);
       router.push(`/tramites/${procedure.slug}/resultado/${instance.id}`);
-    } catch (e) { console.error(e); alert("No fue posible generar el documento. Inténtalo nuevamente"); }
+    } catch (e) { console.error(e); alert("No fue posible generar el documento. Inténtalo nuevamente."); }
     finally { setLoading(false); }
   }
 
-  const selectedAnswers = selectedSimit ? simitAnswers(simitDocument, selectedSimit) : undefined;
+  function clearDraft() {
+    localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1);
+    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false); setSimitError("");
+  }
+
+  const selectedAnswers = selectedSimit ? fromSimit(simitDocument, selectedSimit) : undefined;
   const formInitialAnswers = selectedAnswers ? ({ ...(remoteAnswers || {}), ...selectedAnswers } as FormAnswers) : remoteAnswers;
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      <Header/>
+      <Header />
       <section className="max-w-4xl mx-auto px-4 py-12">
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow">
           <div className="mb-6"><p className="text-sm font-medium text-blue-600">{procedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
-          <div className="flex justify-end mb-4"><button onClick={() => { localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1); setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false); setSimitError(""); }} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
+          <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
 
           {requiresSimitFirst && !selectedSimit ? (
             <div className="space-y-6">
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta inteligente</p><h2 className="text-xl font-bold mt-1">Primero buscamos tus multas y comparendos</h2><p className="text-sm text-slate-600 mt-2">Ingresa la cédula. TrámiteYa consultará SIMIT y te mostrará los registros encontrados para que selecciones exactamente el que quieres revisar.</p></div>
-              <div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600"/><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div>
+              <div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div>
               <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Consultando SIMIT..." : "Consultar SIMIT"}</button>
               {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
-              {simitChecked && simitRecords.length > 0 && <div className="space-y-3"><div><h2 className="text-lg font-bold">Registros encontrados</h2><p className="text-sm text-slate-500">Selecciona uno para continuar. Los datos se cargarán automáticamente en el formulario.</p></div>{simitRecords.map((record, index) => <button type="button" key={`${record.number || "registro"}-${index}`} onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-2xl border border-slate-200 p-4 hover:border-blue-500 hover:bg-blue-50 transition"><div className="flex items-center justify-between gap-4"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="text-sm font-semibold">{formatMoney(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm"><div><span className="text-slate-400 block">Placa</span>{record.plate || "—"}</div><div><span className="text-slate-400 block">Fecha</span>{record.date || "—"}</div><div><span className="text-slate-400 block">Organismo</span>{record.authority || "—"}</div><div><span className="text-slate-400 block">Estado</span>{record.status || "—"}</div></div></button>)}</div>}
+              {simitChecked && simitRecords.length > 0 && <div className="space-y-3"><div><h2 className="text-lg font-bold">Registros encontrados</h2><p className="text-sm text-slate-500">Selecciona uno para continuar. Los datos se cargarán automáticamente en el formulario.</p></div>{simitRecords.map((record, index) => <button type="button" key={`${record.number || "registro"}-${index}`} onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-2xl border border-slate-200 p-4 hover:border-blue-500 hover:bg-blue-50 transition"><div className="flex items-center justify-between gap-4"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="text-sm font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm"><div><span className="text-slate-400 block">Placa</span>{record.plate || "—"}</div><div><span className="text-slate-400 block">Fecha</span>{record.date || "—"}</div><div><span className="text-slate-400 block">Organismo</span>{record.authority || "—"}</div><div><span className="text-slate-400 block">Estado</span>{record.status || "—"}</div></div></button>)}</div>}
             </div>
           ) : !preview ? (
             <>
-              {requiresSimitFirst && selectedSimit && <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase text-emerald-700">Registro SIMIT seleccionado</p><strong>{selectedSimit.number || "Comparendo"}</strong><p className="text-sm text-slate-600 mt-1">{selectedSimit.plate || "Sin placa"} · {selectedSimit.authority || "Sin organismo"} · {formatMoney(selectedSimit.value)}</p></div><button type="button" onClick={() => setSelectedSimit(null)} className="text-sm font-semibold text-emerald-800">Cambiar</button></div></div>}
-              <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers}/>
+              {requiresSimitFirst && selectedSimit && <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase text-emerald-700">Registro SIMIT seleccionado</p><strong>{selectedSimit.number || "Comparendo"}</strong><p className="text-sm text-slate-600 mt-1">{selectedSimit.plate || "Sin placa"} · {selectedSimit.authority || "Sin organismo"} · {money(selectedSimit.value)}</p></div><button type="button" onClick={() => setSelectedSimit(null)} className="text-sm font-semibold text-emerald-800">Cambiar</button></div></div>}
+              <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} />
             </>
           ) : (
             <div className="space-y-6">
               <div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div>
-              {requiresSimitFirst && selectedSimit && <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4"><p className="text-xs font-semibold uppercase text-blue-700">Registro seleccionado</p><p className="font-bold mt-1">{selectedSimit.number || "Comparendo"}</p><p className="text-sm mt-1">{selectedSimit.plate || "Sin placa"} · {selectedSimit.authority || "Sin organismo"} · {formatMoney(selectedSimit.value)}</p></div>}
-              <div className="rounded-xl border bg-slate-50 p-4 text-sm space-y-2"><p><strong>Documento:</strong> {String(preview.documentNumber || preview.cedula || "—")}</p><p><strong>Comparendo:</strong> {String(preview.numeroComparendo || preview.comparendo || "—")}</p><p><strong>Placa:</strong> {String(preview.placa || "—")}</p><p><strong>Organismo:</strong> {String(preview.organismoTransito || preview.autoridad || "—")}</p></div>
-              {analysis.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 className="font-semibold">Análisis preliminar</h3><p className="text-sm text-slate-600 mt-1">TrámiteYa aplicará el motor jurídico configurado al generar el documento.</p></div>}
-              <div className="flex justify-between gap-3"><button type="button" onClick={() => setPreview(null)} className="px-4 py-2 rounded-md border">Atrás</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="px-5 py-2 rounded-md bg-blue-600 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div>
+              {analysis.length > 0 && <div className="rounded-xl border border-blue-100 bg-blue-50 p-4"><p className="font-semibold">Análisis preliminar</p><p className="text-sm text-slate-600 mt-1">TrámiteYa identificó {analysis.length} criterio(s) jurídico(s) aplicable(s). El documento se generará con base en la información suministrada.</p></div>}
+              <div className="rounded-xl border p-4 bg-slate-50"><pre className="whitespace-pre-wrap text-sm">{JSON.stringify(preview, null, 2)}</pre></div>
+              <div className="flex justify-between gap-3"><button onClick={() => setPreview(null)} className="px-4 py-2 rounded-md border">Volver a editar</button><button onClick={() => generate(preview)} disabled={loading} className="px-5 py-2 rounded-md bg-blue-600 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div>
             </div>
           )}
         </div>
       </section>
-      <Footer/>
+      <Footer />
     </main>
   );
 }
