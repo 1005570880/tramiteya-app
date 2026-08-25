@@ -9,7 +9,7 @@ type SimitRecordKind = "multa" | "comparendo";
 type SimitComparendo = {
   kind?: SimitRecordKind; number?: string; date?: string; authority?: string; department?: string; plate?: string;
   ownerName?: string; infractionCode?: string; description?: string; status?: string;
-  value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string;
+  value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string;
 };
 
 type SimitData = {
@@ -44,6 +44,7 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
   const [simitStatus, setSimitStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [simitSummary, setSimitSummary] = useState<{ count: number; totalDebt?: number } | null>(null);
   const [selectedComparendo, setSelectedComparendo] = useState<number | null>(null);
+  const [simitProviderError, setSimitProviderError] = useState(false);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const step = steps[index];
@@ -56,7 +57,7 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
 
   useEffect(() => { if (initialAnswers) setAnswers(initialAnswers); }, [initialAnswers]);
   useEffect(() => { if (!draftKey) return; const saved = localDraftStorage.load(draftKey) as any; if (saved?.data && !initialAnswers) setAnswers(saved.data as FormAnswers); setSavedAt(saved?.savedAt || null); }, [draftKey, initialAnswers]);
-  useEffect(() => { if (typeof resetSignal === "number") { setAnswers({}); setIndex(0); setSavedAt(null); setError(null); setSimitStatus("idle"); setSimitSummary(null); setSelectedComparendo(null); } }, [resetSignal]);
+  useEffect(() => { if (typeof resetSignal === "number") { setAnswers({}); setIndex(0); setSavedAt(null); setError(null); setSimitStatus("idle"); setSimitSummary(null); setSelectedComparendo(null); setSimitProviderError(false); } }, [resetSignal]);
   useEffect(() => { inputRef.current?.focus(); }, [index]);
   useEffect(() => {
     if (!draftKey) return;
@@ -75,16 +76,20 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
     return () => { if (timeoutRef.current) window.clearTimeout(timeoutRef.current); };
   }, [answers, draftKey, instanceId]);
 
-  function setField(id: string, value: FormAnswers[string]) { setAnswers((current) => ({ ...current, [id]: value })); setError(null); }
+  function setField(id: string, value: FormAnswers[string]) { setAnswers((current) => ({ ...current, [id]: value })); setError(null); setSimitProviderError(false); }
 
   async function lookupSimit(valueOverride?: FormAnswers[string]) {
     const documentNumber = String(valueOverride ?? answers.documento ?? "").replace(/[^0-9]/g, "");
     if (documentNumber.length < 6) { setError("Ingresa una cédula válida para consultar multas y comparendos."); return; }
-    setSimitStatus("loading"); setError(null); setSelectedComparendo(null);
+    setSimitStatus("loading"); setError(null); setSimitProviderError(false); setSelectedComparendo(null);
     try {
       const response = await fetch("/api/simit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentType: "CC", documentNumber }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "No fue posible consultar SIMIT.");
+      const data = await response.json().catch(() => ({}));
+      const providerUnavailable = response.status === 502 || response.status === 503 || data?.code === "SIMIT_PROVIDER_UNAVAILABLE" || data?.error === "SIMIT_PROVIDER_UNAVAILABLE";
+      if (!response.ok) {
+        if (providerUnavailable) throw new Error("SIMIT_PROVIDER_UNAVAILABLE");
+        throw new Error(data?.error || "No fue posible consultar SIMIT.");
+      }
       const records = Array.isArray(data.comparendos) ? data.comparendos : [];
       const normalized: SimitData = { provider: data.provider, found: data.found, pendingCount: data.pendingCount ?? records.length, totalDebt: data.totalDebt, personName: data.personName, comparendos: records, consultedAt: new Date().toISOString() };
       setAnswers((current) => ({ ...current, documento: documentNumber, __simitData: normalized }));
@@ -93,7 +98,14 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
     } catch (lookupError) {
       console.warn("SIMIT lookup unavailable", lookupError);
       setSimitStatus("error");
-      setError(lookupError instanceof Error ? lookupError.message : "No fue posible consultar SIMIT.");
+      const message = lookupError instanceof Error ? lookupError.message : "No fue posible consultar SIMIT.";
+      if (message === "SIMIT_PROVIDER_UNAVAILABLE") {
+        setSimitProviderError(true);
+        setError(null);
+      } else {
+        setSimitProviderError(false);
+        setError(message);
+      }
     }
   }
 
@@ -105,19 +117,37 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
     const parts = ownerName.trim().split(/\s+/).filter(Boolean);
     const nombres = parts.length > 2 ? parts.slice(0, -2).join(" ") : parts[0] || "";
     const apellidos = parts.length > 2 ? parts.slice(-2).join(" ") : parts.slice(1).join(" ");
+    const recordType = item.kind === "multa" ? "multa" : item.description?.toLowerCase().includes("foto") ? "fotomulta" : "comparendo";
     const next: FormAnswers = {
       ...answers,
+      documento: String(answers.documento || ""),
       numero_comparendo: item.number || "",
-      fecha_comparendo: item.date || "",
+      fecha_comparendo: item.date || item.resolutionDate || "",
+      fecha: item.date || item.resolutionDate || "",
       placa: item.plate || "",
       autoridad: item.authority || "",
+      secretaria: item.authority || "",
+      departamento: item.department || "",
       nombres: answers.nombres || nombres,
       apellidos: answers.apellidos || apellidos,
-      tipo_actuacion: item.kind === "multa" ? "multa" : item.description?.toLowerCase().includes("foto") ? "fotomulta" : "comparendo",
-      __selectedComparendo: item as unknown as Record<string, unknown>,
+      tipo_actuacion: recordType,
+      numero_resolucion: item.resolutionNumber || "",
+      resolucion: item.resolutionNumber || "",
+      fecha_resolucion: item.resolutionDate || "",
+      codigo_infraccion: item.infractionCode || "",
+      infraccion: item.infractionCode || item.description || "",
+      descripcion_infraccion: item.description || "",
+      valor_multa: item.value ?? "",
+      valor: item.value ?? "",
+      estado: item.status || "",
+      estado_multa: item.status || "",
+      fecha_notificacion: item.notificationDate || "",
+      fecha_pago: item.paymentDate || "",
+      __selectedComparendo: { ...item, selectedAt: new Date().toISOString() } as unknown as Record<string, unknown>,
     };
     setAnswers(next);
     setError(null);
+    setSimitProviderError(false);
   }
 
   function hasValue(value: FormAnswers[string]) { if (value === null || value === undefined || value === false) return false; if (Array.isArray(value)) return value.length > 0; return String(value).trim().length > 0; }
@@ -144,7 +174,7 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
     if (field.type === "select") return <select ref={inputRef as React.RefObject<HTMLSelectElement>} value={typeof value === "string" ? value : ""} onChange={(e) => setField(field.id, e.target.value)} onBlur={onBlur} className={common}><option value="">Selecciona una opción</option>{field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
     if (field.type === "radio") return <div className="grid gap-3 sm:grid-cols-2">{field.options?.map((o) => { const active = value === o.value; return <button type="button" key={o.value} onClick={() => { setField(field.id, o.value); onFieldBlur?.(field.id, o.value, { ...answers, [field.id]: o.value }); }} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-slate-300 hover:-translate-y-0.5"}`}><span className="font-medium">{o.label}</span></button>; })}</div>;
     if (field.type === "checkbox") return <button type="button" onClick={() => { const nextValue = value !== true; setField(field.id, nextValue); onFieldBlur?.(field.id, nextValue, { ...answers, [field.id]: nextValue }); }} className={`w-full rounded-2xl border p-4 text-left transition ${value === true ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}><span className="font-medium">{value === true ? "✓ Sí" : "○ No"}</span></button>;
-    return <input ref={inputRef as React.RefObject<HTMLInputElement>} value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={onBlur} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className={common} />;
+    return <input ref={inputRef as React.RefObject<HTMLInputElement>} value={typeof value === "string" ? value : value == null ? "" : String(value)} placeholder={field.placeholder} onChange={(e) => setField(field.id, e.target.value)} onBlur={onBlur} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className={common} />;
   }
 
   return <div className="space-y-6">
@@ -155,13 +185,14 @@ export default function StepForm({ steps, onComplete, draftKey, resetSignal, ins
       <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-blue-600">Consulta inteligente</p><h3 className="mt-1 text-xl font-bold text-slate-900">Primero buscamos tus multas y comparendos</h3><p className="mt-1 text-sm text-slate-600">Ingresa la cédula. TrámiteYa mostrará exactamente lo que reporte SIMIT y podrás escoger el registro que quieres revisar.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">SIMIT</span></div>
       {isSimitSelectionStep && <div className="mt-5 flex flex-col gap-3 sm:flex-row"><input value={typeof answers.documento === "string" ? answers.documento : ""} onChange={(e) => setField("documento", e.target.value.replace(/[^0-9]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") lookupSimit(); }} placeholder="Número de cédula" inputMode="numeric" className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-lg outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /><button type="button" onClick={() => lookupSimit()} disabled={simitStatus === "loading"} className="rounded-2xl bg-blue-600 px-6 py-3.5 font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50">{simitStatus === "loading" ? "Consultando…" : "Consultar SIMIT"}</button></div>}
       {simitStatus === "ready" && <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{simitSummary?.count ? `Encontramos ${simitSummary.count} registro(s) en SIMIT${simitSummary.totalDebt ? ` · deuda reportada: $${simitSummary.totalDebt.toLocaleString("es-CO")}` : ""}. Selecciona uno para continuar.` : "La consulta respondió correctamente, pero no trajo multas ni comparendos."}</div>}
-      {simitStatus === "error" && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">La consulta automática no está disponible en este momento. No se inventarán datos.</div>}
-      {isSimitSelectionStep && simitData?.comparendos.length ? <div className="mt-5 grid gap-3">{simitData.comparendos.map((item, itemIndex) => { const active = selectedComparendo === itemIndex; const kindLabel = item.kind === "multa" ? "Multa" : "Comparendo"; return <button type="button" key={`${item.kind || "comparendo"}-${item.number || "registro"}-${itemIndex}`} onClick={() => selectComparendo(itemIndex)} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-600 text-white shadow-lg" : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md"}`}><div className="flex items-center justify-between gap-3"><div><p className={`text-xs font-semibold uppercase tracking-wide ${active ? "text-blue-100" : "text-slate-500"}`}>{kindLabel} {itemIndex + 1}</p><p className="mt-1 font-bold">{item.number || "Número no disponible"}</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${active ? "bg-white/15 text-white" : item.kind === "multa" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>{kindLabel}</span></div><div className={`mt-3 grid gap-2 text-sm sm:grid-cols-4 ${active ? "text-blue-50" : "text-slate-600"}`}><span>📅 {item.date || "Sin fecha"}</span><span>🚗 {item.plate || "Sin placa"}</span><span>🏛️ {item.authority || "Sin autoridad"}</span><span>💰 {item.value ? `$${item.value.toLocaleString("es-CO")}` : "Valor no disponible"}</span></div><p className={`mt-3 text-sm ${active ? "text-white" : "text-slate-700"}`}>{item.description || item.infractionCode || "Infracción sin descripción disponible"}</p></button>; })}</div> : null}
+      {simitStatus === "error" && simitProviderError && <div role="alert" className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-bold text-base">No pudimos consultar SIMIT en este momento.</p><p className="mt-1 leading-6">Tu información no ha sido modificada y no vamos a inventar ningún dato. Por favor, intenta nuevamente en unos minutos.</p></div>}
+      {simitStatus === "error" && !simitProviderError && error && <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {isSimitSelectionStep && simitData?.comparendos.length ? <div className="mt-5 grid gap-3">{simitData.comparendos.map((item, itemIndex) => { const active = selectedComparendo === itemIndex; const kindLabel = item.kind === "multa" ? "Multa" : "Comparendo"; return <button type="button" key={`${item.kind || "comparendo"}-${item.number || "registro"}-${itemIndex}`} onClick={() => selectComparendo(itemIndex)} className={`rounded-2xl border p-4 text-left transition ${active ? "border-blue-600 bg-blue-600 text-white shadow-lg" : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md"}`}><div className="flex items-center justify-between gap-3"><div><p className={`text-xs font-semibold uppercase tracking-wide ${active ? "text-blue-100" : "text-slate-500"}`}>{kindLabel} {itemIndex + 1}</p><p className="mt-1 font-bold">{item.number || "Número no disponible"}</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${active ? "bg-white/15 text-white" : item.kind === "multa" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>{kindLabel}</span></div><div className={`mt-3 grid gap-2 text-sm sm:grid-cols-4 ${active ? "text-blue-50" : "text-slate-600"}`}><span>📅 {item.date || item.resolutionDate || "Sin fecha"}</span><span>🚗 {item.plate || "Sin placa"}</span><span>🏛️ {item.authority || "Sin autoridad"}</span><span>💰 {item.value ? `$${item.value.toLocaleString("es-CO")}` : "Valor no disponible"}</span></div><p className={`mt-3 text-sm ${active ? "text-white" : "text-slate-700"}`}>{item.description || item.infractionCode || "Infracción sin descripción disponible"}</p></button>; })}</div> : null}
     </div>}
 
     {!isSimitSelectionStep && <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-5 md:p-7"><div className="mb-7"><div className="mb-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">TrámiteYa te acompaña</div><h3 className="text-2xl font-bold tracking-tight md:text-3xl">{step.title}</h3>{step.description && <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{step.description}</p>}</div>{error && <div role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}<div className="grid gap-6">{visibleFields.map((field) => <div key={field.id} className="rounded-2xl bg-white p-4 shadow-sm md:p-5"><label className="mb-2 block text-base font-semibold text-slate-800">{field.label}{field.required ? <span className="text-blue-600"> *</span> : null}</label><p className="mb-3 text-sm leading-5 text-slate-500">{questionHint(field)}</p>{renderField(field)}</div>)}</div></div>}
 
-    {isSimitSelectionStep && error && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+    {isSimitSelectionStep && error && !simitProviderError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
     <div className="flex items-center justify-between gap-3"><button type="button" onClick={back} disabled={index === 0} className="rounded-2xl border border-slate-200 bg-white px-5 py-3 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Atrás</button><div className="flex items-center gap-3"><span className="hidden text-sm text-slate-500 sm:inline">{progress}% completado</span><button type="button" onClick={next} className="rounded-2xl bg-blue-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-700">{index === total - 1 ? "Revisar mi caso →" : isSimitSelectionStep ? "Continuar con este registro →" : "Continuar →"}</button></div></div>
   </div>;
 }
