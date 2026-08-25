@@ -45,7 +45,15 @@ function sanitizeDraft(draft: string) {
 }
 
 function fallbackDraft(input: LegalAiInput, context: Awaited<ReturnType<typeof getLegalContext>>) {
-  const rules = context.rules.map((r) => `${r.citation}${r.article ? `, ${r.article}` : ''}: ${r.rule_text}`).join('\n');
+  const sourceById = new Map(context.statutes.concat(context.jurisprudence).map((source) => [source.id, source]));
+  const rules = context.rules
+    .map((r) => {
+      const source = sourceById.get(r.source_id);
+      const citation = source?.citation || source?.title || r.source_id;
+      return `${citation}${r.article ? `, ${r.article}` : ''}: ${r.rule_text}`;
+    })
+    .join('\n');
+
   return [
     input.documentType.toUpperCase(),
     '',
