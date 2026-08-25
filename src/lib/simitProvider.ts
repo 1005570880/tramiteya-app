@@ -82,7 +82,6 @@ function findRecordCollections(raw: any): RecordCollection[] {
 
 function normalizeRecords(
   provider: Exclude<SimitLookupResult['provider'], 'official-manual'>,
-  documentType: string,
   documentNumber: string,
   raw: any,
   fallbackKind?: SimitRecordKind,
@@ -92,67 +91,53 @@ function normalizeRecords(
   const effectiveCollections = collections.length ? collections : fallbackKind ? [{ kind: fallbackKind, items: [] }] : [];
   const allItems = effectiveCollections.flatMap((collection) => collection.items.map((item) => ({ item, kind: collection.kind })));
 
-  const personName = String(
-    firstDefined(
-      data?.nombreCompleto,
-      data?.nombre,
-      data?.nombres,
-      data?.titular,
-      data?.propietario,
-      data?.persona?.nombreCompleto,
-      data?.persona?.nombre,
-      allItems[0]?.item?.infractor?.nombre
-        ? `${allItems[0].item.infractor.nombre} ${allItems[0].item.infractor.apellido ?? ''}`
-        : '',
-    ) ?? '',
-  ).trim() || undefined;
+  const personName = String(firstDefined(
+    data?.nombreCompleto,
+    data?.nombre,
+    data?.nombres,
+    data?.titular,
+    data?.propietario,
+    data?.persona?.nombreCompleto,
+    data?.persona?.nombre,
+    allItems[0]?.item?.infractor?.nombre ? `${allItems[0].item.infractor.nombre} ${allItems[0].item.infractor.apellido ?? ''}` : '',
+  ) ?? '').trim() || undefined;
 
   const records: SimitComparendo[] = allItems.map(({ item, kind }) => {
     const inf = Array.isArray(item?.infracciones) ? item.infracciones[0] : null;
-    const explicitDocument = String(
-      firstDefined(
-        item?.infractor?.numeroDocumento,
-        item?.numeroDocumento,
-        item?.documentNumber,
-        item?.documento,
-        item?.persona?.numeroDocumento,
-      ) ?? '',
-    )
-      .replace(/[^0-9A-Za-z]/g, '')
-      .trim() || undefined;
+    const explicitDocument = String(firstDefined(
+      item?.infractor?.numeroDocumento,
+      item?.numeroDocumento,
+      item?.documentNumber,
+      item?.documento,
+      item?.persona?.numeroDocumento,
+    ) ?? '').replace(/[^0-9A-Za-z]/g, '').trim() || undefined;
 
-    const number = String(
-      firstDefined(
-        item?.numeroComparendo,
-        item?.NúmeroComparendo,
-        item?.comparendoId,
-        item?.numero,
-        item?.number,
-        item?.comparendo,
-        item?.numeroMulta,
-      ) ?? '',
-    ).trim() || undefined;
+    const number = String(firstDefined(
+      item?.numeroComparendo,
+      item?.NúmeroComparendo,
+      item?.comparendoId,
+      item?.numero,
+      item?.number,
+      item?.comparendo,
+      item?.numeroMulta,
+    ) ?? '').trim() || undefined;
 
     return {
       kind,
       number,
       date: String(firstDefined(item?.fechaComparendo, item?.fecha, item?.date) ?? '').trim() || undefined,
-      authority: String(
-        firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '',
-      ).trim() || undefined,
+      authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
       department: String(firstDefined(item?.departamento, item?.department) ?? '').trim() || undefined,
       plate: String(firstDefined(item?.placa, item?.Placa, item?.placavehiculo, item?.vehiclePlate, item?.vehiculo?.placa) ?? '').trim() || undefined,
-      ownerName: String(
-        firstDefined(
-          item?.nombrePropietario,
-          item?.propietario,
-          item?.titular,
-          item?.nombreCompleto,
-          item?.infractorComparendo,
-          item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '',
-          personName,
-        ) ?? '',
-      ).trim() || undefined,
+      ownerName: String(firstDefined(
+        item?.nombrePropietario,
+        item?.propietario,
+        item?.titular,
+        item?.nombreCompleto,
+        item?.infractorComparendo,
+        item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '',
+        personName,
+      ) ?? '').trim() || undefined,
       documentNumber: explicitDocument,
       infractionCode: String(firstDefined(item?.codigoInfraccion, item?.codigo, item?.infraccion, inf?.codigoInfraccion) ?? '').trim() || undefined,
       description: String(firstDefined(item?.descripcionInfraccion, item?.descripcion, inf?.descripcionInfraccion) ?? '').trim() || undefined,
@@ -167,61 +152,43 @@ function normalizeRecords(
     };
   });
 
-  // Both Verifik endpoints are already scoped by the supplied document. We only reject
-  // an explicit document mismatch; older SIMIT records from /comparendos may omit the
-  // document number entirely, so treating an omitted value as a mismatch would discard
-  // legitimate records.
+  // The endpoints are already scoped by the supplied document. Reject only an explicit mismatch;
+  // /comparendos can legitimately omit documentNumber in older SIMIT records.
   const valid = records.filter((item) => !item.documentNumber || item.documentNumber === documentNumber);
-  if (records.length > 0 && valid.length === 0) {
-    throw new SimitDataIntegrityError('El proveedor devolvió registros que no pertenecen al documento consultado.');
-  }
+  if (records.length > 0 && valid.length === 0) throw new SimitDataIntegrityError('El proveedor devolvió registros que no pertenecen al documento consultado.');
 
   const totalDebt = Number(firstDefined(data?.total_deuda, data?.totalDeuda, data?.total_pendiente, data?.totalMultasPagar, data?.total) ?? 0) || undefined;
   const providerCount = Number(firstDefined(data?.totalMultas, data?.cantMultasPagar, data?.pendingCount) ?? 0) || 0;
 
-  return {
-    records: valid,
-    personName,
-    totalDebt,
-    pendingCount: providerCount || valid.length || undefined,
-  };
+  return { records: valid, personName, totalDebt, pendingCount: providerCount || valid.length || undefined };
 }
 
 function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) {
   const merged = new Map<string, SimitComparendo>();
-
   for (const record of [...primary, ...secondary]) {
     const number = record.number?.trim();
     const resolution = record.resolutionNumber?.trim();
     const key = number ? `number:${number}` : resolution ? `resolution:${resolution}` : [record.date, record.plate, record.infractionCode, record.authority, record.value].join('|');
     const previous = merged.get(key);
-
     if (!previous) {
       merged.set(key, record);
       continue;
     }
-
     merged.set(key, {
       ...previous,
       ...Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined && value !== '')),
       kind: previous.kind === 'multa' || record.kind === 'multa' ? 'multa' : 'comparendo',
     });
   }
-
   return Array.from(merged.values());
 }
 
 async function fetchVerifik(url: string, token: string) {
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  });
-
+  const response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, cache: 'no-store' });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`Proveedor SIMIT respondió ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`);
   }
-
   return response.json();
 }
 
@@ -234,39 +201,25 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   const provider = token && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual') ? 'verifik' : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
 
-  if (!provider) {
-    return {
-      provider: 'official-manual',
-      source: 'SIMIT',
-      documentType,
-      documentNumber: normalizedNumber,
-      found: false,
-      verificationRequired: true,
-      officialUrl,
-      comparendos: [],
-    };
-  }
+  if (!provider) return { provider: 'official-manual', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: false, verificationRequired: true, officialUrl, comparendos: [] };
 
   if (provider === 'verifik') {
     const verifikToken = token || requiredEnv('VERIFIK_API_TOKEN');
     const query = `documentType=${encodeURIComponent(documentType)}&documentNumber=${encodeURIComponent(normalizedNumber)}`;
 
-    // Verifik exposes two complementary SIMIT views for a document:
-    // /consultar -> full fines/person summary, and /comparendos -> ticket list.
-    // Query both and fuse them so TrámiteYa does not silently lose records when one
-    // representation contains data the other does not.
+    // /consultar gives the document-level fines/person view; /comparendos gives the ticket list.
     const [generalRaw, comparendosRaw] = await Promise.all([
       fetchVerifik(`https://api.verifik.co/v2/co/simit/consultar?${query}`, verifikToken),
       fetchVerifik(`https://api.verifik.co/v2/co/simit/comparendos?${query}`, verifikToken),
     ]);
 
-    const general = normalizeRecords('verifik', documentType, normalizedNumber, generalRaw, 'multa');
-    const tickets = normalizeRecords('verifik', documentType, normalizedNumber, comparendosRaw, 'comparendo');
+    const general = normalizeRecords('verifik', normalizedNumber, generalRaw, 'multa');
+    const tickets = normalizeRecords('verifik', normalizedNumber, comparendosRaw, 'comparendo');
     const comparendos = mergeRecords(general.records, tickets.records);
-
     const generalData = unwrapVerifik(generalRaw);
     const ticketData = unwrapVerifik(comparendosRaw);
-    const totalDebt = general.totalDebt ?? tickets.totalDebt ?? Number(firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar) ?? 0) || undefined;
+    const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
+    const totalDebt = general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
     const providerCount = Math.max(
       general.pendingCount ?? 0,
       tickets.pendingCount ?? 0,
@@ -290,27 +243,19 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
 
   if (provider === 'placapi') {
     const key = requiredEnv('PLACAPI_API_KEY');
-    const response = await fetch('https://placapi.com/api/comparendos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-      body: JSON.stringify({ docType: documentType, docNumber: normalizedNumber }),
-      cache: 'no-store',
-    });
+    const response = await fetch('https://placapi.com/api/comparendos', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key }, body: JSON.stringify({ docType: documentType, docNumber: normalizedNumber }), cache: 'no-store' });
     if (!response.ok) throw new Error(`Proveedor SIMIT respondió ${response.status}.`);
     const raw = await response.json();
-    const normalized = normalizeRecords('placapi', documentType, normalizedNumber, raw);
+    const normalized = normalizeRecords('placapi', normalizedNumber, raw);
     return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, raw };
   }
 
   if (provider === 'coresoft') {
     const key = requiredEnv('CORESOFT_API_KEY');
-    const response = await fetch(`https://api.coresoft.co/v1/infracciones?documento=${encodeURIComponent(normalizedNumber)}`, {
-      headers: { Accept: 'application/json', 'X-API-Key': key },
-      cache: 'no-store',
-    });
+    const response = await fetch(`https://api.coresoft.co/v1/infracciones?documento=${encodeURIComponent(normalizedNumber)}`, { headers: { Accept: 'application/json', 'X-API-Key': key }, cache: 'no-store' });
     if (!response.ok) throw new Error(`Proveedor SIMIT respondió ${response.status}.`);
     const raw = await response.json();
-    const normalized = normalizeRecords('coresoft', documentType, normalizedNumber, raw);
+    const normalized = normalizeRecords('coresoft', normalizedNumber, raw);
     return { provider, source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: normalized.records.length > 0, totalDebt: normalized.totalDebt, pendingCount: normalized.pendingCount, personName: normalized.personName, comparendos: normalized.records, raw };
   }
 
