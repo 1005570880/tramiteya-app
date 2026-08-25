@@ -62,24 +62,28 @@ function normalizeIdentity(value: unknown) {
   return String(value ?? '').replace(/[^0-9A-Za-z]/g, '').trim().toUpperCase();
 }
 
-function collectIdentityDocuments(value: unknown, out = new Set<string>(), depth = 0): Set<string> {
-  if (!value || depth > 8) return out;
-  if (Array.isArray(value)) {
-    for (const item of value) collectIdentityDocuments(item, out, depth + 1);
-    return out;
-  }
-  if (typeof value !== 'object') return out;
+function normalizeName(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const isIdentityKey = /^(numerodocumento|documentnumber|documento|cedula|identificacion|identification|numeroidentificacion|docnumber)$/.test(normalizedKey);
-    if (isIdentityKey && (typeof child === 'string' || typeof child === 'number')) {
-      const candidate = normalizeIdentity(child);
-      if (candidate) out.add(candidate);
-    }
-    if (child && typeof child === 'object') collectIdentityDocuments(child, out, depth + 1);
-  }
-  return out;
+function extractDocument(value: any): string | undefined {
+  const candidate = firstDefined(
+    value?.numeroDocumento,
+    value?.documentNumber,
+    value?.documento,
+    value?.cedula,
+    value?.identificacion,
+    value?.numeroIdentificacion,
+    value?.persona?.numeroDocumento,
+    value?.persona?.documentNumber,
+    value?.persona?.documento,
+    value?.titular?.numeroDocumento,
+    value?.infractor?.numeroDocumento,
+  );
+  const normalized = normalizeIdentity(candidate);
+  return normalized || undefined;
 }
 
 function toArray(value: any): any[] {
@@ -114,13 +118,13 @@ function normalizeRecords(
   const collections = findRecordCollections(raw);
   const effectiveCollections = collections.length ? collections : fallbackKind ? [{ kind: fallbackKind, items: [] }] : [];
   const allItems = effectiveCollections.flatMap((collection) => collection.items.map((item) => ({ item, kind: collection.kind })));
-
   const personName = String(firstDefined(
     data?.nombreCompleto,
     data?.nombre,
     data?.nombres,
-    data?.titular,
-    data?.propietario,
+    data?.titular?.nombreCompleto,
+    data?.titular?.nombre,
+    data?.propietario?.nombreCompleto,
     data?.persona?.nombreCompleto,
     data?.persona?.nombre,
     allItems[0]?.item?.infractor?.nombre ? `${allItems[0].item.infractor.nombre} ${allItems[0].item.infractor.apellido ?? ''}` : '',
@@ -128,16 +132,8 @@ function normalizeRecords(
 
   const records: SimitComparendo[] = allItems.map(({ item, kind }) => {
     const inf = Array.isArray(item?.infracciones) ? item.infracciones[0] : null;
-    const explicitDocument = normalizeIdentity(firstDefined(
-      item?.infractor?.numeroDocumento,
-      item?.numeroDocumento,
-      item?.documentNumber,
-      item?.documento,
-      item?.persona?.numeroDocumento,
-    )) || undefined;
-
+    const explicitDocument = extractDocument(item);
     const number = String(firstDefined(item?.numeroComparendo, item?.NúmeroComparendo, item?.comparendoId, item?.numero, item?.number, item?.comparendo, item?.numeroMulta) ?? '').trim() || undefined;
-
     return {
       kind,
       number,
@@ -145,7 +141,7 @@ function normalizeRecords(
       authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
       department: String(firstDefined(item?.departamento, item?.department) ?? '').trim() || undefined,
       plate: String(firstDefined(item?.placa, item?.Placa, item?.placavehiculo, item?.vehiclePlate, item?.vehiculo?.placa) ?? '').trim() || undefined,
-      ownerName: String(firstDefined(item?.nombrePropietario, item?.propietario, item?.titular, item?.nombreCompleto, item?.infractorComparendo, item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '', personName) ?? '').trim() || undefined,
+      ownerName: String(firstDefined(item?.nombrePropietario, item?.propietario?.nombreCompleto, item?.propietario, item?.titular?.nombreCompleto, item?.titular, item?.nombreCompleto, item?.infractorComparendo, item?.infractor?.nombre ? `${item.infractor.nombre} ${item.infractor.apellido ?? ''}` : '', personName) ?? '').trim() || undefined,
       documentNumber: explicitDocument,
       infractionCode: String(firstDefined(item?.codigoInfraccion, item?.codigo, item?.infraccion, inf?.codigoInfraccion) ?? '').trim() || undefined,
       description: String(firstDefined(item?.descripcionInfraccion, item?.descripcion, inf?.descripcionInfraccion) ?? '').trim() || undefined,
@@ -161,22 +157,34 @@ function normalizeRecords(
   });
 
   const requestedDocument = normalizeIdentity(documentNumber);
-  const payloadDocuments = collectIdentityDocuments(raw);
-  const mismatchedPayloadDocuments = [...payloadDocuments].filter((candidate) => candidate !== requestedDocument);
-  if (mismatchedPayloadDocuments.length > 0) {
-    throw new SimitDataIntegrityError('El proveedor devolvió una identidad documental distinta a la consultada. TrámiteYa bloqueó la respuesta.');
+  const payloadDocument = extractDocument(data);
+  if (payloadDocument && payloadDocument !== requestedDocument) {
+    throw new SimitDataIntegrityError('El proveedor identificó un documento distinto al consultado. TrámiteYa bloqueó la respuesta.');
   }
 
-  const recordsWithoutIdentity = records.filter((item) => !item.documentNumber);
   const mismatchedRecords = records.filter((item) => item.documentNumber && item.documentNumber !== requestedDocument);
-  if (mismatchedRecords.length > 0 || recordsWithoutIdentity.length > 0) {
-    throw new SimitDataIntegrityError('TrámiteYa no pudo verificar que todos los registros pertenecen a la cédula consultada. Los datos fueron bloqueados para evitar mezclar información de terceros.');
+  if (mismatchedRecords.length > 0) {
+    throw new SimitDataIntegrityError('El proveedor devolvió registros que pertenecen a otro documento. TrámiteYa bloqueó esos registros.');
   }
 
   const totalDebt = Number(firstDefined(data?.total_deuda, data?.totalDeuda, data?.total_pendiente, data?.totalMultasPagar, data?.total) ?? 0) || undefined;
   const providerCount = Number(firstDefined(data?.totalMultas, data?.cantMultasPagar, data?.pendingCount) ?? 0) || 0;
-
   return { records, personName, totalDebt, pendingCount: providerCount || records.length || undefined };
+}
+
+function filterCrossPersonRecords(records: SimitComparendo[], trustedName?: string, sourceName?: string) {
+  const trusted = normalizeName(trustedName);
+  const source = normalizeName(sourceName);
+  if (!trusted || !source || source === trusted) return records;
+  const tokens = trusted.split(' ').filter(Boolean);
+  return records.filter((record) => {
+    const owner = normalizeName(record.ownerName);
+    if (!owner) return true;
+    if (owner === trusted || owner.includes(trusted) || trusted.includes(owner)) return true;
+    const ownerTokens = new Set(owner.split(' '));
+    const overlap = tokens.filter((token) => ownerTokens.has(token)).length;
+    return overlap >= Math.max(1, Math.ceil(tokens.length * 0.5));
+  });
 }
 
 function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) {
@@ -184,10 +192,7 @@ function mergeRecords(primary: SimitComparendo[], secondary: SimitComparendo[]) 
   for (const record of [...primary, ...secondary]) {
     const key = record.number ? `number:${record.number}` : record.resolutionNumber ? `resolution:${record.resolutionNumber}` : [record.date, record.plate, record.infractionCode, record.authority, record.value].join('|');
     const previous = merged.get(key);
-    if (!previous) {
-      merged.set(key, record);
-      continue;
-    }
+    if (!previous) { merged.set(key, record); continue; }
     merged.set(key, {
       ...previous,
       ...Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined && value !== '')),
@@ -226,7 +231,11 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
 
     const general = normalizeRecords('verifik', normalizedNumber, generalRaw, 'multa');
     const tickets = normalizeRecords('verifik', normalizedNumber, comparendosRaw, 'comparendo');
-    const comparendos = mergeRecords(general.records, tickets.records);
+    const ticketsFiltered = filterCrossPersonRecords(tickets.records, general.personName, tickets.personName);
+    if (tickets.records.length > 0 && ticketsFiltered.length === 0 && general.records.length === 0) {
+      throw new SimitDataIntegrityError('La respuesta de comparendos no coincide con la persona consultada.');
+    }
+    const comparendos = mergeRecords(general.records, ticketsFiltered);
     const generalData = unwrapVerifik(generalRaw);
     const ticketData = unwrapVerifik(comparendosRaw);
     const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
@@ -234,16 +243,10 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
     const providerCount = Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
 
     return {
-      provider: 'verifik',
-      source: 'SIMIT',
-      documentType,
-      documentNumber: normalizedNumber,
+      provider: 'verifik', source: 'SIMIT', documentType, documentNumber: normalizedNumber,
       found: comparendos.length > 0 || providerCount > 0 || Boolean(generalData?.tiene_deuda) || Boolean(ticketData?.tiene_deuda),
-      totalDebt,
-      pendingCount: providerCount,
-      personName: general.personName ?? tickets.personName,
-      comparendos,
-      raw: { general: generalRaw, comparendos: comparendosRaw },
+      totalDebt, pendingCount: providerCount, personName: general.personName ?? tickets.personName,
+      comparendos, raw: { general: generalRaw, comparendos: comparendosRaw },
     };
   }
 
