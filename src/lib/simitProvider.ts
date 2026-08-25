@@ -12,11 +12,13 @@ export type SimitComparendo = {
 };
 
 export type SimitLookupResult = {
-  provider: 'verifik' | 'placapi' | 'coresoft';
+  provider: 'verifik' | 'placapi' | 'coresoft' | 'official-manual';
   source: 'SIMIT';
   documentType: string;
   documentNumber: string;
   found: boolean;
+  verificationRequired?: boolean;
+  officialUrl?: string;
   totalDebt?: number;
   pendingCount?: number;
   comparendos: SimitComparendo[];
@@ -29,11 +31,31 @@ function requiredEnv(name: string) {
   return value;
 }
 
+/**
+ * SIMIT is the official national source, but its public citizen consultation
+ * is not exposed as an unauthenticated server-to-server API. TrámiteYa must
+ * therefore use an authorized provider when automatic lookup is enabled.
+ * We never scrape or guess SIMIT data when the provider credential is absent.
+ */
 export async function lookupSimitByDocument(documentType: string, documentNumber: string): Promise<SimitLookupResult> {
   const normalizedNumber = documentNumber.replace(/[^0-9A-Za-z]/g, '');
   if (!normalizedNumber) throw new Error('El número de documento es obligatorio.');
 
-  const provider = (process.env.SIMIT_PROVIDER || 'verifik').toLowerCase();
+  const provider = (process.env.SIMIT_PROVIDER || '').toLowerCase();
+  const officialUrl = 'https://www.fcm.org.co/simit/';
+
+  if (!provider) {
+    return {
+      provider: 'official-manual',
+      source: 'SIMIT',
+      documentType,
+      documentNumber: normalizedNumber,
+      found: false,
+      verificationRequired: true,
+      officialUrl,
+      comparendos: [],
+    };
+  }
 
   if (provider === 'verifik') {
     const token = requiredEnv('VERIFIK_API_TOKEN');
@@ -78,7 +100,7 @@ function unwrapVerifik(raw: any): any {
 }
 
 function normalizeProviderResult(
-  provider: SimitLookupResult['provider'],
+  provider: Exclude<SimitLookupResult['provider'], 'official-manual'>,
   documentType: string,
   documentNumber: string,
   raw: any,
