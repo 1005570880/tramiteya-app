@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const safeResult: any = { ...result }; delete safeResult.raw; return NextResponse.json(safeResult);
   } catch (error) {
     console.error('SIMIT lookup failed:', error);
-    if (error instanceof SimitDataIntegrityError) return NextResponse.json({ error: error.code, code: error.code, message: 'El proveedor devolvió información que no coincide con la cédula consultada. TrámiteYa bloqueó esos datos para evitar generar un documento con información incorrecta.' }, { status: 502 });
+    if (error instanceof SimitDataIntegrityError) return NextResponse.json({ error: error.code, code: error.code, message: 'El proveedor devolvió información que no coincide con la cédula consultada. TrámiteYa bloqueó esos datos para evitar generar un documento con información incorrecta.' }, { status: 409 });
     return NextResponse.json({ error: 'SIMIT_PROVIDER_UNAVAILABLE', code: 'SIMIT_PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'No fue posible consultar SIMIT.' }, { status: 502 });
   }
 }
