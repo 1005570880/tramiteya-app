@@ -76,18 +76,25 @@ export const supabaseInstanceRepo: InstanceRepository = {
     }));
   },
 
-  async update(id: string, patch) {
+  async update(id: string, patch: Partial<ProcedureInstance>) {
     const supabase = getSupabaseServer();
-    const safePatch = { ...patch };
-    delete (safePatch as any).userId;
-    delete (safePatch as any).createdAt;
-    delete (safePatch as any).id;
+    const safePatch: Record<string, unknown> = {};
+
+    if (patch.procedureId !== undefined) safePatch.procedure_id = patch.procedureId;
+    if (patch.procedureSlug !== undefined) safePatch.procedure_slug = patch.procedureSlug;
+    if (patch.status !== undefined) safePatch.status = patch.status;
+    if (patch.answers !== undefined) safePatch.answers = patch.answers;
+    if (patch.completedAt !== undefined) safePatch.completed_at = patch.completedAt;
+    if (patch.document !== undefined) safePatch.document = patch.document;
+    if (patch.updatedAt !== undefined) safePatch.updated_at = patch.updatedAt;
+
+    // Server-controlled timestamp; never trust a client-supplied updatedAt.
     safePatch.updated_at = new Date().toISOString();
+
     const procedureInstancesTable = supabase.from('procedure_instances') as any;
     const { error } = await procedureInstancesTable.update(safePatch).eq('id', id);
     if (error) return null;
-    const inst = await this.get(id);
-    return inst;
+    return this.get(id);
   },
 
   async remove(id: string) {
