@@ -2,9 +2,9 @@ name: TrámiteYa CI
 
 on:
   push:
-    branches: ["phase-1-setup", "main"]
+    branches: ["phase-1-setup", "phase-2-transito-ui", "main"]
   pull_request:
-    branches: ["phase-1-setup", "main"]
+    branches: ["phase-1-setup", "phase-2-transito-ui", "main"]
 
 jobs:
   validate:
