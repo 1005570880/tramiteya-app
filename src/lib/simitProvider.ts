@@ -73,38 +73,45 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   throw new Error(`SIMIT_PROVIDER no soportado: ${provider}. Usa verifik, placapi o coresoft.`);
 }
 
+function unwrapVerifik(raw: any): any {
+  return raw?.value?.value?.data ?? raw?.value?.data ?? raw?.data ?? raw?.resultado ?? raw?.result ?? raw;
+}
+
 function normalizeProviderResult(
   provider: SimitLookupResult['provider'],
   documentType: string,
   documentNumber: string,
   raw: any,
 ): SimitLookupResult {
-  const data = raw?.data ?? raw?.resultado ?? raw?.result ?? raw;
+  const data = provider === 'verifik' ? unwrapVerifik(raw) : (raw?.data ?? raw?.resultado ?? raw?.result ?? raw);
   const items = data?.comparendos ?? data?.multas ?? data?.infracciones ?? [];
   const comparendos: SimitComparendo[] = Array.isArray(items)
-    ? items.map((item: any) => ({
-        number: item?.numeroComparendo ?? item?.numero ?? item?.number ?? item?.comparendo,
-        date: item?.fecha ?? item?.fechaComparendo ?? item?.date,
-        authority: item?.organismo ?? item?.secretaria ?? item?.autoridad,
-        department: item?.departamento,
-        infractionCode: item?.codigo ?? item?.infraccion ?? item?.codigoInfraccion,
-        description: item?.descripcion,
-        status: item?.estado ?? item?.status,
-        value: Number(item?.valor ?? item?.valorMulta ?? item?.monto ?? 0) || undefined,
-        resolutionNumber: item?.numeroResolucion ?? item?.resolucion,
-        resolutionDate: item?.fechaResolucion,
-      }))
+    ? items.map((item: any) => {
+        const firstInfraction = Array.isArray(item?.infracciones) ? item.infracciones[0] : null;
+        return {
+          number: item?.numeroComparendo ?? item?.NúmeroComparendo ?? item?.numero ?? item?.number ?? item?.comparendo,
+          date: item?.fecha ?? item?.fechaComparendo ?? item?.date,
+          authority: item?.organismoTransito ?? item?.organismo ?? item?.secretaria ?? item?.autoridad,
+          department: item?.departamento,
+          infractionCode: item?.codigo ?? item?.infraccion ?? item?.codigoInfraccion ?? firstInfraction?.codigoInfraccion,
+          description: item?.descripcion ?? item?.descripcionInfraccion ?? firstInfraction?.descripcionInfraccion,
+          status: item?.estadoComparendo ?? item?.estado ?? item?.status,
+          value: Number(item?.valorPagar ?? item?.valor ?? item?.valorMulta ?? item?.monto ?? firstInfraction?.valorInfraccion ?? 0) || undefined,
+          resolutionNumber: item?.numeroResolucion ?? item?.resolucion,
+          resolutionDate: item?.fechaResolucion,
+        };
+      })
     : [];
 
-  const totalDebt = Number(data?.total_deuda ?? data?.totalDeuda ?? data?.total_pendiente ?? data?.total ?? 0) || undefined;
-  const pendingCount = Number(data?.multas_pendientes ?? data?.pendingCount ?? comparendos.length) || 0;
+  const totalDebt = Number(data?.total_deuda ?? data?.totalDeuda ?? data?.total_pendiente ?? data?.totalMultasPagar ?? data?.total ?? 0) || undefined;
+  const pendingCount = Number(data?.multas_pendientes ?? data?.cantMultasPagar ?? data?.pendingCount ?? comparendos.length) || 0;
 
   return {
     provider,
     source: 'SIMIT',
     documentType,
     documentNumber,
-    found: comparendos.length > 0 || Boolean(data?.tiene_deuda),
+    found: comparendos.length > 0 || Boolean(data?.tiene_deuda) || pendingCount > 0,
     totalDebt,
     pendingCount,
     comparendos,
