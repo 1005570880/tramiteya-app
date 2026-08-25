@@ -6,7 +6,8 @@ export type SimitProviderErrorCode =
   | 'PROVIDER_ERROR'
   | 'NETWORK_ERROR'
   | 'INVALID_RESPONSE'
-  | 'SANDBOX_EMPTY';
+  | 'SANDBOX_EMPTY'
+  | 'CONFIGURATION_ERROR';
 
 export class SimitProviderError extends Error {
   constructor(public readonly code: SimitProviderErrorCode, message: string) {
@@ -33,7 +34,11 @@ export type SimitLookupResult = {
   status?: 'SUCCESS' | 'NO_RESULTS' | 'SANDBOX_EMPTY';
 };
 
-function requiredEnv(name: string) { const value = process.env[name]?.trim(); if (!value) throw new Error(`Falta configurar ${name} en las variables de entorno del servidor.`); return value; }
+function requiredEnv(name: string) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new SimitProviderError('CONFIGURATION_ERROR', `Falta configurar ${name} en las variables de entorno del servidor.`);
+  return value;
+}
 function getVerifikToken() { return process.env.VERIFIK_API_TOKEN?.trim() || process.env.VERIFIK_TOKEN?.trim() || ''; }
 function unwrapVerifik(raw: any): any { return raw?.value?.value?.data ?? raw?.value?.data ?? raw?.data ?? raw?.resultado ?? raw?.result ?? raw; }
 function firstDefined(...values: unknown[]) { return values.find((value) => value !== undefined && value !== null && String(value).trim() !== ''); }
@@ -66,7 +71,7 @@ function normalizeRecords(provider: Exclude<SimitLookupResult['provider'], 'offi
     const number = String(firstDefined(item?.numeroComparendo, item?.NúmeroComparendo, item?.comparendoId, item?.numero, item?.number, item?.comparendo, item?.numeroMulta) ?? '').trim() || undefined;
     return {
       kind, number,
-      date: String(firstDefined(item?.fechaComparendo, item?.fecha, item?.date) ?? '').trim() || undefined,
+      date: String(firstDefined(item?.fechaComparendo, item?.fecha, item?.date, item?.fechaCurso) ?? '').trim() || undefined,
       authority: String(firstDefined(item?.organismoTransito, item?.organismo, item?.secretariaComparendo, item?.secretaria, item?.autoridad) ?? '').trim() || undefined,
       department: String(firstDefined(item?.departamento, item?.department) ?? '').trim() || undefined,
       plate: String(firstDefined(item?.placa, item?.Placa, item?.placavehiculo, item?.vehiclePlate, item?.vehiculo?.placa) ?? '').trim() || undefined,
@@ -116,29 +121,6 @@ function hasExplicitSandboxSignal(raw: any) {
   return /sandbox|demo environment|test environment|simulated response|mock data/.test(text);
 }
 
-function buildTemporarySimitDebugFallback(documentNumber: string): SimitComparendo[] {
-  if (normalizeIdentity(documentNumber) !== '73201464') return [];
-  const common = {
-    kind: 'multa' as const,
-    date: '2026-04-03',
-    authority: 'Sampués',
-    department: 'Sucre',
-    plate: 'EMU668',
-    documentNumber: '73201464',
-    status: 'Pendiente de pago',
-    photoDetection: true,
-    resolutionDate: '2026-04-03',
-  };
-  return [
-    { ...common, number: '2026-FAD-04736', infractionCode: 'C35', value: 603939 },
-    { ...common, number: '2026-FAD-04737', infractionCode: 'D02', value: 1207877 },
-    { ...common, number: '2026-FAD-04756', infractionCode: 'D02', value: 1207877 },
-    { ...common, number: '2026-FAD-04757', infractionCode: 'C35', value: 603939 },
-    { ...common, number: '2026-FAD-04912', infractionCode: 'C35', value: 603939 },
-    { ...common, number: '2026-FAD-04913', infractionCode: 'D02', value: 1207877 },
-  ];
-}
-
 function classifyVerifikHttpError(status: number): SimitProviderErrorCode {
   if (status === 401 || status === 403) return 'AUTH_ERROR';
   if (status === 402 || status === 429) return 'CREDITS_ERROR';
@@ -172,7 +154,15 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
   const token = getVerifikToken();
   const provider = token && (!configuredProvider || configuredProvider === 'official-manual' || configuredProvider === 'manual') ? 'verifik' : configuredProvider;
   const officialUrl = 'https://www.fcm.org.co/simit/';
-  if (!provider) return { provider: 'official-manual', source: 'SIMIT', documentType, documentNumber: normalizedNumber, found: false, verificationRequired: true, officialUrl, comparendos: [], status: 'NO_RESULTS' };
+
+  // Nunca devolver falsamente "sin multas" por falta de configuración.
+  if (!provider) {
+    throw new SimitProviderError('CONFIGURATION_ERROR', 'La consulta automática de SIMIT no está configurada. Falta el proveedor y/o la credencial del servicio SIMIT.');
+  }
+
+  if (provider === 'official-manual' || provider === 'manual') {
+    throw new SimitProviderError('CONFIGURATION_ERROR', `La consulta automática de SIMIT no está habilitada en TrámiteYa. Configura VERIFIK_TOKEN o VERIFIK_API_TOKEN. Consulta oficial: ${officialUrl}`);
+  }
 
   if (provider === 'verifik') {
     const verifikToken = token || requiredEnv('VERIFIK_API_TOKEN');
@@ -185,25 +175,15 @@ export async function lookupSimitByDocument(documentType: string, documentNumber
       fetchVerifik(comparendosUrl, verifikToken),
     ]);
 
-    if (normalizeIdentity(normalizedNumber) === '73201464') {
-      console.log('[SIMIT AUDIT] Verifik /consultar', { url: consultarUrl, documentType: effectiveDocumentType, documentNumber: normalizedNumber, rawResponse: generalRaw });
-      console.log('[SIMIT AUDIT] Verifik /comparendos', { url: comparendosUrl, documentType: effectiveDocumentType, documentNumber: normalizedNumber, rawResponse: comparendosRaw });
-    }
-
     const general = normalizeRecords('verifik', normalizedNumber, generalRaw, 'multa');
     const tickets = normalizeRecords('verifik', normalizedNumber, comparendosRaw, 'comparendo');
     const bothEmpty = isEmptyVerifikPayload(generalRaw) && isEmptyVerifikPayload(comparendosRaw);
-    const debugFallbackEnabled = process.env.SIMIT_DEBUG_FALLBACK === 'true';
-    const shouldUseDebugFallback = debugFallbackEnabled && normalizeIdentity(normalizedNumber) === '73201464' && bothEmpty;
-    const debugFallback = shouldUseDebugFallback ? buildTemporarySimitDebugFallback(normalizedNumber) : [];
-    if (shouldUseDebugFallback) console.warn('[SIMIT AUDIT] Empty Verifik payloads; using temporary 73201464 debug fixture because SIMIT_DEBUG_FALLBACK=true.');
-    const comparendos = debugFallback.length ? debugFallback : mergeRecords(general.records, tickets.records);
+    const comparendos = mergeRecords(general.records, tickets.records);
     const generalData = unwrapVerifik(generalRaw);
     const ticketData = unwrapVerifik(comparendosRaw);
     const rawDebt = firstDefined(generalData?.totalMultasPagar, ticketData?.totalMultasPagar);
-    const totalDebt = debugFallback.length ? 6496575 : general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
-    const providerCount = debugFallback.length ? debugFallback.length : Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
-    if (debugFallback.length) return { provider: 'verifik', source: 'SIMIT', documentType: effectiveDocumentType, documentNumber: normalizedNumber, found: true, totalDebt, pendingCount: providerCount, personName: 'LU** GUIL****', comparendos, status: 'SUCCESS', raw: { general: generalRaw, comparendos: comparendosRaw } };
+    const totalDebt = general.totalDebt ?? tickets.totalDebt ?? (rawDebt !== undefined ? Number(rawDebt) || undefined : undefined);
+    const providerCount = Math.max(general.pendingCount ?? 0, tickets.pendingCount ?? 0, comparendos.length, Number(firstDefined(generalData?.multas?.length, ticketData?.comparendos?.length) ?? 0));
     if (bothEmpty && (hasExplicitSandboxSignal(generalRaw) || hasExplicitSandboxSignal(comparendosRaw))) {
       throw new SimitProviderError('SANDBOX_EMPTY', 'Verifik respondió vacío en un entorno Sandbox/prueba; no se puede afirmar que el ciudadano no tenga comparendos.');
     }
