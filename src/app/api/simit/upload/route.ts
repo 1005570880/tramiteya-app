@@ -46,9 +46,16 @@ function mergeRecords(base: ExtractedRecord[], ai: ExtractedRecord[]) {
 function inferDocumentNumber(records: ExtractedRecord[], text: string) {
   const fromRecord = records.map(r => String(r.documentNumber || '').replace(/\D/g, '')).find(v => v.length >= 5);
   if (fromRecord) return fromRecord;
-  const labels = /(c[eé]dula|documento|identificaci[oó]n|cc)\s*(?:n[roº°.]?\s*)?[:\-]?\s*(\d{6,12})/i;
+
+  // Official SIMIT PDFs commonly place the holder number on the line immediately
+  // after the `Cédula:` label, so allow whitespace/newlines between label and value.
+  const labels = /(c[eé]dula|documento|identificaci[oó]n|cc)\s*(?:n[roº°.]?\s*)?[:\-]?\s*(?:\n\s*)?(\d{6,12})/i;
   const match = text.match(labels);
-  return match?.[2] || '';
+  if (match?.[2]) return match[2];
+
+  // Fallback for the exact official heading sequence: ESTADO DE CUENTA / number / Fecha.
+  const heading = text.match(/estado\s+de\s+cuenta\s*\n\s*(\d{6,12})\s*\n\s*fecha\s+de\s+expedici[oó]n/i);
+  return heading?.[1] || '';
 }
 
 export async function POST(req: NextRequest) {
@@ -75,5 +82,5 @@ export async function POST(req: NextRequest) {
 
     console.log('[SIMIT AUDIT] statement_upload', JSON.stringify({ documentType: 'CC', documentNumber, fileName: file.name, mimeType: file.type, size: file.size, records: recordsWithDocument.length, aiUsed: Boolean(process.env.OPENAI_API_KEY), timestamp: new Date().toISOString() }));
     return NextResponse.json({ ok: true, source: 'SIMIT_STATEMENT_UPLOAD', extraction: process.env.OPENAI_API_KEY ? 'hybrid' : 'deterministic', documentType: 'CC', documentNumber, fileName: file.name, records: recordsWithDocument, message: `Estado de Cuenta analizado. Se encontraron ${recordsWithDocument.length} registro(s).` });
-  } catch (error) { console.error('[SIMIT] statement upload error', error); return NextResponse.json({ ok: false, message: 'No fue posible analizar el Estado de Cuenta de SIMIT.' }, { status: 500 }); }
+  } catch (error) { console.error('[SIMIT] statement upload error', error); return NextResponse.json({ ok: false, message: 'No fue posible analizar el Estado de Cuenta de SIMIT.' }, { status: 500); }
 }
