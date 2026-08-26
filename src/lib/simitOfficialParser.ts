@@ -60,27 +60,22 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   };
 }
 
-/**
- * Parses text copied by the user from the official SIMIT page.
- * It never calls SIMIT and never invents a record: the input must come
- * directly from the official page opened by TrámiteYa.
- */
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = input.replace(/\r/g, '').trim();
   if (!text) return [];
 
   try {
     const parsed: any = JSON.parse(text);
-    const source: unknown = Array.isArray(parsed)
+    const source: any = Array.isArray(parsed)
       ? parsed
       : parsed?.comparendos || parsed?.multas || parsed?.data;
     if (Array.isArray(source)) {
       return source
         .map(parseRecord)
-        .filter((item): item is ParsedSimitRecord => Boolean(item));
+        .filter((item: ParsedSimitRecord | undefined): item is ParsedSimitRecord => Boolean(item));
     }
   } catch {
-    // Normal copied text is handled below.
+    // Fall through to copied official text parsing.
   }
 
   const normalized = text.replace(/\u00a0/g, ' ');
