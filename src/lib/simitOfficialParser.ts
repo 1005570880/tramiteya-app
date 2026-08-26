@@ -102,8 +102,9 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
     const valueMatch = chunk.match(/(?:valor|monto|total|pagar)\s*[:\-]?\s*\$?\s*([\d.,]+)/i);
     const description = firstMatch(chunk, [/(?:descripci[oó]n(?:\s+de\s+la\s+infracci[oó]n)?|infracci[oó]n)\s*[:\-]?\s*([^\n]+)/i]);
 
+    const kind: ParsedSimitRecord['kind'] = /multa/i.test(chunk.slice(0, 80)) ? 'multa' : 'comparendo';
     records.push({
-      kind: /multa/i.test(chunk.slice(0, 80)) ? 'multa' : 'comparendo',
+      kind,
       number,
       date,
       authority,
