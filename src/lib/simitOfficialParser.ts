@@ -52,28 +52,53 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
 
 /**
  * Parses the text layout produced by the official SIMIT statement PDF.
- * pdf-parse can return a row as separate lines or as a single whitespace-
- * separated line, so this parser deliberately does not depend on line breaks.
+ * The PDF is a table and pdf-parse may place each cell on its own line.
+ * We therefore detect each row from its number + date, then parse the
+ * complete row independently. This also handles multi-word/multi-line
+ * authorities such as "Agustin Codazzi" and the continuation page header.
  */
 function parseStructuredText(text: string): ParsedSimitRecord[] {
-  const normalized = clean(text.replace(/\r/g, '').replace(/\u00a0/g, ' '));
+  const normalized = text
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
   if (!normalized) return [];
 
-  const numberPattern = '(?:\\d{11,22}|\\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,8}-\\d{3,}(?:-[A-Z0-9]+)*)';
-  const rowRe = new RegExp(
-    `(${numberPattern})\\s+(\\d{2}\\/\\d{2}\\/\\d{4}|\\d{4}[\\/-]\\d{2}[\\/-]\\d{2})\\s+(?:\\d{2}:\\d{2}:\\d{2}\\s+)?(.+?)\\s+([A-Z]\\d{1,3})\\s+(Pendiente de pago|Pendiente|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\\s+\\$?\\s*([\\d.,]+)(?=\\s+${numberPattern}\\s+\\d{2}\\/\\d{2}\\/\\d{4}|\\s+${numberPattern}\\s+\\d{4}[\\/-]\\d{2}[\\/-]\\d{2}|\\s+Total\\s+a\\s+pagar|\\s+La informaci[oó]n|$)`,
-    'gi'
-  );
-
+  // Official SIMIT numbers appear both as long numeric identifiers and
+  // alphanumeric identifiers such as 2025-FAD-01635 or TC-2024-34172.
+  const numberPattern = '(?:\\d{11,24}|\\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\\d{3,}(?:-[A-Z0-9]+)*)';
+  const datePattern = '\\d{2}\\/\\d{2}\\/\\d{4}|\\d{4}[\\/-]\\d{2}[\\/-]\\d{2}';
+  const rowStartRe = new RegExp(`(${numberPattern})\\s+(${datePattern})\\s+(?:\\d{2}:\\d{2}:\\d{2}\\s+)?`, 'gi');
+  const starts = [...normalized.matchAll(rowStartRe)];
   const records: ParsedSimitRecord[] = [];
-  for (const match of normalized.matchAll(rowRe)) {
-    const number = match[1].replace(/\s+/g, '');
-    const date = match[2];
-    const authority = clean(match[3]);
-    const infractionCode = match[4].toUpperCase();
-    const status = clean(match[5]);
-    const value = moneyToNumber(match[6]);
-    if (!number || !date || !infractionCode || value === undefined) continue;
+
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i].index ?? 0;
+    const nextStart = starts[i + 1]?.index ?? normalized.length;
+    let row = normalized.slice(start, nextStart).trim();
+    row = row.split(/\s+#?\s*N[uú]mero\s+multa\s+Fecha\s+Secretar[ií]a/i)[0];
+    row = row.split(/\s+Total\s+a\s+pagar\b/i)[0];
+    row = row.split(/\s+La\s+informaci[oó]n\s+contenida\s+en\s+el\s+sistema/i)[0];
+
+    const head = row.match(new RegExp(`^(${numberPattern})\\s+(${datePattern})\\s+(.*)$`, 'i'));
+    if (!head) continue;
+
+    const number = head[1].replace(/\s+/g, '');
+    const date = head[2];
+    let body = clean(head[3]);
+
+    // The final fields of a SIMIT row are always infraction code, status and
+    // amount. Everything before them belongs to the authority/organism.
+    const tail = body.match(/^(.*?)\s+([A-Z]\\d{1,3})\s+(Pendiente(?: de pago)?|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\s+\\$?\s*([\\d.,]+)\s*$/i);
+    if (!tail) continue;
+
+    const authority = clean(tail[1]);
+    const infractionCode = tail[2].toUpperCase();
+    const status = clean(tail[3]);
+    const value = moneyToNumber(tail[4]);
+    if (!number || !date || !authority || !infractionCode || value === undefined) continue;
 
     records.push({
       kind: status.toLowerCase() === 'cobro coactivo' ? 'multa' : 'comparendo',
