@@ -21,9 +21,7 @@ const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)
 const IDENTIFIER_GLOBAL_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
 function extractIdentifierBeforeDate(prefix: string) { const matches = [...prefix.matchAll(IDENTIFIER_GLOBAL_RE)]; return matches.length ? matches[matches.length - 1][0].replace(/\s+/g, '') : undefined; }
 function removeListNoise(value: string) { return value.replace(/(?:^|\s)\d{1,4}[.)](?=\s|$)/g, ' '); }
-const KNOWN_AUTHORITIES = [
-  'Dptal Cesar - IDTRACESAR', 'Agustin Codazzi', 'Agustín Codazzi', 'Valledupar', 'Aracataca', 'Fundación', 'Fundacion'
-];
+const KNOWN_AUTHORITIES = ['Dptal Cesar - IDTRACESAR', 'Agustin Codazzi', 'Agustín Codazzi', 'Valledupar', 'Aracataca', 'Fundación', 'Fundacion'];
 function sanitizeAuthority(value: string, code?: string) {
   let authority = clean(value).replace(/^\|+|\|+$/g, '').trim();
   authority = authority.replace(/^\|?\s*\d{2}:\d{2}(?::\d{2})?\s*\|?\s*/i, '');
@@ -32,29 +30,21 @@ function sanitizeAuthority(value: string, code?: string) {
   if (knownMatch?.[1]) return clean(knownMatch[1]);
   const stops: RegExp[] = [/\d{2}:\d{2}(?::\d{2})?/i, /[A-D]\d{2}/i, /Pendiente(?:\s+de\s+pago)?/i, /Cobro\s+coactivo/i, /Pagado/i, /Cancelado/i, /Acuerdo\s+de\s+pago/i, /Vigente/i, /En\s+cobro/i, /\$/i];
   if (code) stops.unshift(new RegExp(code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-  const matches = stops.map(re => re.exec(authority)).filter(Boolean) as RegExpExecArray[];
-  const end = matches.reduce((min, match) => Math.min(min, match.index), authority.length);
-  authority = clean(authority.slice(0, end)).replace(/^\|+|\|+$/g, '').trim();
-  return authority || undefined;
+  const matches = stops.map(re => re.exec(authority)).filter(Boolean) as RegExpExecArray[]; const end = matches.reduce((min, match) => Math.min(min, match.index), authority.length);
+  authority = clean(authority.slice(0, end)).replace(/^\|+|\|+$/g, '').trim(); return authority || undefined;
 }
 function extractDelimitedFields(raw: string, date: string, code?: string, fallbackStatus?: string) {
-  const dateIndex = raw.indexOf(date); const afterDate = raw.slice(Math.max(0, dateIndex + date.length));
-  const cells = afterDate.split('|').map(clean).filter(Boolean); let authority: string | undefined; let status: string | undefined;
-  for (const cell of cells) {
-    const cellStatus = extractStatus(cell); if (cellStatus && !status) status = cellStatus;
-    if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) authority = sanitizeAuthority(cell, code);
-  }
+  const dateIndex = raw.indexOf(date); const afterDate = raw.slice(Math.max(0, dateIndex + date.length)); const cells = afterDate.split('|').map(clean).filter(Boolean); let authority: string | undefined; let status: string | undefined;
+  for (const cell of cells) { const cellStatus = extractStatus(cell); if (cellStatus && !status) status = cellStatus; if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) authority = sanitizeAuthority(cell, code); }
   if (!authority && code) { const idx = afterDate.toUpperCase().indexOf(code.toUpperCase()); if (idx > 0) authority = sanitizeAuthority(afterDate.slice(0, idx), code); }
   return { authority, status: status || fallbackStatus || 'Pendiente' };
 }
 function extractLocation(body: string, date: string, code?: string, status?: string) {
-  const dateIndex = body.indexOf(date); let tail = dateIndex >= 0 ? body.slice(dateIndex + date.length) : '';
-  tail = tail.replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, ''); if (code) tail = tail.replace(new RegExp(`\\b${code}\\b`, 'i'), ' '); if (status) tail = tail.replace(new RegExp(status.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), 'i'), ' '); tail = tail.replace(/\$\s*[0-9][0-9.,\s]*/, ' '); return clean(tail).replace(/[|;,]+$/, '').trim() || undefined;
+  const dateIndex = body.indexOf(date); let tail = dateIndex >= 0 ? body.slice(dateIndex + date.length) : ''; tail = tail.replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, ''); if (code) tail = tail.replace(new RegExp(`\\b${code}\\b`, 'i'), ' '); if (status) tail = tail.replace(new RegExp(status.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), 'i'), ' '); tail = tail.replace(/\$\s*[0-9][0-9.,\s]*/, ' '); return clean(tail).replace(/[|;,]+$/, '').trim() || undefined;
 }
 function parseRecordChunk(number: string, chunk: string): ParsedSimitRecord | undefined {
   const rawBody = chunk; const body = clean(chunk); const date = extractDate(body); if (!date) return undefined; const time = extractTime(body); const code = extractCode(body); const detectedStatus = extractStatus(body); const delimited = extractDelimitedFields(rawBody, date, code, detectedStatus); const status = delimited.status || detectedStatus || 'Pendiente';
-  const moneySource = body.replace(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g, ' ').replace(/\b\d{4}[/-]\d{2}[/-]\d{2}\b/g, ' ').replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ').replace(IDENTIFIER_RE, ' ').replace(/\b[A-D]\d{2}\b/gi, ' ');
-  const value = extractMoney(moneySource);
+  const moneySource = body.replace(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g, ' ').replace(/\b\d{4}[/-]\d{2}[/-]\d{2}\b/g, ' ').replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ').replace(IDENTIFIER_RE, ' ').replace(/\b[A-D]\d{2}\b/gi, ' '); const value = extractMoney(moneySource);
   return { kind: /cobro\s+coactivo|\bmulta\b/i.test(body) ? 'multa' : 'comparendo', number, date, time, authority: delimited.authority, municipality: delimited.authority || extractLocation(body, date, code, status), infractionCode: code, status, value, plate: 'No especificada en PDF' };
 }
 function parseJson(text: string): ParsedSimitRecord[] | undefined {
