@@ -1,6 +1,12 @@
-export const OFFICIAL_SIMIT_URL = 'https://www.simit.org.co/';
+export const OFFICIAL_SIMIT_URL = 'https://consulta.simit.org.co/Simit/index.html';
 
-/** Official SIMIT handoff. No third-party paid provider or scraping is used. */
+/**
+ * Official SIMIT handoff.
+ *
+ * TrámiteYa does not fabricate or infer SIMIT records. The public SIMIT
+ * consultation is the authoritative source. Automated extraction remains
+ * disabled until SIMIT/FCM exposes an authorized integration for third parties.
+ */
 export type OfficialSimitHandoff = {
   provider: 'official-manual';
   source: 'SIMIT';
