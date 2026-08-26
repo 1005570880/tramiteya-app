@@ -46,8 +46,8 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
     const parsed = JSON.parse(text);
     const source = Array.isArray(parsed) ? parsed : parsed?.comparendos || parsed?.multas || parsed?.data;
     if (Array.isArray(source)) {
-      return source.map((item: any) => ({
-        kind: String(item.kind || item.tipo || 'comparendo').toLowerCase().includes('multa') ? 'multa' : 'comparendo',
+      return source.map((item: any): ParsedSimitRecord => ({
+        kind: (String(item.kind || item.tipo || 'comparendo').toLowerCase().includes('multa') ? 'multa' : 'comparendo') as 'multa' | 'comparendo',
         number: String(item.numeroComparendo || item.numero || item.comparendo || '').trim() || undefined,
         date: String(item.fechaComparendo || item.fecha || '').trim() || undefined,
         authority: String(item.organismoTransito || item.organismo || item.autoridad || '').trim() || undefined,
