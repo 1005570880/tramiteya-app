@@ -33,7 +33,8 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   const rawValue = item.valorPagar ?? item.valor ?? item.valorMulta;
   const value = typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? ''));
   return {
-    kind, number,
+    kind,
+    number,
     date: String(item.fechaComparendo ?? item.fecha ?? '').trim() || undefined,
     authority: String(item.organismoTransito ?? item.organismo ?? item.autoridad ?? '').trim() || undefined,
     department: String(item.departamento ?? '').trim() || undefined,
@@ -49,41 +50,33 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   };
 }
 
+/**
+ * Parses the text layout produced by the official SIMIT statement PDF.
+ * pdf-parse can return a row as separate lines or as a single whitespace-
+ * separated line, so this parser deliberately does not depend on line breaks.
+ */
 function parseStructuredText(text: string): ParsedSimitRecord[] {
-  const lines = text.replace(/\r/g, '').replace(/\u00a0/g, ' ').split('\n').map(clean).filter(Boolean);
-  const dateRe = /^(\d{2}\/\d{2}\/\d{4}|\d{4}[/-]\d{2}[/-]\d{2})$/;
-  const timeRe = /^\d{2}:\d{2}:\d{2}$/;
-  const numberRe = /^(?:\d{11,22}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,6}-\d{3,}(?:-[A-Z0-9]+)*)$/i;
-  const codeRe = /^[A-Z]\d{1,3}$/i;
-  const moneyRe = /^\$?\s*[\d.,]+$/;
-  const statusWords = /^(pendiente|pendiente de pago|cobro coactivo|pagado|cancelado|acuerdo de pago|vigente|en cobro)$/i;
+  const normalized = clean(text.replace(/\r/g, '').replace(/\u00a0/g, ' '));
+  if (!normalized) return [];
+
+  const numberPattern = '(?:\\d{11,22}|\\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,8}-\\d{3,}(?:-[A-Z0-9]+)*)';
+  const rowRe = new RegExp(
+    `(${numberPattern})\\s+(\\d{2}\\/\\d{2}\\/\\d{4}|\\d{4}[\\/-]\\d{2}[\\/-]\\d{2})\\s+(?:\\d{2}:\\d{2}:\\d{2}\\s+)?(.+?)\\s+([A-Z]\\d{1,3})\\s+(Pendiente de pago|Pendiente|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\\s+\\$?\\s*([\\d.,]+)(?=\\s+${numberPattern}\\s+\\d{2}\\/\\d{2}\\/\\d{4}|\\s+${numberPattern}\\s+\\d{4}[\\/-]\\d{2}[\\/-]\\d{2}|\\s+Total\\s+a\\s+pagar|\\s+La informaci[oó]n|$)`,
+    'gi'
+  );
+
   const records: ParsedSimitRecord[] = [];
-
-  for (let i = 0; i < lines.length;) {
-    const number = lines[i].replace(/\s+/g, '');
-    if (!numberRe.test(number) || dateRe.test(number) || moneyRe.test(number)) { i += 1; continue; }
-
-    let j = i + 1;
-    const date = dateRe.test(lines[j] || '') ? lines[j++] : undefined;
-    if (!date) { i += 1; continue; }
-    if (timeRe.test(lines[j] || '')) j += 1;
-
-    // Skip column/page headers accidentally captured between records.
-    while (j < lines.length && /^(#?\s*n[uú]mero multa|fecha|secretar[ií]a|infracci[oó]n|estado|valor total|estado de cuenta)$/i.test(lines[j])) j += 1;
-
-    const authorityParts: string[] = [];
-    while (j < lines.length && !codeRe.test(lines[j]) && !statusWords.test(lines[j]) && !moneyRe.test(lines[j]) && !numberRe.test(lines[j])) {
-      if (dateRe.test(lines[j]) || timeRe.test(lines[j])) break;
-      authorityParts.push(lines[j++]);
-      if (authorityParts.length >= 3) break;
-    }
-    const authority = authorityParts.join(' ') || undefined;
-    const infractionCode = codeRe.test(lines[j] || '') ? lines[j++].toUpperCase() : undefined;
-    const status = statusWords.test(lines[j] || '') ? lines[j++] : undefined;
-    const value = moneyRe.test(lines[j] || '') ? moneyToNumber(lines[j++]) : undefined;
+  for (const match of normalized.matchAll(rowRe)) {
+    const number = match[1].replace(/\s+/g, '');
+    const date = match[2];
+    const authority = clean(match[3]);
+    const infractionCode = match[4].toUpperCase();
+    const status = clean(match[5]);
+    const value = moneyToNumber(match[6]);
+    if (!number || !date || !infractionCode || value === undefined) continue;
 
     records.push({
-      kind: status?.toLowerCase() === 'cobro coactivo' ? 'multa' : 'comparendo',
+      kind: status.toLowerCase() === 'cobro coactivo' ? 'multa' : 'comparendo',
       number,
       date,
       authority,
@@ -91,7 +84,6 @@ function parseStructuredText(text: string): ParsedSimitRecord[] {
       status,
       value,
     });
-    i = Math.max(j, i + 1);
   }
 
   return records.filter((record, index, all) => all.findIndex(other => other.number === record.number) === index);
