@@ -14,10 +14,10 @@ function mergeEnrichment(base: ExtractedRecord[], ai: ExtractedRecord[]) { const
 function normalizeDocument(value: unknown) { return String(value ?? '').replace(/\D/g, ''); }
 function inferDocumentNumber(text: string, ai: AiAnalysis) {
   const aiNumber = normalizeDocument(ai.documentNumber); if (aiNumber.length >= 5) return aiNumber;
-  // SIMIT commonly extracts this header as: "Cédula: | 37312647" or
-  // with the value on the following line. Accept spaces, pipes and line breaks.
-  const match = text.match(/(?:c[eé]dula|documento|identificaci[oó]n|CC)\s*(?:n[roº°.]?\s*)?[:\-|]*\s*(?:\|\s*)?(?:\n\s*)?(\d{6,12})\b/i);
+  const match = text.match(/Cédula:\s*\|?\s*(\d+)/i);
   if (match?.[1]) return match[1];
+  const fallback = text.match(/(?:documento|identificaci[oó]n|CC)\s*(?:n[roº°.]?\s*)?[:\-|]*\s*(?:\|\s*)?(?:\n\s*)?(\d{6,12})\b/i);
+  if (fallback?.[1]) return fallback[1];
   const heading = text.match(/estado\s+de\s+cuenta\s*\n?\s*(\d{6,12})\s*\n?\s*fecha\s+de\s+expedici[oó]n/i);
   return heading?.[1] || '';
 }
