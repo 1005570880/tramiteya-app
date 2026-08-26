@@ -62,6 +62,8 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const [simitRecords, setSimitRecords] = useState<SimitRecord[]>([]);
   const [selectedSimit, setSelectedSimit] = useState<SimitRecord | null>(null);
   const [simitChecked, setSimitChecked] = useState(false);
+  const [simitPanelOpen, setSimitPanelOpen] = useState(false);
+  const [simitOfficialUrl, setSimitOfficialUrl] = useState("https://consulta.simit.org.co/Simit/");
 
   useEffect(() => {
     (async () => {
@@ -114,12 +116,13 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     try {
       const response = await fetch("/api/simit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentType: "CC", documentNumber }) });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.message || `No fue posible consultar SIMIT (${payload.code || response.status}).`);
-      const records = Array.isArray(payload.comparendos) ? payload.comparendos : [];
-      setSimitDocument(documentNumber); setSimitRecords(records); setSimitChecked(true);
-      if (!records.length) setSimitError("SIMIT no reportó multas o comparendos para esta cédula.");
+      if (!response.ok || !payload.ok) throw new Error(payload.message || `No fue posible abrir SIMIT (${payload.code || response.status}).`);
+      setSimitDocument(documentNumber);
+      setSimitOfficialUrl(payload.officialUrl || "https://consulta.simit.org.co/Simit/");
+      setSimitPanelOpen(true);
+      setSimitChecked(true);
     } catch (error) {
-      setSimitChecked(false); setSimitError(error instanceof Error ? error.message : "No fue posible consultar SIMIT.");
+      setSimitChecked(false); setSimitError(error instanceof Error ? error.message : "No fue posible abrir SIMIT.");
     } finally { setSimitLoading(false); }
   }
 
@@ -153,8 +156,8 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       const r = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: currentProcedure.slug, answers: enrichedAnswers, instanceId: instance.id }) });
       if (!r.ok) throw new Error("Document generation failed");
       const document = await r.json();
-      if (getSupabaseBrowser()) {
-        const supabase = getSupabaseBrowser();
+      const supabase = getSupabaseBrowser();
+      if (supabase) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() }) });
       }
@@ -167,7 +170,7 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
 
   function clearDraft() {
     localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1);
-    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false); setSimitError("");
+    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false); setSimitError(""); setSimitPanelOpen(false);
   }
 
   const selectedAnswers = selectedSimit ? fromSimit(simitDocument, selectedSimit) : undefined;
@@ -181,7 +184,36 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
           <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
           <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
           {requiresSimitFirst && !selectedSimit ? (
-            <div className="space-y-6"><div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta inteligente</p><h2 className="text-xl font-bold mt-1">Primero buscamos tus multas y comparendos</h2><p className="text-sm text-slate-600 mt-2">Ingresa la cédula. TrámiteYa consultará SIMIT y te mostrará los registros encontrados para que selecciones exactamente el que quieres revisar.</p></div><div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div><button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Consultando SIMIT..." : "Consultar SIMIT"}</button>{simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}{simitChecked && simitRecords.length > 0 && <div className="space-y-3"><div><h2 className="text-lg font-bold">Registros encontrados</h2><p className="text-sm text-slate-500">Selecciona uno para continuar. Los datos se cargarán automáticamente en el formulario.</p></div>{simitRecords.map((record, index) => <button type="button" key={`${record.number || "registro"}-${index}`} onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-2xl border border-slate-200 p-4 hover:border-blue-500 hover:bg-blue-50 transition"><div className="flex items-center justify-between gap-4"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="text-sm font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm"><div><span className="text-slate-400 block">Placa</span>{record.plate || "—"}</div><div><span className="text-slate-400 block">Fecha</span>{record.date || "—"}</div><div><span className="text-slate-400 block">Organismo</span>{record.authority || "—"}</div><div><span className="text-slate-400 block">Estado</span>{record.status || "—"}</div></div></button>)}</div>}</div>
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
+                <p className="text-sm font-semibold text-blue-700">Consulta inteligente</p>
+                <h2 className="text-xl font-bold mt-1">Consulta oficial de SIMIT</h2>
+                <p className="text-sm text-slate-600 mt-2">Ingresa la cédula y abriremos el portal oficial de SIMIT dentro de TrámiteYa para que la consulta se haga sobre la fuente oficial.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-2">Cédula</label>
+                <input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" />
+                <p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p>
+              </div>
+              <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Abriendo SIMIT..." : "Consultar en SIMIT"}</button>
+              {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
+
+              {simitPanelOpen && <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-900 text-white px-4 py-3">
+                  <div>
+                    <p className="font-semibold">SIMIT oficial</p>
+                    <p className="text-xs text-slate-300">Consulta para cédula {simitDocument}</p>
+                  </div>
+                  <a href={simitOfficialUrl} target="_blank" rel="noreferrer" className="inline-flex justify-center rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Abrir en nueva pestaña</a>
+                </div>
+                <div className="h-[720px] bg-white">
+                  <iframe title="Portal oficial SIMIT" src={simitOfficialUrl} className="h-full w-full border-0" referrerPolicy="strict-origin-when-cross-origin" />
+                </div>
+                <div className="bg-amber-50 border-t border-amber-200 px-4 py-3 text-sm text-amber-900">
+                  <strong>Importante:</strong> el portal de SIMIT es un sitio externo. El navegador no permite que TrámiteYa lea automáticamente su contenido si SIMIT no autoriza esa integración. Por eso no mostraremos datos de otra persona ni resultados simulados.
+                </div>
+              </div>}
+            </div>
           ) : !preview ? (<><StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /></>) : (
             <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>
           )}
