@@ -50,48 +50,37 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   };
 }
 
-/**
- * Parses the text layout produced by the official SIMIT statement PDF.
- * The PDF is a table and pdf-parse may place each cell on its own line.
- * We therefore detect each row from its number + date, then parse the
- * complete row independently. This also handles multi-word/multi-line
- * authorities such as "Agustin Codazzi" and the continuation page header.
- */
+/** Parse rows from the official SIMIT statement as extracted by pdf-parse. */
 function parseStructuredText(text: string): ParsedSimitRecord[] {
   const normalized = text
     .replace(/\r/g, '\n')
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
-    .replace(/\n{2,}/g, '\n')
+    .replace(/\n+/g, '\n')
     .trim();
   if (!normalized) return [];
 
-  // Official SIMIT numbers appear both as long numeric identifiers and
-  // alphanumeric identifiers such as 2025-FAD-01635 or TC-2024-34172.
-  const numberPattern = '(?:\\d{11,24}|\\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\\d{3,}(?:-[A-Z0-9]+)*)';
-  const datePattern = '\\d{2}\\/\\d{2}\\/\\d{4}|\\d{4}[\\/-]\\d{2}[\\/-]\\d{2}';
-  const rowStartRe = new RegExp(`(${numberPattern})\\s+(${datePattern})\\s+(?:\\d{2}:\\d{2}:\\d{2}\\s+)?`, 'gi');
-  const starts = [...normalized.matchAll(rowStartRe)];
+  // SIMIT uses numeric identifiers and identifiers such as 2025-FAD-01635
+  // or TC-2024-34172. Detect every row start first, then parse each row.
+  const rowStartRe = /(\d{11,24}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\d{3,}(?:-[A-Z0-9]+)*)\s+(\d{2}\/\d{2}\/\d{4}|\d{4}[\/-]\d{2}[\/-]\d{2})\s+(?:\d{2}:\d{2}:\d{2}\s+)?/gi;
+  const starts = Array.from(normalized.matchAll(rowStartRe));
   const records: ParsedSimitRecord[] = [];
 
-  for (let i = 0; i < starts.length; i++) {
+  for (let i = 0; i < starts.length; i += 1) {
     const start = starts[i].index ?? 0;
-    const nextStart = starts[i + 1]?.index ?? normalized.length;
-    let row = normalized.slice(start, nextStart).trim();
-    row = row.split(/\s+#?\s*N[uú]mero\s+multa\s+Fecha\s+Secretar[ií]a/i)[0];
-    row = row.split(/\s+Total\s+a\s+pagar\b/i)[0];
-    row = row.split(/\s+La\s+informaci[oó]n\s+contenida\s+en\s+el\s+sistema/i)[0];
-
-    const head = row.match(new RegExp(`^(${numberPattern})\\s+(${datePattern})\\s+(.*)$`, 'i'));
+    const end = starts[i + 1]?.index ?? normalized.length;
+    const row = normalized.slice(start, end).trim();
+    const head = row.match(/^(\d{11,24}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\d{3,}(?:-[A-Z0-9]+)*)\s+(\d{2}\/\d{2}\/\d{4}|\d{4}[\/-]\d{2}[\/-]\d{2})\s+(.*)$/i);
     if (!head) continue;
 
     const number = head[1].replace(/\s+/g, '');
     const date = head[2];
     let body = clean(head[3]);
+    body = body.split(/\s+Numero\s+multa\s+Fecha\s+Secretaria/i)[0];
+    body = body.split(/\s+Total\s+a\s+pagar\b/i)[0];
+    body = body.split(/\s+La\s+informacion\s+contenida\s+en\s+el\s+sistema/i)[0];
 
-    // The final fields of a SIMIT row are always infraction code, status and
-    // amount. Everything before them belongs to the authority/organism.
-    const tail = body.match(/^(.*?)\s+([A-Z]\\d{1,3})\s+(Pendiente(?: de pago)?|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\s+\\$?\s*([\\d.,]+)\s*$/i);
+    const tail = body.match(/^(.*?)\s+([A-Z]\d{1,3})\s+(Pendiente(?: de pago)?|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\s+\$?\s*([\d.,]+)\s*$/i);
     if (!tail) continue;
 
     const authority = clean(tail[1]);
@@ -111,7 +100,7 @@ function parseStructuredText(text: string): ParsedSimitRecord[] {
     });
   }
 
-  return records.filter((record, index, all) => all.findIndex(other => other.number === record.number) === index);
+  return records.filter((record, index, all) => all.findIndex((other) => other.number === record.number) === index);
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
