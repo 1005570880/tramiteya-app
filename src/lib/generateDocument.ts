@@ -1,5 +1,3 @@
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import PDFDocument from 'pdfkit';
 import type { Procedure } from '../types';
 import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
@@ -9,7 +7,7 @@ import { analyzeLegalBasis } from './normativeEngine';
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
 
-const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas']);
+const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
 
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
@@ -18,25 +16,13 @@ function documentContent(procedure: Procedure, answers: FormAnswers): string {
 function appendLegalBasis(content: string, procedure: Procedure, answers: FormAnswers): string {
   const analysis = analyzeLegalBasis(procedure.slug, answers);
   if (!analysis.norms.length) return content;
-
   const normativeLines = analysis.norms.flatMap((norm) => [
     `${norm.title}${norm.article ? ` — ${norm.article}` : ''}`,
     norm.description,
     `Fuente: ${norm.authority} — ${norm.sourceUrl}`,
     '',
   ]);
-
-  return [
-    content,
-    '',
-    'FUNDAMENTO NORMATIVO DE REFERENCIA',
-    ...normativeLines,
-    'CRITERIO DE SELECCIÓN',
-    ...analysis.rationale,
-    '',
-    'ADVERTENCIA DE REVISIÓN',
-    ...analysis.alerts,
-  ].join('\n');
+  return [content, '', 'FUNDAMENTO NORMATIVO DE REFERENCIA', ...normativeLines, 'CRITERIO DE SELECCIÓN', ...analysis.rationale, '', 'ADVERTENCIA DE REVISIÓN', ...analysis.alerts].join('\n');
 }
 
 function buildFinalContent(procedure: Procedure, answers: FormAnswers): string {
@@ -62,6 +48,7 @@ export async function generateDocument({ procedure, answers, previousVersion = 0
   };
 }
 
+// Binary generators are lazy-loaded so the JSON generation route does not load docx/pdfkit.
 export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
   return renderDocx(buildFinalContent(procedure, answers));
 }
@@ -77,14 +64,16 @@ function isHeading(line: string) {
   return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|FUNDAMENTO NORMATIVO DE REFERENCIA|CRITERIO DE SELECCIÓN|ADVERTENCIA DE REVISIÓN|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.)/.test(line);
 }
 
-function renderDocx(content: string): Uint8Array | Promise<Uint8Array> {
+async function renderDocx(content: string): Promise<Uint8Array> {
+  const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
   const paragraphs = content.split('\n').map(line => isHeading(line)
     ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] })
     : new Paragraph({ children: [new TextRun(line)] }));
   return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
 }
 
-function renderPdf(content: string): Promise<Buffer> {
+async function renderPdf(content: string): Promise<Buffer> {
+  const PDFDocument = (await import('pdfkit')).default;
   return new Promise((resolve, reject) => {
     const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 60, bottom: 60, left: 65, right: 65 } });
     const chunks: Buffer[] = [];
