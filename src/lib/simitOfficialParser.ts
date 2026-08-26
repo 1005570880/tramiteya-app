@@ -18,16 +18,14 @@ function moneyToNumber(value: string) { const digits = value.replace(/[^0-9]/g, 
 
 function normalizeText(input: string) {
   let text = String(input ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ');
-  // pdf-parse can split a numeric identifier into whitespace-separated fragments.
   text = text.replace(/(\d(?:[\s\n]+\d){19})(?=\s|\.|$)/g, m => m.replace(/\s+/g, ''));
-  // Remove table/list indices such as: 70670001000056030485 . 1 23/06/2026
   text = text.replace(/(\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\s*(?:\.\s*)+\d{1,4}\s*(?=\d{2}[/-]\d{2}[/-]\d{4}\b)/gi, '$1 ');
   return text;
 }
 
 function extractDate(value: string) { return value.match(DATE_RE)?.[0]; }
 function extractTime(value: string) { return value.match(TIME_RE)?.[0]; }
-function extractStatus(value: string) { return value.match(STATUS_RE)?.[1] ? clean(value.match(STATUS_RE)![1]) : undefined; }
+function extractStatus(value: string) { const match = value.match(STATUS_RE); return match?.[1] ? clean(match[1]) : undefined; }
 function extractCode(value: string) { return value.match(CODE_RE)?.[1]?.toUpperCase(); }
 
 function extractMoney(value: string) {
@@ -41,6 +39,7 @@ function extractMoney(value: string) {
 function sanitizeAuthority(value: string, code?: string) {
   let authority = clean(value).replace(/^\|+|\|+$/g, '').trim();
   authority = authority.replace(/^\|?\s*\d{2}:\d{2}(?::\d{2})?\s*\|?\s*/i, '');
+  authority = authority.replace(/\d{2}:\d{2}:\d{2}/g, '').trim();
   const escaped = KNOWN_AUTHORITIES.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   const known = authority.match(new RegExp(`(?:^|\\|)\\s*(${escaped})\\s*(?=(?:[A-D]\\d{2}|Pendiente|Cobro|\\$|$))`, 'i'));
   if (known?.[1]) return clean(known[1]);
@@ -104,7 +103,6 @@ function enforceMinimumStructure(text: string) {
     const total = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (total >= 0) chunk = chunk.slice(0, total);
     const record = parseRecord(id, chunk); if (record) records.push(record);
   });
-  // Absolute last-resort invariant for a valid one-row statement, independent of column order.
   if (!records.length && identifiers[0] && dates[0]) {
     const id = identifiers[0][0].replace(/\s+/g, ''); const datePos = dates[0].index ?? 0;
     let chunk = normalized.slice(Math.max(0, datePos - 200), Math.min(normalized.length, datePos + 2200));
