@@ -30,16 +30,16 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   const kind: ParsedSimitRecord['kind'] = rawKind.includes('multa') ? 'multa' : 'comparendo';
   const number = String(item.numeroComparendo ?? item.numero ?? item.comparendo ?? '').trim() || undefined;
   if (!number) return undefined;
-  const rawValue = item.valorPagar ?? item.valor ?? item.valorMulta;
+  const rawValue = item.valorPagar ?? item.valor ?? item.valorMulta ?? item.valorTotal;
   const value = typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? ''));
   return {
     kind,
     number,
     date: String(item.fechaComparendo ?? item.fecha ?? '').trim() || undefined,
-    authority: String(item.organismoTransito ?? item.organismo ?? item.autoridad ?? '').trim() || undefined,
+    authority: String(item.organismoTransito ?? item.organismo ?? item.autoridad ?? item.secretaria ?? '').trim() || undefined,
     department: String(item.departamento ?? '').trim() || undefined,
     plate: String(item.placa ?? '').trim() || undefined,
-    infractionCode: String(item.codigoInfraccion ?? item.codigo ?? '').trim() || undefined,
+    infractionCode: String(item.codigoInfraccion ?? item.codigo ?? item.infraccion ?? '').trim() || undefined,
     description: String(item.descripcionInfraccion ?? item.descripcion ?? '').trim() || undefined,
     status: String(item.estadoComparendo ?? item.estado ?? '').trim() || undefined,
     value,
@@ -55,12 +55,12 @@ function normalizeText(text: string) {
     .replace(/\r/g, '\n')
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
-    .replace(/\n+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 function extractDate(value: string) {
-  const match = value.match(/\b(\d{2}\/\d{2}\/\d{4}|\d{2}[-\/]\d{2}[-\/]\d{4}|\d{4}[-\/]\d{2}[-\/]\d{2})\b/);
+  const match = value.match(/\b(\d{2}[\/-]\d{2}[\/-]\d{4}|\d{4}[\/-]\d{2}[\/-]\d{2})\b/);
   return match?.[1];
 }
 
@@ -70,75 +70,106 @@ function extractStatus(value: string) {
 }
 
 function extractMoney(value: string) {
-  const match = value.match(/\$?\s*([\d]{1,3}(?:[.,][\d]{3})+|\d{4,})\b/);
-  return match ? moneyToNumber(match[1]) : undefined;
+  const matches = [...value.matchAll(/\$?\s*([\d]{1,3}(?:[.,][\d]{3})+|\d{4,})\b/g)];
+  if (!matches.length) return undefined;
+  // In a SIMIT row the monetary amount is normally the last numeric token.
+  return moneyToNumber(matches[matches.length - 1][1]);
 }
 
-/**
- * Parses the two SIMIT layouts currently encountered in downloaded statements.
- * pdf-parse may reorder table cells, split dates/times and preserve row numbers
- * such as "1. 0000837837...". Therefore parsing cannot require a rigid column order.
- */
-function parseStructuredText(text: string): ParsedSimitRecord[] {
-  const normalized = normalizeText(text);
-  if (!normalized) return [];
+function extractInfractionCode(value: string) {
+  // SIMIT traffic codes used in the statement: C02, C35, C29, C06, D02, etc.
+  const match = value.match(/\b([A-Z][0-9]{1,3})\b/i);
+  return match?.[1]?.toUpperCase();
+}
 
-  // A SIMIT record normally has a 10-24 digit comparendo/multa identifier.
-  // Some historical records can use an alphanumeric identifier.
-  const identifier = '(?:\\d{10,24}|\\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\\d{3,}(?:-[A-Z0-9]+)*)';
-  const rowStartRe = new RegExp(`(?:^|\\n)\\s*(?:\\d+[.)]\\s*)?(${identifier})(?=\\s|$)`, 'gi');
-  const starts = Array.from(normalized.matchAll(rowStartRe));
+function parseRows(text: string): ParsedSimitRecord[] {
+  const normalized = normalizeText(text);
+  const lines = normalized.split('\n').map(clean).filter(Boolean);
+  const identifier = /^(?:\d{10,24}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\d{3,}(?:-[A-Z0-9]+)*)$/i;
+  const numbered = /^(\d{1,4})[.)]\s*$/;
   const records: ParsedSimitRecord[] = [];
 
-  for (let i = 0; i < starts.length; i += 1) {
-    const start = starts[i].index ?? 0;
-    const end = starts[i + 1]?.index ?? normalized.length;
-    const rawRow = normalized.slice(start, end).trim();
-    const numberMatch = rawRow.match(new RegExp(`^(?:\\d+[.)]\\s*)?(${identifier})\\b`, 'i'));
-    if (!numberMatch) continue;
+  for (let i = 0; i < lines.length; i += 1) {
+    let number = '';
+    let start = i;
 
-    const number = numberMatch[1].replace(/\\s+/g, '');
-    const body = clean(rawRow.slice(numberMatch[0].length));
-    if (!number || !body) continue;
+    // Layout A: "1." on one line, identifier on the next.
+    if (numbered.test(lines[i]) && identifier.test(lines[i + 1] || '')) {
+      number = lines[i + 1].replace(/\s+/g, '');
+      start = i + 1;
+    // Layout B: "1. 2024-FAD-02337" on one line.
+    } else {
+      const inline = lines[i].match(/^\d{1,4}[.)]\s+(.+)$/);
+      if (inline && identifier.test(inline[1].trim())) {
+        number = inline[1].trim().replace(/\s+/g, '');
+        start = i;
+      // Layout C: identifier alone on a line.
+      } else if (identifier.test(lines[i])) {
+        number = lines[i].replace(/\s+/g, '');
+        start = i;
+      }
+    }
 
+    if (!number) continue;
+
+    // Consume until the next identifier/numbered record. This handles PDF table
+    // extraction that places date, time, authority, code, status and amount on
+    // separate lines and also handles "Pendiente de / pago".
+    const parts: string[] = [];
+    for (let j = start + 1; j < lines.length; j += 1) {
+      if (identifier.test(lines[j])) break;
+      if (numbered.test(lines[j]) && identifier.test(lines[j + 1] || '')) break;
+      const inline = lines[j].match(/^\d{1,4}[.)]\s+(.+)$/);
+      if (inline && identifier.test(inline[1].trim())) break;
+      if (/^#\s*N[úu]mero\s+multa/i.test(lines[j])) break;
+      if (/^Total\s+a\s+pagar/i.test(lines[j])) break;
+      parts.push(lines[j]);
+    }
+
+    const body = clean(parts.join(' '));
     const date = extractDate(body);
-    const infractionMatch = body.match(/\b([A-Z][0-9]{1,3})\b/i);
-    const infractionCode = infractionMatch?.[1]?.toUpperCase();
-    const status = extractStatus(body);
+    const infractionCode = extractInfractionCode(body);
     const value = extractMoney(body);
+    const status = extractStatus(body);
 
-    // Avoid treating document headings, totals and course rows as infractions.
-    // A real SIMIT infraction row has at least a date plus an infraction code and value.
+    // Require the three strongest signals of a SIMIT row. This deliberately
+    // accepts rows with missing optional columns, while rejecting headings/totals.
     if (!date || !infractionCode || value === undefined) continue;
-    if (/^(total|estado de cuenta|cédula|fecha de expedición|número multa)/i.test(body)) continue;
 
-    // Authority is normally between the date/time and the infraction code.
-    // Fall back to the text before the code when pdf-parse changes column order.
     const dateIndex = body.indexOf(date);
     const codeIndex = body.toUpperCase().indexOf(infractionCode);
-    let authority = '';
+    let authority: string | undefined;
     if (dateIndex >= 0 && codeIndex > dateIndex) {
       authority = clean(body.slice(dateIndex + date.length, codeIndex))
-        .replace(/^\d{2}:\d{2}:\d{2}\s*/, '')
-        .replace(/^\d{2}:\d{2}\s*/, '');
+        .replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, '')
+        .trim();
     }
-    if (!authority && codeIndex > 0) authority = clean(body.slice(0, codeIndex));
-
-    // Remove status/value/timestamps from the authority fallback.
+    if (!authority && codeIndex > 0) {
+      authority = clean(body.slice(0, codeIndex))
+        .replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, '')
+        .trim();
+    }
     authority = authority
-      .replace(/\b(Pendiente(?: de pago)?|Cobro coactivo|Pagado|Cancelado|Acuerdo de pago|Vigente|En cobro)\b.*$/i, '')
+      ?.replace(/\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b.*$/i, '')
       .replace(/\$?\s*[\d.,]+.*$/, '')
-      .trim();
+      .trim() || undefined;
 
-    const kind: ParsedSimitRecord['kind'] = /\bcobro\s+coactivo\b|\bmulta\b/i.test(body) ? 'multa' : 'comparendo';
-    records.push({ kind, number, date, authority: authority || undefined, infractionCode, status, value });
+    records.push({
+      kind: /\bcobro\s+coactivo\b|\bmulta\b/i.test(body) ? 'multa' : 'comparendo',
+      number,
+      date,
+      authority,
+      infractionCode,
+      status,
+      value,
+    });
   }
 
-  // Deduplicate by identifier while retaining the richest parsed row.
   const merged = new Map<string, ParsedSimitRecord>();
   for (const record of records) {
-    const previous = merged.get(record.number || '');
-    merged.set(record.number || '', {
+    const key = record.number || '';
+    const previous = merged.get(key);
+    merged.set(key, {
       ...(previous || {}),
       ...record,
       authority: record.authority || previous?.authority,
@@ -160,8 +191,8 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
       return source.map(parseRecord).filter((item: ParsedSimitRecord | undefined): item is ParsedSimitRecord => Boolean(item));
     }
   } catch {
-    // Fall through to official copied-text parsing.
+    // Continue with text parsing.
   }
 
-  return parseStructuredText(text);
+  return parseRows(text);
 }
