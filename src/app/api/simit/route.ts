@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { lookupSimitByDocumentPlacApi } from '@/lib/simitPlacApi';
+import { createOfficialSimitHandoff, OFFICIAL_SIMIT_URL } from '@/lib/simitOfficial';
 
 export const runtime = 'nodejs';
 
@@ -17,17 +17,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, code: 'INVALID_RESPONSE', message: 'documentNumber es requerido.' }, { status: 400 });
   }
 
-  console.log('[SIMIT AUDIT] request', JSON.stringify({ provider: 'placapi', documentType, documentNumber, timestamp: new Date().toISOString() }));
+  // No devolvemos resultados simulados ni datos de terceros. La fuente oficial es SIMIT.
+  const handoff = createOfficialSimitHandoff(documentType, documentNumber);
+  console.log('[SIMIT AUDIT] official_handoff', JSON.stringify({ documentType, documentNumber, officialUrl: OFFICIAL_SIMIT_URL, timestamp: new Date().toISOString() }));
 
-  try {
-    const result = await lookupSimitByDocumentPlacApi(documentType, documentNumber);
-    const { raw, ...safeResult } = result;
-    console.log('[SIMIT AUDIT] normalized', JSON.stringify({ provider: 'placapi', documentType, documentNumber, found: result.found, recordCount: result.comparendos.length, pendingCount: result.pendingCount, status: result.status }));
-    return NextResponse.json({ ok: true, code: result.status ?? (result.found ? 'SUCCESS' : 'NO_RESULTS'), ...safeResult });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Error inesperado consultando SIMIT.';
-    const code = message.startsWith('SIMIT_DATA_INTEGRITY_ERROR') ? 'SIMIT_DATA_INTEGRITY_ERROR' : message.startsWith('PLACAPI_401') || message.startsWith('PLACAPI_403') ? 'AUTH_ERROR' : message.startsWith('PLACAPI_402') ? 'CREDITS_ERROR' : 'PROVIDER_ERROR';
-    console.error('[SIMIT AUDIT] provider_error', JSON.stringify({ provider: 'placapi', documentType, documentNumber, code, message }));
-    return NextResponse.json({ ok: false, code, message }, { status: code === 'AUTH_ERROR' ? 401 : code === 'CREDITS_ERROR' ? 402 : 502 });
-  }
+  return NextResponse.json({
+    ok: true,
+    code: 'OFFICIAL_SIMIT_REQUIRED',
+    provider: handoff.provider,
+    source: handoff.source,
+    officialUrl: handoff.officialUrl,
+    documentType: handoff.documentType,
+    documentNumber: handoff.documentNumber,
+    automatedExtractionAvailable: false,
+    comparendos: [],
+    message: 'La consulta debe realizarse en el portal oficial de SIMIT. TrámiteYa no mostrará datos de terceros ni resultados simulados.',
+  });
 }
