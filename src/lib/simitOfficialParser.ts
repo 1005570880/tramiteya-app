@@ -21,15 +21,29 @@ function extractTime(value: string): string | undefined { return String(value ||
 function extractStatus(value: string): string | undefined { const match = String(value || '').match(STATUS_RE); return match?.[1] ? clean(match[1]) : undefined; }
 function extractCode(value: string): string | undefined { return String(value || '').match(CODE_RE)?.[1]?.toUpperCase(); }
 
-/** Handles the real SIMIT header: ESTADO DE CUENTA / 37312647 / Fecha de expedición / Cédula:. */
+/** Handles real SIMIT headers such as ESTADO DE CUENTA / 37312647 / Fecha de expedición / Cédula:. */
 export function extractSimitDocumentNumber(input: string): string | undefined {
   const text = normalizeWhitespace(input);
   if (!text) return undefined;
-  const header = text.match(/estado\s+de\s+cuenta([\s\S]{0,250}?)fecha\s+de\s+expedici[oó]n/i)?.[1];
+
+  // Primary SIMIT layout: the document number is the standalone numeric line
+  // immediately after the ESTADO DE CUENTA heading.
+  const header = text.match(/estado\s+de\s+cuenta([\s\S]{0,300}?)(?:fecha\s+de\s+expedici[oó]n|c[eé]dula\s*:)/i)?.[1];
   if (header) {
-    const candidate = header.match(/\b\d{6,10}\b/)?.[0];
+    const candidate = header.match(/(?:^|\n|\|)\s*(\d{6,10})\s*(?=\n|\||$)/)?.[1] || header.match(/\b\d{6,10}\b/)?.[0];
     if (candidate) return candidate;
   }
+
+  // Some PDF text extractors reorder the header lines. In that case, inspect
+  // the first 500 characters after the heading, while rejecting dates/times.
+  const headingIndex = text.search(/estado\s+de\s+cuenta/i);
+  if (headingIndex >= 0) {
+    const window = text.slice(headingIndex, headingIndex + 500);
+    const candidates = [...window.matchAll(/\b\d{6,10}\b/g)].map(m => m[0]);
+    const candidate = candidates.find(value => !/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(value));
+    if (candidate) return candidate;
+  }
+
   const labelledPatterns = [
     /(?:c[eé]dula|cedula)\s*(?:de\s+)?(?:n[uú]mero|no\.?|nro\.?|n[º°])?\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /(?:documento\s+de\s+identidad|n[uú]mero\s+de\s+identificaci[oó]n|identificaci[oó]n)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
