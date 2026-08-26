@@ -26,7 +26,7 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
   }
   function select(record: RecordItem, doc: string, allRecords: RecordItem[] = records, fileName = "Estado de Cuenta SIMIT") {
     const document = normalizeDocument(doc || record.documentNumber); const hydratedRecords = allRecords.map(item => ({ ...item, ...(document ? { documentNumber: document } : {}) }));
-    try { saveSession(hydratedRecords, document, fileName); router.push(`/tramites/${slug}/formulario-simit`); } catch { setError("No fue posible preparar los datos del documento."); }
+    try { saveSession(hydratedRecords, document, fileName); const comparendoId = encodeURIComponent(record.number || ""); router.push(`/tramites/${slug}/formulario-simit?comparendoId=${comparendoId}`); } catch { setError("No fue posible preparar los datos del documento."); }
   }
   return <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 p-6">
     <p className="text-sm font-semibold text-blue-700">Paso 1 · Estado de Cuenta SIMIT</p><h2 className="text-xl font-bold mt-1">Sube tu Estado de Cuenta de SIMIT</h2><p className="text-sm text-slate-600 mt-2">Empieza por el PDF. No necesitas escribir la cédula ni copiar datos. TrámiteYa analizará el documento y completará automáticamente todos los campos que pueda identificar de forma fiable.</p>
