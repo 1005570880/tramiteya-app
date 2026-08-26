@@ -13,7 +13,7 @@ import { localDraftStorage } from "../../../../lib/draftStorage";
 import { getSupabaseBrowser } from "../../../../lib/supabaseBrowserClient";
 import type { FormAnswers } from "../../../../types/form";
 
-type SimitRecord = { number?: string; date?: string; authority?: string; department?: string; plate?: string; ownerName?: string; documentNumber?: string; infractionCode?: string; description?: string; status?: string; value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string };
+type SimitRecord = { kind?: "comparendo" | "multa" | "acuerdo" | "resolucion" | string; number?: string; date?: string; authority?: string; department?: string; plate?: string; ownerName?: string; documentNumber?: string; infractionCode?: string; description?: string; status?: string; value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string };
 
 function fromSimit(record: SimitRecord): FormAnswers {
   const doc = String(record.documentNumber || "").replace(/\D/g, "");
