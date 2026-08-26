@@ -13,6 +13,7 @@ import { getSupabaseBrowser } from "../../../../lib/supabaseBrowserClient";
 import type { FormAnswers } from "../../../../types/form";
 import { procedures } from "../../../../data/procedures";
 import { getDynamicFormDefinition } from "../../../../data/dynamicForms";
+import { parseOfficialSimitText } from "../../../../lib/simitOfficialParser";
 
 type SimitRecord = {
   kind?: string; number?: string; date?: string; authority?: string; department?: string;
@@ -49,7 +50,6 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const procedure = procedures.find((p) => p.slug === params.slug);
   const draftKey = `procedure:${params.slug}`;
   const requiresSimitFirst = params.slug === "derecho-de-peticion-eliminar-multa";
-
   const [resetSignal, setResetSignal] = useState(0);
   const [instanceId, setInstanceId] = useState<string | undefined>();
   const [remoteAnswers, setRemoteAnswers] = useState<FormAnswers | undefined>();
@@ -61,9 +61,10 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const [simitError, setSimitError] = useState("");
   const [simitRecords, setSimitRecords] = useState<SimitRecord[]>([]);
   const [selectedSimit, setSelectedSimit] = useState<SimitRecord | null>(null);
-  const [simitChecked, setSimitChecked] = useState(false);
   const [simitPanelOpen, setSimitPanelOpen] = useState(false);
   const [simitOfficialUrl, setSimitOfficialUrl] = useState("https://consulta.simit.org.co/Simit/");
+  const [officialText, setOfficialText] = useState("");
+  const [parseLoading, setParseLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -96,23 +97,19 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     })();
   }, [search, draftKey, params.slug, requiresSimitFirst]);
 
-  if (!definition || !procedure) {
-    return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer /></main>;
-  }
-
+  if (!definition || !procedure) return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer /></main>;
   const currentProcedure = procedure;
 
   function analyze(a: FormAnswers) {
     const text = `${params.slug} ${currentProcedure.title} ${currentProcedure.category}`;
     const decisions = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(text) ? evaluateTrafficCase(a) : [];
-    setAnalysis(decisions);
-    return decisions;
+    setAnalysis(decisions); return decisions;
   }
 
   async function consultSimit() {
     const documentNumber = simitDocument.replace(/\D/g, "");
     if (!documentNumber) { setSimitError("Ingresa la cédula para consultar SIMIT."); return; }
-    setSimitLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false);
+    setSimitLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null); setOfficialText("");
     try {
       const response = await fetch("/api/simit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentType: "CC", documentNumber }) });
       const payload = await response.json().catch(() => ({}));
@@ -120,10 +117,18 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       setSimitDocument(documentNumber);
       setSimitOfficialUrl(payload.officialUrl || "https://consulta.simit.org.co/Simit/");
       setSimitPanelOpen(true);
-      setSimitChecked(true);
-    } catch (error) {
-      setSimitChecked(false); setSimitError(error instanceof Error ? error.message : "No fue posible abrir SIMIT.");
-    } finally { setSimitLoading(false); }
+    } catch (error) { setSimitError(error instanceof Error ? error.message : "No fue posible abrir SIMIT."); }
+    finally { setSimitLoading(false); }
+  }
+
+  function extractOfficialResult() {
+    setParseLoading(true); setSimitError("");
+    try {
+      const records = parseOfficialSimitText(officialText) as SimitRecord[];
+      if (!records.length) throw new Error("No encontré comparendos en el texto pegado. En SIMIT selecciona y copia el detalle de los registros visibles e inténtalo nuevamente.");
+      setSimitRecords(records); setSelectedSimit(null);
+    } catch (error) { setSimitRecords([]); setSimitError(error instanceof Error ? error.message : "No fue posible interpretar el resultado de SIMIT."); }
+    finally { setParseLoading(false); }
   }
 
   async function ensureInstance(a: FormAnswers) {
@@ -132,10 +137,7 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     if (supabase) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        if (instanceId) {
-          const r = await fetch(`/api/instances/${instanceId}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
-          if (r.ok) return r.json();
-        }
+        if (instanceId) { const r = await fetch(`/api/instances/${instanceId}`, { headers: { Authorization: `Bearer ${session.access_token}` } }); if (r.ok) return r.json(); }
         const r = await fetch("/api/instances", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ procedureId: currentProcedure.id, procedureSlug: currentProcedure.slug, answers: a }) });
         if (r.ok) { const x = await r.json(); setInstanceId(x.id); return x; }
       }
@@ -150,76 +152,37 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     if (issues.length) { alert(`Faltan ${issues.length} campo(s) obligatorio(s).`); return; }
     setLoading(true);
     try {
-      const decisions = analyze(a);
-      const instance = await ensureInstance(a);
+      const decisions = analyze(a); const instance = await ensureInstance(a);
       const enrichedAnswers = { ...a, __legalDecisionEngine: { version: 1, generatedAt: new Date().toISOString(), decisions } } as unknown as FormAnswers;
       const r = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: currentProcedure.slug, answers: enrichedAnswers, instanceId: instance.id }) });
       if (!r.ok) throw new Error("Document generation failed");
-      const document = await r.json();
-      const supabase = getSupabaseBrowser();
-      if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() }) });
-      }
-      procedureStorage.update(instance.id, { answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() });
-      localDraftStorage.remove(draftKey);
-      router.push(`/tramites/${currentProcedure.slug}/resultado/${instance.id}`);
-    } catch (e) { console.error(e); alert("No fue posible generar el documento. Inténtalo nuevamente."); }
-    finally { setLoading(false); }
+      const document = await r.json(); const supabase = getSupabaseBrowser();
+      if (supabase) { const { data: { session } } = await supabase.auth.getSession(); if (session?.user) await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() }) }); }
+      procedureStorage.update(instance.id, { answers: enrichedAnswers, status: "document_ready", document, completedAt: new Date().toISOString() }); localDraftStorage.remove(draftKey); router.push(`/tramites/${currentProcedure.slug}/resultado/${instance.id}`);
+    } catch (e) { console.error(e); alert("No fue posible generar el documento. Inténtalo nuevamente."); } finally { setLoading(false); }
   }
 
   function clearDraft() {
     localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1);
-    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitChecked(false); setSimitError(""); setSimitPanelOpen(false);
+    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitError(""); setSimitPanelOpen(false); setOfficialText("");
   }
 
   const selectedAnswers = selectedSimit ? fromSimit(simitDocument, selectedSimit) : undefined;
   const formInitialAnswers = selectedAnswers ? ({ ...(remoteAnswers || {}), ...selectedAnswers } as FormAnswers) : remoteAnswers;
 
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <Header />
-      <section className="max-w-4xl mx-auto px-4 py-12">
-        <div className="bg-white p-6 md:p-8 rounded-2xl shadow">
-          <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
-          <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
-          {requiresSimitFirst && !selectedSimit ? (
-            <div className="space-y-6">
-              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
-                <p className="text-sm font-semibold text-blue-700">Consulta inteligente</p>
-                <h2 className="text-xl font-bold mt-1">Consulta oficial de SIMIT</h2>
-                <p className="text-sm text-slate-600 mt-2">Ingresa la cédula y abriremos el portal oficial de SIMIT dentro de TrámiteYa para que la consulta se haga sobre la fuente oficial.</p>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold mb-2">Cédula</label>
-                <input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" />
-                <p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p>
-              </div>
-              <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Abriendo SIMIT..." : "Consultar en SIMIT"}</button>
-              {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
-
-              {simitPanelOpen && <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-900 text-white px-4 py-3">
-                  <div>
-                    <p className="font-semibold">SIMIT oficial</p>
-                    <p className="text-xs text-slate-300">Consulta para cédula {simitDocument}</p>
-                  </div>
-                  <a href={simitOfficialUrl} target="_blank" rel="noreferrer" className="inline-flex justify-center rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Abrir en nueva pestaña</a>
-                </div>
-                <div className="h-[720px] bg-white">
-                  <iframe title="Portal oficial SIMIT" src={simitOfficialUrl} className="h-full w-full border-0" referrerPolicy="strict-origin-when-cross-origin" />
-                </div>
-                <div className="bg-amber-50 border-t border-amber-200 px-4 py-3 text-sm text-amber-900">
-                  <strong>Importante:</strong> el portal de SIMIT es un sitio externo. El navegador no permite que TrámiteYa lea automáticamente su contenido si SIMIT no autoriza esa integración. Por eso no mostraremos datos de otra persona ni resultados simulados.
-                </div>
-              </div>}
-            </div>
-          ) : !preview ? (<><StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /></>) : (
-            <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>
-          )}
-        </div>
-      </section>
-      <Footer />
-    </main>
-  );
+  return <main className="min-h-screen bg-slate-50 text-slate-900"><Header /><section className="max-w-4xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow">
+    <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero consultamos SIMIT para identificar la multa que quieres revisar. Después completaremos automáticamente los datos del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
+    <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
+    {requiresSimitFirst && !selectedSimit ? <div className="space-y-6">
+      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta oficial</p><h2 className="text-xl font-bold mt-1">Primero verificamos la información en SIMIT</h2><p className="text-sm text-slate-600 mt-2">Ingresa la cédula y abre la consulta oficial. TrámiteYa no utilizará resultados simulados ni datos de otra persona.</p></div>
+      <div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div>
+      <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Abriendo SIMIT..." : "Abrir consulta oficial de SIMIT"}</button>
+      {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
+      {simitPanelOpen && <div className="space-y-4">
+        <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-900 text-white px-4 py-3"><div><p className="font-semibold">SIMIT oficial</p><p className="text-xs text-slate-300">Documento consultado: {simitDocument}</p></div><a href={simitOfficialUrl} target="_blank" rel="noreferrer" className="inline-flex justify-center rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Abrir SIMIT</a></div><div className="h-[560px] bg-white"><iframe title="Portal oficial SIMIT" src={simitOfficialUrl} className="h-full w-full border-0" referrerPolicy="strict-origin-when-cross-origin" /></div></div>
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h3 className="font-bold text-emerald-900">Traer el resultado oficial a TrámiteYa</h3><p className="text-sm text-emerald-800 mt-1">Mientras SIMIT no ofrece una integración autorizada para terceros, copia desde el portal oficial el texto de los comparendos que aparecen y pégalo aquí. TrámiteYa lo estructura automáticamente; no consulta otra base ni inventa información.</p><textarea value={officialText} onChange={e => setOfficialText(e.target.value)} rows={8} placeholder="Pega aquí el resultado copiado desde SIMIT..." className="mt-4 w-full rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-600" /><button onClick={extractOfficialResult} disabled={parseLoading || !officialText.trim()} className="mt-3 rounded-xl bg-emerald-700 px-5 py-3 text-white font-semibold disabled:opacity-50">{parseLoading ? "Extrayendo información..." : "Extraer comparendos"}</button></div>
+        {simitRecords.length > 0 && <div className="space-y-3"><h3 className="font-bold">Registros encontrados</h3>{simitRecords.map((record, index) => <button key={`${record.number}-${index}`} type="button" onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-xl border p-4 hover:border-blue-500 hover:bg-blue-50"><div className="flex justify-between gap-3"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm text-slate-600"><span>Fecha: {record.date || "—"}</span><span>Placa: {record.plate || "—"}</span><span>Organismo: {record.authority || "—"}</span><span>Estado: {record.status || "—"}</span></div>{record.description && <p className="text-sm text-slate-700 mt-2">{record.description}</p>}<p className="text-xs text-blue-700 mt-3 font-semibold">Seleccionar este registro →</p></button>)}</div>}
+      </div>}
+    </div> : !preview ? <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /> : <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>}
+  </div></section><Footer /></main>;
 }
