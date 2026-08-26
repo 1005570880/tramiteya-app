@@ -24,7 +24,17 @@ function inferDocumentNumber(text: string, ai: AiAnalysis) {
   return heading?.[1]?.replace(/\D/g, '') || '';
 }
 function extractTotal(text: string) { const match = text.match(/(?:total\s+(?:a\s+)?pagar|total\s+deuda|total\s+pendiente)[^$0-9]{0,40}\$?\s*([0-9.,]{4,})/i); return match?.[1] ? Number(match[1].replace(/[^0-9]/g, '')) : undefined; }
-function looksLikeSimit(text: string) { const n = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' '); return ['estado de cuenta', 'comparendos y multas', 'simit'].filter(x => n.includes(x)).length >= 2; }
+function looksLikeSimit(text: string) {
+  const n = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' ');
+  const signals = ['estado de cuenta', 'comparendos y multas', 'simit'].filter(x => n.includes(x)).length;
+  if (signals >= 2) return true;
+  // Algunos Estados de Cuenta de una sola fila pierden encabezados durante pdf-parse.
+  // Si conservan el identificador de comparendo y una fecha válida, el documento ya
+  // satisface el invariante estructural y el parser determinístico será la autoridad final.
+  const hasIdentifier = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i.test(text);
+  const hasDate = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/.test(text);
+  return hasIdentifier && hasDate;
+}
 
 async function aiEnrich(text: string, deterministicRecords: ExtractedRecord[]): Promise<AiAnalysis> {
   const key = process.env.OPENAI_API_KEY; if (!key || !deterministicRecords.length) return {};
