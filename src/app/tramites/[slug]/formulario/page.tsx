@@ -13,7 +13,6 @@ import { getSupabaseBrowser } from "../../../../lib/supabaseBrowserClient";
 import type { FormAnswers } from "../../../../types/form";
 import { procedures } from "../../../../data/procedures";
 import { getDynamicFormDefinition } from "../../../../data/dynamicForms";
-import { parseOfficialSimitText } from "../../../../lib/simitOfficialParser";
 
 type SimitRecord = {
   kind?: string; number?: string; date?: string; authority?: string; department?: string;
@@ -57,13 +56,11 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const [analysis, setAnalysis] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [simitDocument, setSimitDocument] = useState("");
-  const [simitLoading, setSimitLoading] = useState(false);
+  const [statementLoading, setStatementLoading] = useState(false);
   const [simitError, setSimitError] = useState("");
   const [simitRecords, setSimitRecords] = useState<SimitRecord[]>([]);
   const [selectedSimit, setSelectedSimit] = useState<SimitRecord | null>(null);
-  const [simitPanelOpen, setSimitPanelOpen] = useState(false);
-  const [simitOfficialUrl, setSimitOfficialUrl] = useState("https://consulta.simit.org.co/Simit/");
-  const [statementLoading, setStatementLoading] = useState(false);
+  const [statementUploaded, setStatementUploaded] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -105,35 +102,24 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     setAnalysis(decisions); return decisions;
   }
 
-  async function consultSimit() {
-    const documentNumber = simitDocument.replace(/\D/g, "");
-    if (!documentNumber) { setSimitError("Ingresa la cédula para consultar SIMIT."); return; }
-    setSimitLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null);
-    try {
-      const response = await fetch("/api/simit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documentType: "CC", documentNumber }) });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.message || `No fue posible abrir SIMIT (${payload.code || response.status}).`);
-      setSimitDocument(documentNumber);
-      setSimitOfficialUrl(payload.officialUrl || "https://consulta.simit.org.co/Simit/");
-      setSimitPanelOpen(true);
-    } catch (error) { setSimitError(error instanceof Error ? error.message : "No fue posible abrir SIMIT."); }
-    finally { setSimitLoading(false); }
-  }
-
   async function uploadStatement(file: File) {
     const documentNumber = simitDocument.replace(/\D/g, "");
     if (!documentNumber) { setSimitError("Primero ingresa la cédula."); return; }
-    setStatementLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null);
+    if (file.size > 10 * 1024 * 1024) { setSimitError("El PDF supera el límite de 10 MB."); return; }
+    setStatementLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null); setStatementUploaded(false);
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("documentNumber", documentNumber);
       const response = await fetch("/api/simit/upload", { method: "POST", body: form });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible procesar el estado de cuenta.");
-      setSimitRecords((payload.records || []) as SimitRecord[]);
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el estado de cuenta.");
+      const records = (payload.records || []) as SimitRecord[];
+      if (!records.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
+      setSimitRecords(records);
+      setStatementUploaded(true);
     } catch (error) {
-      setSimitError(error instanceof Error ? error.message : "No fue posible procesar el estado de cuenta.");
+      setSimitError(error instanceof Error ? error.message : "No fue posible analizar el estado de cuenta.");
     } finally { setStatementLoading(false); }
   }
 
@@ -170,25 +156,21 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
 
   function clearDraft() {
     localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1);
-    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitError(""); setSimitPanelOpen(false);
+    setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitError(""); setStatementUploaded(false);
   }
 
   const selectedAnswers = selectedSimit ? fromSimit(simitDocument, selectedSimit) : undefined;
   const formInitialAnswers = selectedAnswers ? ({ ...(remoteAnswers || {}), ...selectedAnswers } as FormAnswers) : remoteAnswers;
 
   return <main className="min-h-screen bg-slate-50 text-slate-900"><Header /><section className="max-w-4xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow">
-    <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Primero verificamos el estado de cuenta oficial de SIMIT. TrámiteYa extraerá automáticamente los comparendos y completará el trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
+    <div className="mb-6"><p className="text-sm font-medium text-blue-600">{currentProcedure.category}</p><h1 className="text-2xl md:text-3xl font-bold mt-1">{definition.title}</h1><p className="text-slate-500 mt-2">{requiresSimitFirst ? "Ingresa la cédula y ten a la mano el Estado de Cuenta oficial de SIMIT. TrámiteYa analizará el PDF, identificará los comparendos y completará automáticamente la información del trámite." : "Completa los datos. TrámiteYa adaptará el flujo según el trámite elegido."}</p></div>
     <div className="flex justify-end mb-4"><button onClick={clearDraft} className="px-3 py-1 rounded-md border text-sm">Borrar borrador</button></div>
     {requiresSimitFirst && !selectedSimit ? <div className="space-y-6">
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta oficial SIMIT</p><h2 className="text-xl font-bold mt-1">Sube el estado de cuenta y lo hacemos automático</h2><p className="text-sm text-slate-600 mt-2">Consulta la cédula en SIMIT, descarga el estado de cuenta oficial en PDF y súbelo aquí. TrámiteYa leerá el documento, identificará los comparendos y te permitirá escoger cuál revisar.</p></div>
-      <div><label className="block text-sm font-semibold mb-2">Cédula</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">La consulta se realiza con tipo de documento CC.</p></div>
-      <button onClick={consultSimit} disabled={simitLoading} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{simitLoading ? "Preparando SIMIT..." : "Abrir SIMIT para consultar"}</button>
+      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><p className="text-sm font-semibold text-blue-700">Consulta inteligente</p><h2 className="text-xl font-bold mt-1">Tu Estado de Cuenta de SIMIT es la fuente</h2><p className="text-sm text-slate-600 mt-2">No tienes que copiar datos ni llenar manualmente el formulario. Descarga el Estado de Cuenta desde SIMIT y súbelo aquí. TrámiteYa extraerá los datos del PDF y, si hay varios comparendos, te mostrará cada uno para que elijas solamente el que vas a revisar.</p></div>
+      <div><label className="block text-sm font-semibold mb-2">Cédula del titular</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">Tipo de documento: CC. Esta cédula se utilizará para asociar el Estado de Cuenta al trámite.</p></div>
+      <div className="rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-6"><div className="flex items-start gap-3"><div className="text-2xl">📄</div><div><h3 className="font-bold">Sube el Estado de Cuenta de SIMIT</h3><p className="text-sm text-slate-600 mt-1">Ten preparado el PDF que descargaste del portal oficial. TrámiteYa hará la extracción automáticamente.</p></div></div><label className={`mt-5 flex cursor-pointer items-center justify-center rounded-xl px-5 py-4 text-center font-semibold text-white ${statementLoading || !simitDocument ? "bg-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}><input type="file" accept="application/pdf,.pdf" className="hidden" disabled={statementLoading || !simitDocument} onChange={e => { const file = e.target.files?.[0]; if (file) void uploadStatement(file); e.currentTarget.value = ""; }} />{statementLoading ? "Analizando PDF automáticamente..." : "Seleccionar Estado de Cuenta PDF"}</label><p className="text-xs text-slate-500 mt-3">PDF · máximo 10 MB. No se requiere copiar ni pegar información.</p></div>
       {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
-      {simitPanelOpen && <div className="space-y-4">
-        <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-900 text-white px-4 py-3"><div><p className="font-semibold">SIMIT oficial</p><p className="text-xs text-slate-300">Documento consultado: {simitDocument}</p></div><a href={simitOfficialUrl} target="_blank" rel="noreferrer" className="inline-flex justify-center rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Abrir SIMIT</a></div><div className="h-[360px] bg-white"><iframe title="Portal oficial SIMIT" src={simitOfficialUrl} className="h-full w-full border-0" referrerPolicy="strict-origin-when-cross-origin" /></div></div>
-        <div className="rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50 p-6"><h3 className="font-bold text-slate-900">Estado de cuenta SIMIT</h3><p className="text-sm text-slate-600 mt-1">Descarga el PDF desde SIMIT y súbelo aquí. No necesitas copiar y pegar nada.</p><label className="mt-4 flex cursor-pointer items-center justify-center rounded-xl bg-white border border-blue-300 px-5 py-6 text-center font-semibold text-blue-700 hover:bg-blue-50"><input type="file" accept="application/pdf,.pdf,text/plain,.txt" className="hidden" disabled={statementLoading} onChange={e => { const file = e.target.files?.[0]; if (file) void uploadStatement(file); e.currentTarget.value = ""; }} />{statementLoading ? "Analizando estado de cuenta..." : "Seleccionar estado de cuenta PDF"}</label><p className="text-xs text-slate-500 mt-3">Máximo 10 MB. TrámiteYa procesa el contenido del archivo y no inventa registros.</p></div>
-        {simitRecords.length > 0 && <div className="space-y-3"><h3 className="font-bold">Comparendos encontrados automáticamente</h3>{simitRecords.map((record, index) => <button key={`${record.number}-${index}`} type="button" onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-xl border p-4 hover:border-blue-500 hover:bg-blue-50"><div className="flex justify-between gap-3"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm text-slate-600"><span>Fecha: {record.date || "—"}</span><span>Placa: {record.plate || "—"}</span><span>Organismo: {record.authority || "—"}</span><span>Estado: {record.status || "—"}</span></div>{record.description && <p className="text-sm text-slate-700 mt-2">{record.description}</p>}<p className="text-xs text-blue-700 mt-3 font-semibold">Seleccionar este registro →</p></button>)}</div>}
-      </div>}
-    </div> : !preview ? <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /> : <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">Verifica la información antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>}
+      {statementUploaded && simitRecords.length > 0 && <div className="space-y-3"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><p className="font-semibold text-emerald-800">Análisis completado</p><p className="text-sm text-emerald-700 mt-1">TrámiteYa identificó {simitRecords.length} registro(s). Selecciona uno. El documento jurídico solo se generará para el comparendo seleccionado.</p></div><h3 className="font-bold text-lg">Selecciona el comparendo que quieres revisar</h3>{simitRecords.map((record, index) => <button key={`${record.number}-${index}`} type="button" onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-xl border p-4 hover:border-blue-500 hover:bg-blue-50"><div className="flex justify-between gap-3"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm text-slate-600"><span>Fecha: {record.date || "—"}</span><span>Placa: {record.plate || "—"}</span><span>Organismo: {record.authority || "—"}</span><span>Estado: {record.status || "—"}</span></div>{record.description && <p className="text-sm text-slate-700 mt-2">{record.description}</p>}<p className="text-xs text-blue-700 mt-3 font-semibold">Usar este comparendo →</p></button>)}</div>}
+    </div> : !preview ? <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /> : <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">La información extraída del Estado de Cuenta ya fue incorporada. Verifica antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis jurídico preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>}
   </div></section><Footer /></main>;
 }
