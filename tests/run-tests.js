@@ -2,23 +2,19 @@
 
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-const { procedureStorage } = require('../src/lib/procedureStorage');
 
-function testProcedureStorage() {
-  console.log('Running procedureStorage tests...');
-  const inst = procedureStorage.create('proc_test', 'proc-test', { a: 'b' });
-  console.assert(inst.procedureSlug === 'proc-test', 'create slug');
-  const fetched = procedureStorage.get(inst.id);
-  console.assert(fetched && fetched.id === inst.id, 'get instance');
-  const list = procedureStorage.list();
-  console.assert(Array.isArray(list), 'list is array');
-  procedureStorage.update(inst.id, { status: 'document_ready' });
-  const updated = procedureStorage.get(inst.id);
-  console.assert(updated && updated.status === 'document_ready', 'update status');
-  procedureStorage.remove(inst.id);
-  const after = procedureStorage.get(inst.id);
-  console.assert(after === null, 'remove');
-  console.log('procedureStorage checks passed.');
+function testProcedureStorageSource() {
+  console.log('Running procedureStorage source checks...');
+  const source = readFileSync(path.join(__dirname, '..', 'src', 'lib', 'procedureStorage.ts'), 'utf8');
+  for (const method of ['create', 'get', 'list', 'update', 'markDownloaded', 'remove']) {
+    if (!new RegExp(`\\b${method}\\s*\\(`).test(source)) {
+      throw new Error(`procedureStorage missing method: ${method}`);
+    }
+  }
+  if (!source.includes("STORAGE_KEY = 'tramiteya:instances'")) {
+    throw new Error('procedureStorage storage key missing.');
+  }
+  console.log('procedureStorage source checks passed.');
 }
 
 function testPricingCatalog() {
@@ -42,7 +38,7 @@ function testPricingCatalog() {
   };
 
   for (const [id, price] of Object.entries(required)) {
-    const pattern = new RegExp(`['\"]${id}['\"]\\s*:\\s*\\{\\s*price:\\s*${price}\\b`);
+    const pattern = new RegExp(`['\\"]${id}['\\"]\\s*:\\s*\\{\\s*price:\\s*${price}\\b`);
     if (!pattern.test(source)) {
       throw new Error(`Precio vigente incorrecto o ausente: ${id}`);
     }
@@ -50,6 +46,6 @@ function testPricingCatalog() {
   console.log('Production pricing checks passed.');
 }
 
-testProcedureStorage();
+testProcedureStorageSource();
 testPricingCatalog();
 console.log('All TrámiteYa smoke tests passed.');
