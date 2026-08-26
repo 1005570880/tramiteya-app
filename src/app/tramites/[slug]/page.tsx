@@ -5,6 +5,7 @@ import Footer from "../../../components/Footer";
 import Link from "next/link";
 import SimitUploadFirst from "../../../components/SimitUploadFirst";
 
+// SIMIT: flujo definitivo = Estado de Cuenta PDF primero; la cédula se extrae del documento.
 export default function ProcedureDetail({ params }: { params: { slug: string } }) {
   const procedure = procedures.find((p) => p.slug === params.slug);
   if (!procedure) {
