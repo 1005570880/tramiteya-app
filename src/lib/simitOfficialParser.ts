@@ -16,20 +16,23 @@ function extractMoney(value: string) {
   const candidates = [...value.matchAll(/(?<![A-Za-z0-9_-])([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})(?![A-Za-z0-9_-])/g)].map(m => m[1]).filter(n => !/^20\d{2}$/.test(n) && !/^\d{10}$/.test(n) && !/^\d{20}$/.test(n));
   return candidates.length ? moneyToNumber(candidates[candidates.length - 1]) : undefined;
 }
-function extractCode(value: string) { return value.match(/(?:^|\s|\|)([A-D]\d{2})(?=\s|\||$|Cobro|Pendiente|\$)/i)?.[1]?.toUpperCase() || value.match(/([A-D]\d{2})/i)?.[1]?.toUpperCase(); }
+function extractCode(value: string) { return value.match(/([A-D]\d{2})/i)?.[1]?.toUpperCase(); }
 const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i;
 const IDENTIFIER_GLOBAL_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
 function extractIdentifierBeforeDate(prefix: string) { const matches = [...prefix.matchAll(IDENTIFIER_GLOBAL_RE)]; return matches.length ? matches[matches.length - 1][0].replace(/\s+/g, '') : undefined; }
 function removeListNoise(value: string) { return value.replace(/(?:^|\s)\d{1,4}[.)](?=\s|$)/g, ' '); }
+const KNOWN_AUTHORITIES = [
+  'Dptal Cesar - IDTRACESAR', 'Agustin Codazzi', 'Agustín Codazzi', 'Valledupar', 'Aracataca', 'Fundación', 'Fundacion'
+];
 function sanitizeAuthority(value: string, code?: string) {
   let authority = clean(value).replace(/^\|+|\|+$/g, '').trim();
   authority = authority.replace(/^\|?\s*\d{2}:\d{2}(?::\d{2})?\s*\|?\s*/i, '');
-  const codeStop = code ? new RegExp(code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : /\b[A-D]\d{2}\b/i;
-  const genericCodeStop = /[A-D]\d{2}/i;
-  const statusStop = /Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro/i;
-  const timeStop = /\d{2}:\d{2}(?::\d{2})?/i;
-  const moneyStop = /\$/i;
-  const matches = [timeStop, codeStop, genericCodeStop, statusStop, moneyStop].map(re => re.exec(authority)).filter(Boolean) as RegExpExecArray[];
+  const known = KNOWN_AUTHORITIES.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const knownMatch = authority.match(new RegExp(`(?:^|\\|)\\s*(${known})\\s*(?=(?:[A-D]\\d{2}|Pendiente|Cobro|\\$|$))`, 'i'));
+  if (knownMatch?.[1]) return clean(knownMatch[1]);
+  const stops: RegExp[] = [/\d{2}:\d{2}(?::\d{2})?/i, /[A-D]\d{2}/i, /Pendiente(?:\s+de\s+pago)?/i, /Cobro\s+coactivo/i, /Pagado/i, /Cancelado/i, /Acuerdo\s+de\s+pago/i, /Vigente/i, /En\s+cobro/i, /\$/i];
+  if (code) stops.unshift(new RegExp(code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  const matches = stops.map(re => re.exec(authority)).filter(Boolean) as RegExpExecArray[];
   const end = matches.reduce((min, match) => Math.min(min, match.index), authority.length);
   authority = clean(authority.slice(0, end)).replace(/^\|+|\|+$/g, '').trim();
   return authority || undefined;
@@ -39,19 +42,17 @@ function extractDelimitedFields(raw: string, date: string, code?: string, fallba
   const cells = afterDate.split('|').map(clean).filter(Boolean); let authority: string | undefined; let status: string | undefined;
   for (const cell of cells) {
     const cellStatus = extractStatus(cell); if (cellStatus && !status) status = cellStatus;
-    if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) {
-      authority = sanitizeAuthority(cell, code);
-    }
+    if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) authority = sanitizeAuthority(cell, code);
   }
   if (!authority && code) { const idx = afterDate.toUpperCase().indexOf(code.toUpperCase()); if (idx > 0) authority = sanitizeAuthority(afterDate.slice(0, idx), code); }
-  return { authority, status: status || fallbackStatus };
+  return { authority, status: status || fallbackStatus || 'Pendiente' };
 }
 function extractLocation(body: string, date: string, code?: string, status?: string) {
   const dateIndex = body.indexOf(date); let tail = dateIndex >= 0 ? body.slice(dateIndex + date.length) : '';
   tail = tail.replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, ''); if (code) tail = tail.replace(new RegExp(`\\b${code}\\b`, 'i'), ' '); if (status) tail = tail.replace(new RegExp(status.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), 'i'), ' '); tail = tail.replace(/\$\s*[0-9][0-9.,\s]*/, ' '); return clean(tail).replace(/[|;,]+$/, '').trim() || undefined;
 }
 function parseRecordChunk(number: string, chunk: string): ParsedSimitRecord | undefined {
-  const rawBody = chunk; const body = clean(chunk); const date = extractDate(body); if (!date) return undefined; const time = extractTime(body); const code = extractCode(body); const detectedStatus = extractStatus(body); const delimited = extractDelimitedFields(rawBody, date, code, detectedStatus); const status = delimited.status || detectedStatus;
+  const rawBody = chunk; const body = clean(chunk); const date = extractDate(body); if (!date) return undefined; const time = extractTime(body); const code = extractCode(body); const detectedStatus = extractStatus(body); const delimited = extractDelimitedFields(rawBody, date, code, detectedStatus); const status = delimited.status || detectedStatus || 'Pendiente';
   const moneySource = body.replace(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g, ' ').replace(/\b\d{4}[/-]\d{2}[/-]\d{2}\b/g, ' ').replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ').replace(IDENTIFIER_RE, ' ').replace(/\b[A-D]\d{2}\b/gi, ' ');
   const value = extractMoney(moneySource);
   return { kind: /cobro\s+coactivo|\bmulta\b/i.test(body) ? 'multa' : 'comparendo', number, date, time, authority: delimited.authority, municipality: delimited.authority || extractLocation(body, date, code, status), infractionCode: code, status, value, plate: 'No especificada en PDF' };
@@ -59,7 +60,7 @@ function parseRecordChunk(number: string, chunk: string): ParsedSimitRecord | un
 function parseJson(text: string): ParsedSimitRecord[] | undefined {
   try { const parsed: any = JSON.parse(text); const source = Array.isArray(parsed) ? parsed : parsed?.comparendos || parsed?.multas || parsed?.data; if (!Array.isArray(source)) return undefined;
     return source.map((item: any) => { const number = String(item?.numeroComparendo ?? item?.numero ?? item?.comparendo ?? item?.number ?? '').trim(); if (!number) return undefined; const rawValue = item?.valorPagar ?? item?.valor ?? item?.valorMulta ?? item?.valorTotal;
-      return { kind: /multa/i.test(String(item?.kind ?? item?.tipo ?? '')) ? 'multa' : 'comparendo', number, date: String(item?.fechaComparendo ?? item?.fecha ?? '').trim() || undefined, time: String(item?.horaComparendo ?? item?.hora ?? item?.time ?? '').trim() || undefined, authority: String(item?.organismoTransito ?? item?.organismo ?? item?.autoridad ?? item?.secretaria ?? '').trim() || undefined, municipality: String(item?.municipio ?? item?.ciudad ?? item?.municipality ?? '').trim() || undefined, department: String(item?.departamento ?? '').trim() || undefined, plate: String(item?.placa ?? '').replace(/\s+/g, '').toUpperCase() || 'No especificada en PDF', infractionCode: String(item?.codigoInfraccion ?? item?.codigo ?? item?.infraccion ?? '').trim().toUpperCase() || undefined, description: String(item?.descripcionInfraccion ?? item?.descripcion ?? '').trim() || undefined, status: String(item?.estadoComparendo ?? item?.estado ?? '').trim() || undefined, value: typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? '')), resolutionNumber: String(item?.numeroResolucion ?? '').trim() || undefined, resolutionDate: String(item?.fechaResolucion ?? '').trim() || undefined, notificationDate: String(item?.fechaNotificacion ?? '').trim() || undefined, paymentDate: String(item?.fechaPago ?? '').trim() || undefined } as ParsedSimitRecord; }).filter(Boolean) as ParsedSimitRecord[];
+      return { kind: /multa/i.test(String(item?.kind ?? item?.tipo ?? '')) ? 'multa' : 'comparendo', number, date: String(item?.fechaComparendo ?? item?.fecha ?? '').trim() || undefined, time: String(item?.horaComparendo ?? item?.hora ?? item?.time ?? '').trim() || undefined, authority: String(item?.organismoTransito ?? item?.organismo ?? item?.autoridad ?? item?.secretaria ?? '').trim() || undefined, municipality: String(item?.municipio ?? item?.ciudad ?? item?.municipality ?? '').trim() || undefined, department: String(item?.departamento ?? '').trim() || undefined, plate: String(item?.placa ?? '').replace(/\s+/g, '').toUpperCase() || 'No especificada en PDF', infractionCode: String(item?.codigoInfraccion ?? item?.codigo ?? item?.infraccion ?? '').trim().toUpperCase() || undefined, description: String(item?.descripcionInfraccion ?? item?.descripcion ?? '').trim() || undefined, status: String(item?.estadoComparendo ?? item?.estado ?? '').trim() || 'Pendiente', value: typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? '')), resolutionNumber: String(item?.numeroResolucion ?? '').trim() || undefined, resolutionDate: String(item?.fechaResolucion ?? '').trim() || undefined, notificationDate: String(item?.fechaNotificacion ?? '').trim() || undefined, paymentDate: String(item?.fechaPago ?? '').trim() || undefined } as ParsedSimitRecord; }).filter(Boolean) as ParsedSimitRecord[];
   } catch { return undefined; }
 }
 function parseRows(text: string): ParsedSimitRecord[] {
