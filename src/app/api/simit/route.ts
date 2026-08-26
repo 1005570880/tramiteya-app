@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOfficialSimitHandoff, OFFICIAL_SIMIT_URL } from '@/lib/simitOfficial';
+import { createOfficialSimitHandoff } from '@/lib/simitOfficial';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   console.log('[SIMIT AUDIT] official_handoff', JSON.stringify({
     documentType,
     documentNumber,
-    officialUrl: OFFICIAL_SIMIT_URL,
+    officialUrl: handoff.officialUrl,
     timestamp: new Date().toISOString(),
   }));
 
@@ -35,6 +35,6 @@ export async function POST(req: NextRequest) {
     documentNumber: handoff.documentNumber,
     automatedExtractionAvailable: false,
     comparendos: [],
-    message: 'La consulta se realiza directamente en el portal oficial de SIMIT. TrámiteYa no inventa ni interpreta resultados de terceros.',
+    message: 'TrámiteYa abrió la consulta oficial de SIMIT para el documento indicado. No se generan ni interpretan registros que no provengan de SIMIT.',
   });
 }
