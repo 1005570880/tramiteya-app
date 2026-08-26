@@ -16,6 +16,10 @@ function money(value?: number) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
 }
 
+function normalizeDocument(value: unknown) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 export default function SimitUploadFirst({ slug }: { slug: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -33,17 +37,20 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
       if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el Estado de Cuenta.");
       const found = (payload.records || []) as RecordItem[];
       if (!found.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
-      const doc = String(payload.documentNumber || found[0]?.documentNumber || "").replace(/\D/g, "");
-      setDocumentNumber(doc); setRecords(found);
-      if (found.length === 1) select(found[0], doc);
+      const doc = normalizeDocument(payload.documentNumber ?? payload.extraction?.documentNumber ?? payload.data?.documentNumber ?? found[0]?.documentNumber);
+      const hydrated = found.map(record => ({ ...record, ...(doc ? { documentNumber: doc } : {}) }));
+      setDocumentNumber(doc);
+      setRecords(hydrated);
+      try { localStorage.setItem(`tramiteya:simit:${slug}`, JSON.stringify({ documentNumber: doc, records: hydrated, savedAt: new Date().toISOString() })); } catch {}
+      if (hydrated.length === 1) select(hydrated[0], doc);
     } catch (e) { setError(e instanceof Error ? e.message : "No fue posible analizar el PDF."); }
     finally { setLoading(false); }
   }
 
   function select(record: RecordItem, doc: string) {
-    const document = String(doc || record.documentNumber || "").replace(/\D/g, "");
+    const document = normalizeDocument(doc || record.documentNumber);
     try {
-      localStorage.setItem(`tramiteya:simit:${slug}`, JSON.stringify({ documentNumber: document, record, savedAt: new Date().toISOString() }));
+      localStorage.setItem(`tramiteya:simit:${slug}`, JSON.stringify({ documentNumber: document, record: { ...record, documentNumber: document }, savedAt: new Date().toISOString() }));
       router.push(`/tramites/${slug}/formulario-simit`);
     } catch { setError("No fue posible preparar los datos del documento."); }
   }
