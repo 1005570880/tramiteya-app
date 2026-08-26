@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pdf from 'pdf-parse';
-import { parseOfficialSimitText } from '@/lib/simitOfficialParser';
+import { parseOfficialSimitStatement } from '@/lib/simitOfficialParser';
 
 export const runtime = 'nodejs';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -30,20 +30,29 @@ async function aiExtract(text: string): Promise<ExtractedRecord[]> {
     if (!content) return [];
     const parsed = JSON.parse(content);
     return Array.isArray(parsed?.records) ? parsed.records : [];
-  } catch (error) { console.error('[SIMIT AI] extraction fallback', error); return []; }
+  } catch (error) {
+    console.error('[SIMIT AI] extraction fallback', error);
+    return [];
+  }
 }
 
 function normalizeNumber(value: unknown) { return String(value ?? '').replace(/\D/g, ''); }
 
-function mergeRecords(base: ExtractedRecord[], ai: ExtractedRecord[]) {
-  const merged = new Map<string, ExtractedRecord>();
-  for (const record of [...base, ...ai]) {
-    const number = String(record.number || '').replace(/\s+/g, '').trim();
-    if (!number) continue;
-    const previous = merged.get(number);
-    merged.set(number, { ...(previous || {}), ...record, number });
-  }
-  return [...merged.values()];
+function enrichDeterministic(base: ExtractedRecord[], ai: ExtractedRecord[]) {
+  const byNumber = new Map(ai.map((record) => [String(record.number || '').replace(/\s+/g, '').trim(), record]));
+  return base.map((record) => {
+    const aiRecord = byNumber.get(String(record.number || '').replace(/\s+/g, '').trim());
+    if (!aiRecord) return record;
+    const enriched = { ...record };
+    for (const key of Object.keys(record) as (keyof ExtractedRecord)[]) {
+      const current = enriched[key];
+      const candidate = aiRecord[key];
+      if ((current === undefined || current === null || current === '') && candidate !== undefined && candidate !== null && candidate !== '') {
+        enriched[key] = candidate as never;
+      }
+    }
+    return enriched;
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -57,22 +66,45 @@ export async function POST(req: NextRequest) {
     if (!(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) return NextResponse.json({ ok: false, message: 'Sube únicamente el Estado de Cuenta en PDF descargado desde SIMIT.' }, { status: 415 });
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const parsed = await pdf(buffer);
-    const text = parsed.text || '';
+    const parsedPdf = await pdf(buffer);
+    const text = parsedPdf.text || '';
     if (!text.trim()) return NextResponse.json({ ok: false, code: 'SIMIT_PDF_NO_TEXT', message: 'El PDF no contiene texto extraíble. Descarga el Estado de Cuenta como PDF directamente desde SIMIT.' }, { status: 422 });
 
-    // TrámiteYa NO consulta SIMIT. Solo analiza el documento que el usuario aporta.
-    const deterministicRecords = parseOfficialSimitText(text);
+    // La estructura del documento es la autoridad primaria. La IA nunca decide si existen registros.
+    const deterministic = parseOfficialSimitStatement(text);
     const aiRecords = await aiExtract(text);
-    const records = mergeRecords(deterministicRecords, aiRecords);
-    if (!records.length) return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_NOT_STRUCTURED', message: 'El PDF fue recibido, pero no se encontraron comparendos o multas identificables. Sube el Estado de Cuenta oficial completo.' }, { status: 422 });
+    const records = deterministic.records.length > 0
+      ? enrichDeterministic(deterministic.records, aiRecords)
+      : aiRecords;
+
+    if (!deterministic.isSimitStatement) {
+      return NextResponse.json({ ok: false, code: 'SIMIT_NOT_A_STATEMENT', message: 'El PDF no presenta la estructura esperada de un Estado de Cuenta SIMIT.' }, { status: 422 });
+    }
+    if (!records.length) {
+      return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_NOT_STRUCTURED', message: 'El PDF fue recibido, pero no se encontraron comparendos o multas identificables. Sube el Estado de Cuenta oficial completo.' }, { status: 422 });
+    }
 
     // Protección contra cargar el estado de cuenta de una persona distinta.
-    if (!normalizeNumber(text).includes(documentNumber)) return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_MISMATCH', message: 'La cédula ingresada no coincide con el Estado de Cuenta. Verifica el PDF y vuelve a intentarlo.' }, { status: 422 });
+    if (!normalizeNumber(text).includes(documentNumber)) {
+      return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_MISMATCH', message: 'La cédula ingresada no coincide con el Estado de Cuenta. Verifica el PDF y vuelve a intentarlo.' }, { status: 422 });
+    }
 
     const safeRecords = records.map((record) => ({ ...record, documentNumber: record.documentNumber || documentNumber }));
-    console.log('[SIMIT AUDIT] statement_upload', JSON.stringify({ documentType: 'CC', documentNumber, fileName: file.name, size: file.size, records: safeRecords.length, aiUsed: Boolean(process.env.OPENAI_API_KEY), timestamp: new Date().toISOString() }));
-    return NextResponse.json({ ok: true, source: 'SIMIT_STATEMENT_UPLOAD', extraction: process.env.OPENAI_API_KEY ? 'hybrid' : 'deterministic', documentType: 'CC', documentNumber, fileName: file.name, records: safeRecords, message: `Estado de Cuenta analizado. Se encontraron ${safeRecords.length} registro(s). Selecciona uno para continuar.` });
+    console.log('[SIMIT AUDIT] statement_upload', JSON.stringify({
+      documentType: 'CC', documentNumber, fileName: file.name, size: file.size,
+      deterministicRecords: deterministic.records.length, finalRecords: safeRecords.length,
+      totalDebt: deterministic.totalDebt, aiUsed: Boolean(process.env.OPENAI_API_KEY), timestamp: new Date().toISOString(),
+    }));
+
+    return NextResponse.json({
+      ok: true,
+      source: 'SIMIT_STATEMENT_UPLOAD',
+      extraction: deterministic.records.length ? (process.env.OPENAI_API_KEY ? 'deterministic+ai-enrichment' : 'deterministic') : 'ai-fallback',
+      documentType: 'CC', documentNumber, fileName: file.name,
+      recordCount: safeRecords.length, totalDebt: deterministic.totalDebt,
+      records: safeRecords,
+      message: `Estado de Cuenta analizado. Se encontraron ${safeRecords.length} registro(s).`,
+    });
   } catch (error) {
     console.error('[SIMIT] statement upload error', error);
     return NextResponse.json({ ok: false, message: 'No fue posible analizar el Estado de Cuenta de SIMIT.' }, { status: 500 });
