@@ -1,5 +1,10 @@
 # TrámiteYa — Updates
 
+## Phase 10.1 — Build recovery
+
+- Fixed TypeScript narrowing in the SIMIT PDF-first form so validated procedure references remain non-null inside async completion handlers.
+- Branch `phase-1-setup` is now at the build-fix commit and ready for a fresh Vercel deployment.
+
 ## Phase 8.4 — Wompi Production Payments
 
 - Added production Wompi Checkout Widget integration using the server-side price catalog.
