@@ -27,5 +27,5 @@ function testPricingCatalog() {
 
 testProcedureStorageSource();
 testPricingCatalog();
-require('./simit-golden-structure.test.js');
+require('./simit-golden-structure.test.cjs');
 console.log('All TrámiteYa smoke tests passed.');
