@@ -23,9 +23,35 @@ function normalizeText(text: string) { return text.replace(/\r/g, '\n').replace(
 function extractDate(value: string) { return value.match(/\b(\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2})\b/)?.[1]; }
 function extractTime(value: string) { return value.match(/\b(\d{2}:\d{2}(?::\d{2})?)\b/)?.[1]; }
 function extractStatus(value: string) { const m = value.match(/\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i); return m ? clean(m[1]) : undefined; }
-function extractMoney(value: string) { const m = [...value.matchAll(/(?:\$\s*)?([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})\b/g)]; return m.length ? moneyToNumber(m[m.length - 1][1]) : undefined; }
-function extractCode(value: string) { return value.match(/\b([CD]\d{1,3})\b/i)?.[1]?.toUpperCase(); }
-function isIdentifier(value: string) { return /^(?:\d{10,24}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\d{3,}(?:-[A-Z0-9]+)*)$/i.test(value.trim()); }
+
+// Monetary values are deliberately extracted only after dates/times/identifiers
+// have been removed. This prevents values such as the year "2025" from becoming
+// a fabricated fine amount.
+function extractMoney(value: string) {
+  const m = [...value.matchAll(/(?:\$\s*)?([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})\b/g)];
+  return m.length ? moneyToNumber(m[m.length - 1][1]) : undefined;
+}
+
+function extractCode(value: string) {
+  // SIMIT traffic infractions use the standard letter + two digits form.
+  return value.match(/\b([A-D]\d{2})\b/i)?.[1]?.toUpperCase();
+}
+
+const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i;
+const IDENTIFIER_GLOBAL_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
+
+function extractIdentifierBeforeDate(prefix: string): string | undefined {
+  const matches = [...prefix.matchAll(IDENTIFIER_GLOBAL_RE)];
+  return matches.length ? matches[matches.length - 1][0].replace(/\s+/g, '') : undefined;
+}
+
+function isIdentifier(value: string) { return IDENTIFIER_RE.test(value.trim()); }
+
+function removeListNoise(value: string) {
+  // Remove table indices such as "1." / "21)" without touching decimal or
+  // monetary values. This is done before record segmentation.
+  return value.replace(/(?:^|\s)\d{1,4}[.)](?=\s|$)/g, ' ');
+}
 
 function extractLocation(body: string, date: string, code?: string, status?: string) {
   const dateIndex = body.indexOf(date);
@@ -44,11 +70,15 @@ function parseRecordChunk(number: string, chunk: string): ParsedSimitRecord | un
   const time = extractTime(body);
   const code = extractCode(body);
   const status = extractStatus(body);
+
   const moneySource = body
     .replace(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g, ' ')
     .replace(/\b\d{4}[/-]\d{2}[/-]\d{2}\b/g, ' ')
-    .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ');
+    .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ')
+    .replace(IDENTIFIER_RE, ' ')
+    .replace(/\b[A-D]\d{2}\b/gi, ' ');
   const value = extractMoney(moneySource);
+
   const dateIndex = body.indexOf(date);
   const codeIndex = code ? body.toUpperCase().indexOf(code.toUpperCase()) : -1;
   const authority = codeIndex > dateIndex
@@ -100,35 +130,54 @@ function parseJson(text: string): ParsedSimitRecord[] | undefined {
 }
 
 function parseRows(text: string): ParsedSimitRecord[] {
-  const normalized = normalizeText(text);
+  // The PDF extractor does not preserve table rows reliably. The stable unit is
+  // the date+time anchor: every occurrence starts exactly one SIMIT record.
+  const normalized = removeListNoise(normalizeText(text));
+  const dateTimeRe = /\b(\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2})\s+(\d{2}:\d{2}:\d{2})\b/g;
+  const anchors = [...normalized.matchAll(dateTimeRe)];
   const records: ParsedSimitRecord[] = [];
-  const rowAnchor = /(?:^|\n|\s)(?:\d{1,4}[.)]\s+)(\d{10,24}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,12}-\d{3,}(?:-[A-Z0-9]+)*)(?=\s|$)/gi;
-  const anchors = [...normalized.matchAll(rowAnchor)];
+
   for (let i = 0; i < anchors.length; i += 1) {
-    const number = anchors[i][1].replace(/\s+/g, '');
-    const start = (anchors[i].index ?? 0) + anchors[i][0].length;
-    const nextAnchor = i + 1 < anchors.length ? (anchors[i + 1].index ?? normalized.length) : normalized.length;
-    const totalIndex = normalized.search(/\bTotal\s+(?:a\s+)?pagar\b/i);
-    const end = Math.min(nextAnchor, totalIndex >= start ? totalIndex : normalized.length);
-    const record = parseRecordChunk(number, normalized.slice(start, end));
+    const anchor = anchors[i];
+    const dateStart = anchor.index ?? 0;
+    const nextDateStart = i + 1 < anchors.length ? (anchors[i + 1].index ?? normalized.length) : normalized.length;
+
+    // The identifier can appear immediately before the date, on the previous
+    // extracted line, or immediately before an intercalated list index.
+    const prefixStart = Math.max(0, dateStart - 160);
+    const prefix = normalized.slice(prefixStart, dateStart);
+    const number = extractIdentifierBeforeDate(prefix);
+    if (!number) continue;
+
+    let chunk = normalized.slice(dateStart, nextDateStart);
+    const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i);
+    if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex);
+
+    const record = parseRecordChunk(number, chunk);
     if (record) records.push(record);
   }
+
+  // Defensive fallback for OCR/text extractors that separate the time from
+  // the date. It is intentionally conservative and still requires an ID+date.
   if (!records.length) {
     const lines = normalized.split('\n').map(clean).filter(Boolean);
     for (let i = 0; i < lines.length; i += 1) {
-      if (!isIdentifier(lines[i])) continue;
-      const parts: string[] = [];
-      for (let j = i + 1; j < lines.length; j += 1) {
-        if (isIdentifier(lines[j]) || /^\d{1,4}[.)]$/.test(lines[j])) break;
-        if (/^Total\s+(?:a\s+)?pagar/i.test(lines[j])) break;
-        parts.push(lines[j]);
-      }
-      const record = parseRecordChunk(lines[i].replace(/\s+/g, ''), parts.join(' '));
+      const date = lines[i].match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/)?.[0];
+      if (!date) continue;
+      const number = extractIdentifierBeforeDate(lines.slice(Math.max(0, i - 3), i).join(' '));
+      if (!number) continue;
+      const parts = lines.slice(i, Math.min(i + 8, lines.length));
+      const record = parseRecordChunk(number, parts.join(' '));
       if (record) records.push(record);
     }
   }
+
   const unique = new Map<string, ParsedSimitRecord>();
-  for (const record of records) unique.set(record.number || '', { ...(unique.get(record.number || '') || {}), ...record });
+  for (const record of records) {
+    const key = `${record.number || ''}|${record.date || ''}|${record.time || ''}`;
+    const existing = unique.get(key);
+    unique.set(key, existing ? { ...existing, ...record } : record);
+  }
   return [...unique.values()];
 }
 
