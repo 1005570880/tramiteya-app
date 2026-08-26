@@ -17,13 +17,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, code: 'INVALID_RESPONSE', message: 'documentNumber es requerido.' }, { status: 400 });
   }
 
-  // No devolvemos resultados simulados ni datos de terceros. La fuente oficial es SIMIT.
   const handoff = createOfficialSimitHandoff(documentType, documentNumber);
-  console.log('[SIMIT AUDIT] official_handoff', JSON.stringify({ documentType, documentNumber, officialUrl: OFFICIAL_SIMIT_URL, timestamp: new Date().toISOString() }));
+  console.log('[SIMIT AUDIT] official_handoff', JSON.stringify({
+    documentType,
+    documentNumber,
+    officialUrl: OFFICIAL_SIMIT_URL,
+    timestamp: new Date().toISOString(),
+  }));
 
   return NextResponse.json({
     ok: true,
-    code: 'OFFICIAL_SIMIT_REQUIRED',
+    code: 'OFFICIAL_SIMIT_PANEL',
     provider: handoff.provider,
     source: handoff.source,
     officialUrl: handoff.officialUrl,
@@ -31,6 +35,6 @@ export async function POST(req: NextRequest) {
     documentNumber: handoff.documentNumber,
     automatedExtractionAvailable: false,
     comparendos: [],
-    message: 'La consulta debe realizarse en el portal oficial de SIMIT. TrámiteYa no mostrará datos de terceros ni resultados simulados.',
+    message: 'La consulta se realiza directamente en el portal oficial de SIMIT. TrámiteYa no inventa ni interpreta resultados de terceros.',
   });
 }
