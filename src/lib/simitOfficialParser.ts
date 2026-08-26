@@ -16,7 +16,7 @@ function extractMoney(value: string) {
   const candidates = [...value.matchAll(/(?<![A-Za-z0-9_-])([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})(?![A-Za-z0-9_-])/g)].map(m => m[1]).filter(n => !/^20\d{2}$/.test(n) && !/^\d{10}$/.test(n) && !/^\d{20}$/.test(n));
   return candidates.length ? moneyToNumber(candidates[candidates.length - 1]) : undefined;
 }
-function extractCode(value: string) { return value.match(/\b([A-D]\d{2})\b/i)?.[1]?.toUpperCase(); }
+function extractCode(value: string) { return value.match(/(?:^|\s|\|)([A-D]\d{2})(?=\s|\||$|Cobro|Pendiente|\$)/i)?.[1]?.toUpperCase() || value.match(/([A-D]\d{2})/i)?.[1]?.toUpperCase(); }
 const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i;
 const IDENTIFIER_GLOBAL_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
 function extractIdentifierBeforeDate(prefix: string) { const matches = [...prefix.matchAll(IDENTIFIER_GLOBAL_RE)]; return matches.length ? matches[matches.length - 1][0].replace(/\s+/g, '') : undefined; }
@@ -24,9 +24,13 @@ function removeListNoise(value: string) { return value.replace(/(?:^|\s)\d{1,4}[
 function sanitizeAuthority(value: string, code?: string) {
   let authority = clean(value).replace(/^\|+|\|+$/g, '').trim();
   authority = authority.replace(/^\|?\s*\d{2}:\d{2}(?::\d{2})?\s*\|?\s*/i, '');
-  const stops: RegExp[] = [/\b\d{2}:\d{2}(?::\d{2})?\b/i, /\b[A-D]\d{2}\b/i, /\bPendiente(?:\s+de\s+pago)?\b/i, /\bCobro\s+coactivo\b/i, /\bPagado\b/i, /\bCancelado\b/i, /\bAcuerdo\s+de\s+pago\b/i, /\bVigente\b/i, /\bEn\s+cobro\b/i, /\$/i];
-  if (code) stops.unshift(new RegExp(`\\b${code}\\b`, 'i'));
-  let end = authority.length; for (const stop of stops) { const match = stop.exec(authority); if (match && match.index < end) end = match.index; }
+  const codeStop = code ? new RegExp(code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : /\b[A-D]\d{2}\b/i;
+  const genericCodeStop = /[A-D]\d{2}/i;
+  const statusStop = /Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro/i;
+  const timeStop = /\d{2}:\d{2}(?::\d{2})?/i;
+  const moneyStop = /\$/i;
+  const matches = [timeStop, codeStop, genericCodeStop, statusStop, moneyStop].map(re => re.exec(authority)).filter(Boolean) as RegExpExecArray[];
+  const end = matches.reduce((min, match) => Math.min(min, match.index), authority.length);
   authority = clean(authority.slice(0, end)).replace(/^\|+|\|+$/g, '').trim();
   return authority || undefined;
 }
@@ -35,7 +39,9 @@ function extractDelimitedFields(raw: string, date: string, code?: string, fallba
   const cells = afterDate.split('|').map(clean).filter(Boolean); let authority: string | undefined; let status: string | undefined;
   for (const cell of cells) {
     const cellStatus = extractStatus(cell); if (cellStatus && !status) status = cellStatus;
-    if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) authority = sanitizeAuthority(cell, code);
+    if (!authority && cell && !/^\d{2}:\d{2}(?::\d{2})?$/.test(cell) && !/^\$?\s*[0-9.,\s]+$/.test(cell) && !(code && new RegExp(`^${code}$`, 'i').test(cell))) {
+      authority = sanitizeAuthority(cell, code);
+    }
   }
   if (!authority && code) { const idx = afterDate.toUpperCase().indexOf(code.toUpperCase()); if (idx > 0) authority = sanitizeAuthority(afterDate.slice(0, idx), code); }
   return { authority, status: status || fallbackStatus };
