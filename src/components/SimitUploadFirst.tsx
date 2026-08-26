@@ -49,15 +49,20 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
   }
 
   return <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 p-6">
-    <p className="text-sm font-semibold text-blue-700">Paso 1 · Fuente aportada por el usuario</p>
-    <h2 className="text-xl font-bold mt-1">Sube primero tu Estado de Cuenta de SIMIT</h2>
-    <p className="text-sm text-slate-600 mt-2">No escribas la cédula. Sube el PDF descargado de SIMIT y TrámiteYa intentará extraer la cédula, titular, comparendos, fechas, organismo, placa, estado, valor y demás datos que estén realmente contenidos en el documento.</p>
+    <p className="text-sm font-semibold text-blue-700">Paso 1 · Estado de Cuenta SIMIT</p>
+    <h2 className="text-xl font-bold mt-1">Sube tu Estado de Cuenta de SIMIT</h2>
+    <p className="text-sm text-slate-600 mt-2">Empieza por el PDF. No necesitas escribir la cédula ni copiar datos. TrámiteYa analizará el documento y completará automáticamente todos los campos que pueda identificar de forma fiable.</p>
+    <div className="mt-4 rounded-xl border border-blue-200 bg-white p-4 text-sm text-slate-700">
+      <strong>¿Qué necesitas?</strong>
+      <p className="mt-1">Ten a la mano el Estado de Cuenta oficial descargado desde SIMIT. El sistema utilizará únicamente la información contenida en ese documento.</p>
+    </div>
     <label className={`mt-5 flex cursor-pointer items-center justify-center rounded-xl px-5 py-4 text-center font-semibold text-white ${loading ? "bg-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}>
       <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={loading} onChange={e => { const file = e.target.files?.[0]; if (file) void upload(file); e.currentTarget.value = ""; }} />
       {loading ? "Analizando Estado de Cuenta..." : "Subir Estado de Cuenta SIMIT (PDF)"}
     </label>
+    <p className="mt-2 text-xs text-slate-500">PDF · máximo 10 MB</p>
     {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-    {records.length > 1 && <div className="mt-5 space-y-3"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Cédula detectada: <strong>{documentNumber || "no identificada"}</strong>. Se encontraron {records.length} comparendos. Selecciona uno; TrámiteYa generará un solo documento jurídico para el comparendo elegido.</div><h3 className="font-bold">Selecciona el comparendo que vas a revisar</h3>{records.map((r, i) => <button key={`${r.number}-${i}`} onClick={() => select(r, documentNumber)} className="w-full text-left rounded-xl border bg-white p-4 hover:border-blue-500"><div className="flex justify-between"><strong>{r.number || `Registro ${i + 1}`}</strong><strong>{money(r.value)}</strong></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-sm text-slate-600"><span>Fecha: {r.date || "—"}</span><span>Placa: {r.plate || "—"}</span><span>Organismo: {r.authority || "—"}</span><span>Estado: {r.status || "—"}</span></div><span className="block mt-2 text-xs font-semibold text-blue-700">Usar este comparendo →</span></button>)}</div>}
+    {records.length > 1 && <div className="mt-5 space-y-3"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Cédula detectada: <strong>{documentNumber || "no identificada"}</strong>. Se encontraron {records.length} comparendos. Selecciona uno; cada documento jurídico corresponde a un solo comparendo.</div><h3 className="font-bold">Selecciona el comparendo que vas a revisar</h3>{records.map((r, i) => <button key={`${r.number}-${i}`} onClick={() => select(r, documentNumber)} className="w-full text-left rounded-xl border bg-white p-4 hover:border-blue-500"><div className="flex justify-between"><strong>{r.number || `Registro ${i + 1}`}</strong><strong>{money(r.value)}</strong></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-sm text-slate-600"><span>Fecha: {r.date || "—"}</span><span>Placa: {r.plate || "—"}</span><span>Organismo: {r.authority || "—"}</span><span>Estado: {r.status || "—"}</span></div><span className="block mt-2 text-xs font-semibold text-blue-700">Usar este comparendo →</span></button>)}</div>}
     {records.length === 1 && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Comparendo identificado. Preparando automáticamente el formulario…</div>}
   </div>;
 }
