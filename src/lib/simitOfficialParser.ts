@@ -24,27 +24,16 @@ function moneyToNumber(value: string) {
   return digits ? Number(digits) : undefined;
 }
 
-function firstMatch(text: string, patterns: RegExp[]) {
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) return clean(match[1]);
-  }
-  return undefined;
-}
-
 function parseRecord(item: any): ParsedSimitRecord | undefined {
   if (!item || typeof item !== 'object') return undefined;
   const rawKind = String(item.kind ?? item.tipo ?? '').toLowerCase();
   const kind: ParsedSimitRecord['kind'] = rawKind.includes('multa') ? 'multa' : 'comparendo';
   const number = String(item.numeroComparendo ?? item.numero ?? item.comparendo ?? '').trim() || undefined;
   if (!number) return undefined;
-
   const rawValue = item.valorPagar ?? item.valor ?? item.valorMulta;
   const value = typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? ''));
-
   return {
-    kind,
-    number,
+    kind, number,
     date: String(item.fechaComparendo ?? item.fecha ?? '').trim() || undefined,
     authority: String(item.organismoTransito ?? item.organismo ?? item.autoridad ?? '').trim() || undefined,
     department: String(item.departamento ?? '').trim() || undefined,
@@ -60,62 +49,67 @@ function parseRecord(item: any): ParsedSimitRecord | undefined {
   };
 }
 
+function parseStructuredText(text: string): ParsedSimitRecord[] {
+  const lines = text.replace(/\r/g, '').replace(/\u00a0/g, ' ').split('\n').map(clean).filter(Boolean);
+  const dateRe = /^(\d{2}\/\d{2}\/\d{4}|\d{4}[/-]\d{2}[/-]\d{2})$/;
+  const timeRe = /^\d{2}:\d{2}:\d{2}$/;
+  const numberRe = /^(?:\d{11,22}|\d{4,}-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{1,6}-\d{3,}(?:-[A-Z0-9]+)*)$/i;
+  const codeRe = /^[A-Z]\d{1,3}$/i;
+  const moneyRe = /^\$?\s*[\d.,]+$/;
+  const statusWords = /^(pendiente|pendiente de pago|cobro coactivo|pagado|cancelado|acuerdo de pago|vigente|en cobro)$/i;
+  const records: ParsedSimitRecord[] = [];
+
+  for (let i = 0; i < lines.length;) {
+    const number = lines[i].replace(/\s+/g, '');
+    if (!numberRe.test(number) || dateRe.test(number) || moneyRe.test(number)) { i += 1; continue; }
+
+    let j = i + 1;
+    const date = dateRe.test(lines[j] || '') ? lines[j++] : undefined;
+    if (!date) { i += 1; continue; }
+    if (timeRe.test(lines[j] || '')) j += 1;
+
+    // Skip column/page headers accidentally captured between records.
+    while (j < lines.length && /^(#?\s*n[uú]mero multa|fecha|secretar[ií]a|infracci[oó]n|estado|valor total|estado de cuenta)$/i.test(lines[j])) j += 1;
+
+    const authorityParts: string[] = [];
+    while (j < lines.length && !codeRe.test(lines[j]) && !statusWords.test(lines[j]) && !moneyRe.test(lines[j]) && !numberRe.test(lines[j])) {
+      if (dateRe.test(lines[j]) || timeRe.test(lines[j])) break;
+      authorityParts.push(lines[j++]);
+      if (authorityParts.length >= 3) break;
+    }
+    const authority = authorityParts.join(' ') || undefined;
+    const infractionCode = codeRe.test(lines[j] || '') ? lines[j++].toUpperCase() : undefined;
+    const status = statusWords.test(lines[j] || '') ? lines[j++] : undefined;
+    const value = moneyRe.test(lines[j] || '') ? moneyToNumber(lines[j++]) : undefined;
+
+    records.push({
+      kind: status?.toLowerCase() === 'cobro coactivo' ? 'multa' : 'comparendo',
+      number,
+      date,
+      authority,
+      infractionCode,
+      status,
+      value,
+    });
+    i = Math.max(j, i + 1);
+  }
+
+  return records.filter((record, index, all) => all.findIndex(other => other.number === record.number) === index);
+}
+
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = input.replace(/\r/g, '').trim();
   if (!text) return [];
 
   try {
     const parsed: any = JSON.parse(text);
-    const source: any = Array.isArray(parsed)
-      ? parsed
-      : parsed?.comparendos || parsed?.multas || parsed?.data;
+    const source: any = Array.isArray(parsed) ? parsed : parsed?.comparendos || parsed?.multas || parsed?.data;
     if (Array.isArray(source)) {
-      return source
-        .map(parseRecord)
-        .filter((item: ParsedSimitRecord | undefined): item is ParsedSimitRecord => Boolean(item));
+      return source.map(parseRecord).filter((item: ParsedSimitRecord | undefined): item is ParsedSimitRecord => Boolean(item));
     }
   } catch {
-    // Fall through to copied official text parsing.
+    // Fall through to official copied-text parsing.
   }
 
-  const normalized = text.replace(/\u00a0/g, ' ');
-  const numberMatches = [...normalized.matchAll(/\b\d{11,22}\b/g)];
-  if (!numberMatches.length) return [];
-
-  const records: ParsedSimitRecord[] = [];
-  for (let i = 0; i < numberMatches.length; i += 1) {
-    const start = numberMatches[i].index ?? 0;
-    const end = i + 1 < numberMatches.length ? (numberMatches[i + 1].index ?? normalized.length) : normalized.length;
-    const chunk = normalized.slice(start, end);
-    const number = numberMatches[i][0];
-    const date = firstMatch(chunk, [
-      /(?:fecha(?:\s+del)?\s*(?:comparendo|multa)?|fecha)\s*[:\-]?\s*(\d{4}[/-]\d{2}[/-]\d{2})/i,
-      /(?:fecha(?:\s+del)?\s*(?:comparendo|multa)?|fecha)\s*[:\-]?\s*(\d{2}[/-]\d{2}[/-]\d{4})/i,
-      /\b(\d{4}[/-]\d{2}[/-]\d{2})\b/,
-      /\b(\d{2}[/-]\d{2}[/-]\d{4})\b/,
-    ]);
-    const plate = firstMatch(chunk, [/(?:placa)\s*[:\-]?\s*([A-Z]{3}\s?\d{2,3})/i, /\b([A-Z]{3}\d{3})\b/i]);
-    const authority = firstMatch(chunk, [/(?:organismo|secretar[ií]a|autoridad)\s*[:\-]?\s*([^\n|]+)/i]);
-    const department = firstMatch(chunk, [/(?:departamento)\s*[:\-]?\s*([^\n|]+)/i]);
-    const status = firstMatch(chunk, [/(?:estado)\s*[:\-]?\s*([^\n|]+)/i]);
-    const infractionCode = firstMatch(chunk, [/(?:c[oó]digo(?:\s+de)?\s+infracci[oó]n|c[oó]digo)\s*[:\-]?\s*([A-Z]\d{1,3})/i]);
-    const valueMatch = chunk.match(/(?:valor|monto|total|pagar)\s*[:\-]?\s*\$?\s*([\d.,]+)/i);
-    const description = firstMatch(chunk, [/(?:descripci[oó]n(?:\s+de\s+la\s+infracci[oó]n)?|infracci[oó]n)\s*[:\-]?\s*([^\n]+)/i]);
-
-    const kind: ParsedSimitRecord['kind'] = /multa/i.test(chunk.slice(0, 80)) ? 'multa' : 'comparendo';
-    records.push({
-      kind,
-      number,
-      date,
-      authority,
-      department,
-      plate: plate?.replace(/\s+/g, '').toUpperCase(),
-      infractionCode: infractionCode?.toUpperCase(),
-      description,
-      status,
-      value: valueMatch ? moneyToNumber(valueMatch[1]) : undefined,
-    });
-  }
-
-  return records.filter((record, index, all) => all.findIndex(other => other.number === record.number) === index);
+  return parseStructuredText(text);
 }
