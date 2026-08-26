@@ -42,7 +42,7 @@ function testPricingCatalog() {
   };
 
   for (const [id, price] of Object.entries(required)) {
-    const pattern = new RegExp(`['\"]${id}['\"]\\s*:\\s*\\{\\s*price:\\s*${price}\\b`);
+    const pattern = new RegExp(`['\\"]${id}['\\"]\\s*:\\s*\\{\\s*price:\\s*${price}\\b`);
     if (!pattern.test(source)) {
       throw new Error(`Precio vigente incorrecto o ausente: ${id}`);
     }
@@ -52,4 +52,5 @@ function testPricingCatalog() {
 
 testProcedureStorage();
 testPricingCatalog();
+require('./simit-golden-structure.test.js');
 console.log('All TrámiteYa smoke tests passed.');
