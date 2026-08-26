@@ -14,12 +14,14 @@ function mergeEnrichment(base: ExtractedRecord[], ai: ExtractedRecord[]) { const
 function normalizeDocument(value: unknown) { return String(value ?? '').replace(/\D/g, ''); }
 function inferDocumentNumber(text: string, ai: AiAnalysis) {
   const aiNumber = normalizeDocument(ai.documentNumber); if (aiNumber.length >= 5) return aiNumber;
-  const match = text.match(/Cédula:\s*\|?\s*(\d+)/i);
-  if (match?.[1]) return match[1];
+  const match1 = text.match(/Cédula:[\s\r\n]*\|?[\s\r\n]*(\d{6,10})/i);
+  if (match1?.[1]) return match1[1].replace(/\D/g, '');
+  const match2 = text.match(/(\d{6,10})[\s\r\n]*Fecha de expedición/i);
+  if (match2?.[1]) return match2[1].replace(/\D/g, '');
   const fallback = text.match(/(?:documento|identificaci[oó]n|CC)\s*(?:n[roº°.]?\s*)?[:\-|]*\s*(?:\|\s*)?(?:\n\s*)?(\d{6,12})\b/i);
-  if (fallback?.[1]) return fallback[1];
+  if (fallback?.[1]) return fallback[1].replace(/\D/g, '');
   const heading = text.match(/estado\s+de\s+cuenta\s*\n?\s*(\d{6,12})\s*\n?\s*fecha\s+de\s+expedici[oó]n/i);
-  return heading?.[1] || '';
+  return heading?.[1]?.replace(/\D/g, '') || '';
 }
 function extractTotal(text: string) { const match = text.match(/(?:total\s+(?:a\s+)?pagar|total\s+deuda|total\s+pendiente)[^$0-9]{0,40}\$?\s*([0-9.,]{4,})/i); return match?.[1] ? Number(match[1].replace(/[^0-9]/g, '')) : undefined; }
 function looksLikeSimit(text: string) { const n = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' '); return ['estado de cuenta', 'comparendos y multas', 'simit'].filter(x => n.includes(x)).length >= 2; }
