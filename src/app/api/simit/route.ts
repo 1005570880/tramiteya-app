@@ -17,22 +17,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, code: 'INVALID_RESPONSE', message: 'documentNumber es requerido.' }, { status: 400 });
   }
 
-  const handoff = createOfficialSimitHandoff(documentType, documentNumber);
+  const officialUrl = `https://fcm.org.co/simit/#/estado-cuenta?numDocPlacaProp=${encodeURIComponent(documentNumber)}`;
   console.log('[SIMIT AUDIT] official_handoff', JSON.stringify({
     documentType,
     documentNumber,
-    officialUrl: handoff.officialUrl,
+    officialUrl,
     timestamp: new Date().toISOString(),
   }));
 
   return NextResponse.json({
     ok: true,
     code: 'OFFICIAL_SIMIT_PANEL',
-    provider: handoff.provider,
-    source: handoff.source,
-    officialUrl: handoff.officialUrl,
-    documentType: handoff.documentType,
-    documentNumber: handoff.documentNumber,
+    provider: 'official-navigation',
+    source: 'SIMIT',
+    officialUrl,
+    documentType,
+    documentNumber,
     automatedExtractionAvailable: false,
     comparendos: [],
     message: 'TrámiteYa abrió la consulta oficial de SIMIT para el documento indicado. No se generan ni interpretan registros que no provengan de SIMIT.',
