@@ -31,4 +31,14 @@ assert.equal(result.at(-1).number, '2024-FAD-06924', 'Debe aceptar número alfan
 assert.equal(result.at(-1).infractionCode, 'C29');
 assert.equal(result.at(-1).status, 'Cobro coactivo');
 assert.equal(result.reduce((sum, r) => sum + (r.value || 0), 0), 25313797, 'El total de los registros debe ser $25.313.797');
-console.log('SIMIT golden structure passed: 29 records / $25.313.797 / alphanumeric identifier.');
+
+const minimal = parseOfficialSimitText(`ESTADO DE CUENTA\n37312647\nFecha de expedición: 04/06/2026\nCédula:\nComparendos y multas\n1.\n20001000000051832377 11/10/2025\n13:21:00\nValledupar\n`);
+assert.equal(minimal.length, 1, 'Debe aceptar un registro oficial aunque el PDF no muestre código o valor');
+assert.equal(minimal[0].number, '20001000000051832377');
+assert.equal(minimal[0].date, '11/10/2025');
+assert.equal(minimal[0].time, '13:21:00');
+assert.equal(minimal[0].municipality, 'Valledupar');
+assert.equal(minimal[0].infractionCode, undefined, 'No debe inventar código de infracción');
+assert.equal(minimal[0].value, undefined, 'No debe inventar valor');
+
+console.log('SIMIT golden structure passed: 29 full records + minimal official row / no fabricated fields.');
