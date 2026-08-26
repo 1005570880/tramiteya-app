@@ -44,7 +44,11 @@ function parseRecordChunk(number: string, chunk: string): ParsedSimitRecord | un
   const time = extractTime(body);
   const code = extractCode(body);
   const status = extractStatus(body);
-  const value = extractMoney(body);
+  const moneySource = body
+    .replace(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g, ' ')
+    .replace(/\b\d{4}[/-]\d{2}[/-]\d{2}\b/g, ' ')
+    .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ');
+  const value = extractMoney(moneySource);
   const dateIndex = body.indexOf(date);
   const codeIndex = code ? body.toUpperCase().indexOf(code.toUpperCase()) : -1;
   const authority = codeIndex > dateIndex
