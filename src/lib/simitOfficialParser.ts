@@ -32,6 +32,34 @@ function firstMatch(text: string, patterns: RegExp[]) {
   return undefined;
 }
 
+function parseRecord(item: any): ParsedSimitRecord | undefined {
+  if (!item || typeof item !== 'object') return undefined;
+  const rawKind = String(item.kind ?? item.tipo ?? '').toLowerCase();
+  const kind: ParsedSimitRecord['kind'] = rawKind.includes('multa') ? 'multa' : 'comparendo';
+  const number = String(item.numeroComparendo ?? item.numero ?? item.comparendo ?? '').trim() || undefined;
+  if (!number) return undefined;
+
+  const rawValue = item.valorPagar ?? item.valor ?? item.valorMulta;
+  const value = typeof rawValue === 'number' ? rawValue : moneyToNumber(String(rawValue ?? ''));
+
+  return {
+    kind,
+    number,
+    date: String(item.fechaComparendo ?? item.fecha ?? '').trim() || undefined,
+    authority: String(item.organismoTransito ?? item.organismo ?? item.autoridad ?? '').trim() || undefined,
+    department: String(item.departamento ?? '').trim() || undefined,
+    plate: String(item.placa ?? '').trim() || undefined,
+    infractionCode: String(item.codigoInfraccion ?? item.codigo ?? '').trim() || undefined,
+    description: String(item.descripcionInfraccion ?? item.descripcion ?? '').trim() || undefined,
+    status: String(item.estadoComparendo ?? item.estado ?? '').trim() || undefined,
+    value,
+    resolutionNumber: String(item.numeroResolucion ?? '').trim() || undefined,
+    resolutionDate: String(item.fechaResolucion ?? '').trim() || undefined,
+    notificationDate: String(item.fechaNotificacion ?? '').trim() || undefined,
+    paymentDate: String(item.fechaPago ?? '').trim() || undefined,
+  };
+}
+
 /**
  * Parses text copied by the user from the official SIMIT page.
  * It never calls SIMIT and never invents a record: the input must come
@@ -41,27 +69,15 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = input.replace(/\r/g, '').trim();
   if (!text) return [];
 
-  // Useful when a future official export/API response is pasted as JSON.
   try {
-    const parsed = JSON.parse(text);
-    const source = Array.isArray(parsed) ? parsed : parsed?.comparendos || parsed?.multas || parsed?.data;
+    const parsed: any = JSON.parse(text);
+    const source: unknown = Array.isArray(parsed)
+      ? parsed
+      : parsed?.comparendos || parsed?.multas || parsed?.data;
     if (Array.isArray(source)) {
-      return source.map((item: any): ParsedSimitRecord => ({
-        kind: (String(item.kind || item.tipo || 'comparendo').toLowerCase().includes('multa') ? 'multa' : 'comparendo') as 'multa' | 'comparendo',
-        number: String(item.numeroComparendo || item.numero || item.comparendo || '').trim() || undefined,
-        date: String(item.fechaComparendo || item.fecha || '').trim() || undefined,
-        authority: String(item.organismoTransito || item.organismo || item.autoridad || '').trim() || undefined,
-        department: String(item.departamento || '').trim() || undefined,
-        plate: String(item.placa || '').trim() || undefined,
-        infractionCode: String(item.codigoInfraccion || item.codigo || '').trim() || undefined,
-        description: String(item.descripcionInfraccion || item.descripcion || '').trim() || undefined,
-        status: String(item.estadoComparendo || item.estado || '').trim() || undefined,
-        value: Number(item.valorPagar || item.valor || item.valorMulta || 0) || undefined,
-        resolutionNumber: String(item.numeroResolucion || '').trim() || undefined,
-        resolutionDate: String(item.fechaResolucion || '').trim() || undefined,
-        notificationDate: String(item.fechaNotificacion || '').trim() || undefined,
-        paymentDate: String(item.fechaPago || '').trim() || undefined,
-      })).filter((item: ParsedSimitRecord) => item.number);
+      return source
+        .map(parseRecord)
+        .filter((item): item is ParsedSimitRecord => Boolean(item));
     }
   } catch {
     // Normal copied text is handled below.
