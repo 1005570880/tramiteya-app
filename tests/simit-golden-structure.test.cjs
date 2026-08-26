@@ -6,9 +6,9 @@ const ts = require('typescript');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'simitOfficialParser.ts'), 'utf8');
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-const module = { exports: {} };
-vm.runInNewContext(output, { module, exports: module.exports, require, console });
-const { parseOfficialSimitText } = module.exports;
+const parserModule = { exports: {} };
+vm.runInNewContext(output, { module: parserModule, exports: parserModule.exports, require, console });
+const { parseOfficialSimitText } = parserModule.exports;
 
 const rows = [
   ['20001000000051832377', '11/10/2025', 'Valledupar', 'C02', 'Pendiente', 603939],
