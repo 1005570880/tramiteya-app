@@ -6,7 +6,15 @@ export type ParsedSimitRecord = {
 };
 function clean(value: string) { return value.replace(/\s+/g, ' ').trim(); }
 function moneyToNumber(value: string) { const digits = value.replace(/[^0-9]/g, ''); return digits ? Number(digits) : undefined; }
-function normalizeText(text: string) { return text.replace(/\r/g, '\n').replace(/\u00a0/g, ' ').trim(); }
+function normalizeText(text: string) {
+  return text
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    // SIMIT puede extraer el índice de la fila como "comparendo . 1" o en líneas separadas.
+    // Eliminamos ese ruido únicamente cuando aparece entre un identificador y una fecha.
+    .replace(/(\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\s*(?:\.\s*)+\d{1,4}\s*(?=\d{2}[/-]\d{2}[/-]\d{4}\b)/gi, '$1 ')
+    .trim();
+}
 function extractDate(value: string) { return value.match(/\b(\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2})\b/)?.[1]; }
 function extractTime(value: string) { return value.match(/\b(\d{2}:\d{2}(?::\d{2})?)\b/)?.[1]; }
 function extractStatus(value: string) { const m = value.match(/\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i); return m ? clean(m[1]) : undefined; }
