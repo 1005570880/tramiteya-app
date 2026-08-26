@@ -10,8 +10,6 @@ function normalizeText(text: string) {
   return text
     .replace(/\r/g, '\n')
     .replace(/\u00a0/g, ' ')
-    // SIMIT puede extraer el índice de la fila como "comparendo . 1" o en líneas separadas.
-    // Eliminamos ese ruido únicamente cuando aparece entre un identificador y una fecha.
     .replace(/(\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\s*(?:\.\s*)+\d{1,4}\s*(?=\d{2}[/-]\d{2}[/-]\d{4}\b)/gi, '$1 ')
     .trim();
 }
@@ -29,7 +27,7 @@ const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)
 const IDENTIFIER_GLOBAL_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
 function extractIdentifierBeforeDate(prefix: string) { const matches = [...prefix.matchAll(IDENTIFIER_GLOBAL_RE)]; return matches.length ? matches[matches.length - 1][0].replace(/\s+/g, '') : undefined; }
 function removeListNoise(value: string) { return value.replace(/(?:^|\s)\d{1,4}[.)](?=\s|$)/g, ' '); }
-const KNOWN_AUTHORITIES = ['Dptal Cesar - IDTRACESAR', 'Agustin Codazzi', 'Agustín Codazzi', 'Valledupar', 'Aracataca', 'Fundación', 'Fundacion'];
+const KNOWN_AUTHORITIES = ['Dptal Cesar - IDTRACESAR', 'Agustin Codazzi', 'Agustín Codazzi', 'Valledupar', 'Aracataca', 'Fundación', 'Fundacion', 'Sampues', 'Sampués'];
 function sanitizeAuthority(value: string, code?: string) {
   let authority = clean(value).replace(/^\|+|\|+$/g, '').trim();
   authority = authority.replace(/^\|?\s*\d{2}:\d{2}(?::\d{2})?\s*\|?\s*/i, '');
@@ -66,6 +64,23 @@ function parseRows(text: string): ParsedSimitRecord[] {
   for (let i = 0; i < dateAnchors.length; i += 1) { const anchor = dateAnchors[i]; const dateStart = anchor.index ?? 0; const nextDateStart = i + 1 < dateAnchors.length ? (dateAnchors[i + 1].index ?? normalized.length) : normalized.length; const number = extractIdentifierBeforeDate(normalized.slice(Math.max(0, dateStart - 500), dateStart)); if (!number) continue; let chunk = normalized.slice(dateStart, nextDateStart); const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex); const record = parseRecordChunk(number, chunk); if (record) records.push(record); }
   const dateOnlyRe = /\b(\d{2}[/-]\d{2}[/-]\d{4})\b/g; const dateOnlyAnchors = [...normalized.matchAll(dateOnlyRe)];
   for (let i = 0; i < dateOnlyAnchors.length; i += 1) { const anchor = dateOnlyAnchors[i]; const dateStart = anchor.index ?? 0; const nextDateStart = i + 1 < dateOnlyAnchors.length ? (dateOnlyAnchors[i + 1].index ?? normalized.length) : normalized.length; const number = extractIdentifierBeforeDate(normalized.slice(Math.max(0, dateStart - 500), dateStart)); if (!number) continue; let chunk = normalized.slice(dateStart, nextDateStart); if (/\bTotal\s+(?:a\s+)?pagar\b/i.test(chunk)) continue; const record = parseRecordChunk(number, chunk); if (record) records.push(record); }
+  // Invariante de seguridad: un identificador válido + una fecha válida son suficientes para
+  // confirmar la estructura mínima de un registro, incluso si el layout del PDF está colapsado.
+  if (!records.length) {
+    const identifiers = [...normalized.matchAll(IDENTIFIER_GLOBAL_RE)];
+    const dates = [...normalized.matchAll(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/g)];
+    for (const idMatch of identifiers) {
+      const idIndex = idMatch.index ?? 0;
+      const nextIdIndex = identifiers.find(m => (m.index ?? Infinity) > idIndex)?.index ?? normalized.length;
+      const dateMatch = dates.find(m => (m.index ?? -1) > idIndex && (m.index ?? normalized.length) < nextIdIndex + 2000) || dates.find(m => (m.index ?? -1) > idIndex);
+      if (!dateMatch) continue;
+      const dateIndex = dateMatch.index ?? 0;
+      let chunk = normalized.slice(dateIndex, Math.min(normalized.length, dateIndex + 2000));
+      const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex);
+      const record = parseRecordChunk(idMatch[0].replace(/\s+/g, ''), chunk);
+      if (record) records.push(record);
+    }
+  }
   if (!records.length) { const lines = normalized.split('\n').map(clean).filter(Boolean); for (let i = 0; i < lines.length; i += 1) { const date = lines[i].match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/)?.[0]; if (!date) continue; const number = extractIdentifierBeforeDate(lines.slice(Math.max(0, i - 5), i).join(' ')); if (!number) continue; const record = parseRecordChunk(number, lines.slice(i, Math.min(i + 8, lines.length)).join(' ')); if (record) records.push(record); } }
   const unique = new Map<string, ParsedSimitRecord>(); for (const record of records) { const key = `${record.number || ''}|${record.date || ''}`; const existing = unique.get(key); if (!existing) unique.set(key, record); else unique.set(key, { ...existing, ...record, time: record.time || existing.time, value: record.value ?? existing.value, authority: record.authority || existing.authority, municipality: record.municipality || existing.municipality, status: record.status || existing.status, plate: record.plate || existing.plate }); } return [...unique.values()];
 }
