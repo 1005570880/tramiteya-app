@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'simitOf
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
 const parserModule = { exports: {} };
 vm.runInNewContext(output, { module: parserModule, exports: parserModule.exports, require, console });
-const { parseOfficialSimitText } = parserModule.exports;
+const { parseOfficialSimitText, extractSimitPlate } = parserModule.exports;
 
 const rows = [
   ['20001000000051832377', '11/10/2025', 'Valledupar', 'C02', 'Pendiente', 603939],
@@ -42,6 +42,14 @@ const formatResult = parseOfficialSimitText(formatText);
 assert.equal(formatResult.length, formats.length, 'Debe reconocer todos los formatos de identificador');
 assert.deepEqual(formatResult.map(r => r.number), formats);
 
+const legacy = parseOfficialSimitText('003483216S 06/11/2018 QGV259 La Guajira D02 Pendiente $781.242');
+assert.equal(legacy.length, 1, 'Debe reconocer identificadores legacy de 9 dígitos terminados en S');
+assert.equal(legacy[0].number, '003483216S');
+assert.equal(legacy[0].plate, 'QGV259', 'La placa debe extraerse del registro individual');
+
+assert.equal(extractSimitPlate('Placa FIW019 Secretaría Medellín'), 'FIW019');
+assert.equal(extractSimitPlate('Tipo 05001000000048300145 06/07/2025 NPG12A Secretaría Medellín'), 'NPG12A');
+
 const minimal = parseOfficialSimitText(`ESTADO DE CUENTA\n37312647\nFecha de expedición: 04/06/2026\nCédula:\nComparendos y multas\n1.\n20001000000051832377 11/10/2025\n13:21:00\nValledupar\n`);
 assert.equal(minimal.length, 1, 'Debe aceptar un registro oficial aunque el PDF no muestre código o valor');
 assert.equal(minimal[0].number, '20001000000051832377');
@@ -51,4 +59,4 @@ assert.equal(minimal[0].municipality, 'Valledupar');
 assert.equal(minimal[0].infractionCode, undefined, 'No debe inventar código de infracción');
 assert.equal(minimal[0].value, undefined, 'No debe inventar valor');
 
-console.log('SIMIT golden structure passed: 29 records + identifier variants + sparse official row.');
+console.log('SIMIT golden structure passed: 29 records + identifier variants + per-record plate + sparse official row.');
