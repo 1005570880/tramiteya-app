@@ -1,4 +1,4 @@
-// Repository-level smoke tests. Keep this runner dependency-free so CI can execute it before Next.js build.
+// Repository-level smoke tests. Keep this runner dependency-light so CI can execute it before Next.js build.
 
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
@@ -28,4 +28,5 @@ function testPricingCatalog() {
 testProcedureStorageSource();
 testPricingCatalog();
 require('./simit-golden-structure.test.cjs');
+require('./legal-caducity.test.cjs');
 console.log('All TrámiteYa smoke tests passed.');
