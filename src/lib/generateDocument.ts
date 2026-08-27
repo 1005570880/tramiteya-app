@@ -10,10 +10,40 @@ const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo',
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
 }
+
+function extractPetitions(content: string): string | null {
+  const match = content.match(/(?:^|\n)(V|IX)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X)\. |$)/i);
+  if (!match) return null;
+  return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
+}
+
+function preserveDeterministicPetitions(deterministic: string, refined: string): string {
+  const sourcePetitions = extractPetitions(deterministic);
+  if (!sourcePetitions) return refined;
+  const target = refined.match(/(?:^|\n)(V|IX)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X)\. |$)/i);
+  if (!target) return deterministic;
+  const replacement = `\n${sourcePetitions}\n`;
+  const start = target.index ?? 0;
+  const block = target[0];
+  const leading = block.startsWith('\n') ? '\n' : '';
+  const body = block.slice(leading.length);
+  const bodyStart = start + leading.length;
+  const bodyEnd = bodyStart + body.length;
+  return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
   const deterministic = documentContent(procedure, answers);
-  return trafficSlugs.has(procedure.slug) ? refineLegalDocument(deterministic) : deterministic;
+  if (!trafficSlugs.has(procedure.slug)) return deterministic;
+
+  const refined = await refineLegalDocument(deterministic);
+  if (!refined || refined.length < 500) return deterministic;
+
+  // La IA solo puede mejorar estilo. Las PETICIONES determinísticas son la fuente de verdad
+  // para evitar que una reescritura elimine la pretensión principal o la solicitud de depuración.
+  return preserveDeterministicPetitions(deterministic, refined);
 }
+
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
