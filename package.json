@@ -5,6 +5,7 @@
   "scripts": { "dev": "next dev", "build": "next build", "start": "next start", "test": "node tests/run-tests.js" },
   "dependencies": {
     "@supabase/supabase-js": "^2.31.0",
+    "ai": "^6.0.0",
     "docx": "^9.5.1",
     "iconv-lite": "^0.6.3",
     "next": "14.1.0",
