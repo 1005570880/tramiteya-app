@@ -8,27 +8,26 @@ function rawValue(a: FormAnswers, key: string): string {
   if (Array.isArray(raw)) return raw.join(', ');
   if (typeof raw === 'boolean') return raw ? 'Sí' : 'No';
   if (raw == null) return '';
-  return String(raw).trim();
+  return String(raw).replace(/\s+/g, ' ').trim();
 }
 
 function cleanOrFallback(value: unknown, fallbackValue = fallback): string {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) return fallbackValue;
-  const cleaned = sanitizeValue(text);
-  return cleaned === fallback ? fallbackValue : cleaned;
+  return sanitizeValue(text);
 }
 
 function selectedRecord(a: FormAnswers): SelectedRecordData {
   const source = (a as FormAnswers & { __simitRecord?: any }).__simitRecord || {};
-  const fromFormOrSource = (formKey: string, sourceValue: unknown, fallbackValue = fallback) => {
+  const fromFormOrSource = (formKey: string, sourceValue: unknown) => {
     const form = rawValue(a, formKey);
     const cleanForm = form ? sanitizeValue(form) : fallback;
     if (cleanForm !== fallback) return cleanForm;
-    return cleanOrFallback(sourceValue, fallbackValue);
+    return cleanOrFallback(sourceValue);
   };
 
   return {
-    // El registro SIMIT es la fuente de verdad cuando el formulario contiene basura OCR.
+    // El registro SIMIT conserva prioridad cuando el formulario contiene basura OCR.
     comparendo: fromFormOrSource('numero_comparendo', source.number),
     fecha: rawValue(a, 'fecha_comparendo') || String(source.date || fallback),
     organismo: fromFormOrSource('entidad', source.authority || rawValue(a, 'autoridad')),
@@ -55,86 +54,127 @@ function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null {
   return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null;
 }
 
-function routeLabel(route: string | null | undefined) {
-  switch (route) {
-    case 'CADUCIDAD': return 'solicitud de revisión de la caducidad de la actuación contravencional';
-    case 'PRESCRIPCION': return 'solicitud de prescripción de la sanción y/o acción de cobro';
-    case 'PERDIDA_EJECUTORIEDAD': return 'solicitud de revisión de la fuerza ejecutoria del acto administrativo';
-    case 'NOTIFICACION': return 'revisión de la regularidad de las notificaciones y del debido proceso';
-    case 'FOTODETECCION': return 'revisión de la actuación de detección tecnológica y de la imputación personal';
-    case 'DEBIDO_PROCESO': return 'revisión de las garantías del debido proceso administrativo';
-    case 'REVOCATORIA_DIRECTA': return 'revisión de la procedencia de la revocatoria directa';
-    default: return 'revisión integral de la actuación administrativa';
-  }
-}
-
-function sectionBody(document: string, heading: string, nextHeading: string): string {
-  const start = document.indexOf(heading);
-  if (start < 0) return '';
-  const from = start + heading.length;
-  const end = document.indexOf(nextHeading, from);
-  return document.slice(from, end < 0 ? document.length : end).trim();
-}
-
 function normalizeForCompare(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function looksLikeGeneratedFacts(text: string): boolean {
+  const normalized = normalizeForCompare(text);
+  const markers = ['estado de cuenta simit', 'fecha del hecho', 'mandamiento de pago', 'vencimiento calculado'];
+  return markers.filter(marker => normalized.includes(marker)).length >= 2;
+}
+
+function cleanUserFacts(text: string): string {
+  const cleaned = text.trim();
+  if (!cleaned || /^no identificado en el documento aportado$/i.test(cleaned)) return '';
+  // El formulario puede conservar la versión automática anterior. No la volvemos a insertar.
+  if (looksLikeGeneratedFacts(cleaned)) return '';
+  return cleaned;
+}
+
+function routeLabel(route: string | null | undefined) {
+  switch (route) {
+    case 'CADUCIDAD': return 'REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN CONTRAVENCIONAL';
+    case 'PRESCRIPCION': return 'SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
+    case 'PERDIDA_EJECUTORIEDAD': return 'SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
+    case 'NOTIFICACION': return 'REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
+    case 'FOTODETECCION': return 'REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
+    case 'DEBIDO_PROCESO': return 'REVISIÓN DE LAS GARANTÍAS DEL DEBIDO PROCESO ADMINISTRATIVO';
+    case 'REVOCATORIA_DIRECTA': return 'REVISIÓN DE LA PROCEDENCIA DE LA REVOCATORIA DIRECTA';
+    default: return 'REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
+  }
+}
+
+function deduplicateTopLevelSections(document: string): string {
+  const headingRegex = /^(I|II|III|IV|V|VI|VII|VIII|IX)\.\s+[^\n]+/gm;
+  const matches = [...document.matchAll(headingRegex)];
+  if (matches.length <= 9) return document.trim();
+
+  const seen = new Set<string>();
+  const chunks: string[] = [];
+  let previous = 0;
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const start = match.index ?? 0;
+    const roman = match[1];
+    const next = i + 1 < matches.length ? (matches[i + 1].index ?? document.length) : document.length;
+    const chunk = document.slice(start, next);
+
+    if (seen.has(roman)) continue;
+    seen.add(roman);
+
+    if (chunks.length === 0) chunks.push(document.slice(0, start));
+    chunks.push(chunk);
+    previous = next;
+  }
+
+  return chunks.join('').trim() || document.trim();
+}
+
 /**
- * Single traffic-document assembler.
- * legalEngine owns the complete legal body I–IX. This layer only adds the
- * administrative header/footer and, when genuinely different, user-authored facts.
+ * Ensamblador administrativo. legalEngine es el único dueño de la argumentación
+ * jurídica I–IX; aquí solo se arma el documento final en nombre propio.
  */
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const record = selectedRecord(a);
   const draft = generateUnifiedLegalDocument(record);
   const assessment = assessmentFromAnswers(a) || draft.assessment;
 
-  let body = draft.document;
-  const userFacts = rawValue(a, 'hechos');
-  const automaticFacts = sectionBody(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO');
+  let body = deduplicateTopLevelSections(draft.document);
 
-  // Nunca anteponer el bloque automático ya generado por el motor. Solo se
-  // incorpora contenido si el usuario realmente lo modificó/agregó.
-  if (
-    userFacts &&
-    !/^no identificado|no se han incorporado hechos adicionales/i.test(userFacts) &&
-    normalizeForCompare(userFacts) !== normalizeForCompare(automaticFacts)
-  ) {
-    body = body.replace(
-      automaticFacts,
-      `${automaticFacts}\n\nHechos adicionales aportados por el solicitante:\n${userFacts}`
-    );
+  // Solo agregamos hechos escritos realmente por la persona. La versión automática
+  // que pueda haber quedado guardada en 'hechos' se descarta para evitar duplicados.
+  const userFacts = cleanUserFacts(rawValue(a, 'hechos'));
+  if (userFacts) {
+    const marker = 'III. PROBLEMA JURÍDICO';
+    const position = body.indexOf(marker);
+    if (position >= 0) body = `${body.slice(0, position)}${userFacts}\n\n${body.slice(position)}`;
   }
 
   const authority = sanitizeValue(rawValue(a, 'entidad') || record.organismo);
   const nameFromParts = `${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`.trim();
-  const applicant = cleanOrFallback(nameFromParts || rawValue(a, 'nombre'), fallback);
-  const cedula = cleanOrFallback(rawValue(a, 'documento') || record.cedula, fallback);
-  const email = cleanOrFallback(rawValue(a, 'correo') || record.correo, fallback);
-  const plate = cleanOrFallback(rawValue(a, 'placa') || record.placa, fallback);
-  const number = cleanOrFallback(rawValue(a, 'numero_comparendo') || record.comparendo, fallback);
+  const applicant = cleanOrFallback(nameFromParts || rawValue(a, 'nombre') || record.nombre);
+  const cedula = cleanOrFallback(rawValue(a, 'documento') || record.cedula);
+  const email = cleanOrFallback(rawValue(a, 'correo') || record.correo);
+  const plate = cleanOrFallback(rawValue(a, 'placa') || record.placa);
+  const number = cleanOrFallback(rawValue(a, 'numero_comparendo') || record.comparendo);
   const date = rawValue(a, 'fecha_comparendo') || record.fecha;
   const city = rawValue(a, 'ciudad') || 'Sincelejo';
   const dateDocument = rawValue(a, 'fecha') || new Date().toLocaleDateString('es-CO');
-  const title = (() => {
-    switch (assessment.primaryRoute) {
-      case 'PRESCRIPCION': return 'DERECHO DE PETICIÓN — SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
-      case 'PERDIDA_EJECUTORIEDAD': return 'DERECHO DE PETICIÓN — SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
-      case 'NOTIFICACION': return 'DERECHO DE PETICIÓN — REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
-      case 'FOTODETECCION': return 'DERECHO DE PETICIÓN — REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
-      case 'CADUCIDAD': return 'DERECHO DE PETICIÓN — REVISIÓN DE CADUCIDAD DE ACTUACIÓN CONTRAVENCIONAL';
-      default: return `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute).toUpperCase()}`;
-    }
-  })();
+  const title = assessment.primaryRoute ? `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute)}` : 'DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
 
   return [
-    city, dateDocument, '', authority.toUpperCase(), 'Dependencia competente', '', title, '',
-    `ASUNTO: ${title}`, `REFERENCIA: Comparendo / acto No. ${number} — Fecha: ${date}`, '',
-    'SOLICITANTE', applicant, `C.C. ${cedula}`, `Correo electrónico: ${email}`, `Placa: ${plate}`, '',
-    'Respetados señores:', '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica del comparendo o acto No. ${number}. La presente solicitud se construye sobre los datos verificables del Estado de Cuenta aportado y distingue expresamente entre hechos acreditados, cálculos jurídicos y actuaciones que deben ser demostradas mediante el expediente administrativo.`, '',
-    body, '', 'X. ANEXOS', 'Estado de Cuenta SIMIT aportado por el solicitante.', '',
-    'XI. NOTIFICACIONES', `Al correo electrónico ${email}.`, '', 'Atentamente', '', applicant, `C.C. ${cedula}`,
+    city,
+    dateDocument,
+    '',
+    authority.toUpperCase(),
+    'Dependencia competente',
+    '',
+    title,
+    '',
+    `ASUNTO: ${title}`,
+    `REFERENCIA: Comparendo / acto No. ${number} — Fecha: ${date}`,
+    '',
+    `Yo, ${applicant}, identificado(a) con cédula de ciudadanía No. ${cedula}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,
+    `Correo electrónico: ${email}`,
+    `Placa: ${plate}`,
+    '',
+    'Respetados señores:',
+    '',
+    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica de la actuación No. ${number}. Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta aportado y en las circunstancias que conozco directamente. Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente.`,
+    '',
+    body,
+    '',
+    'X. ANEXOS',
+    'Estado de Cuenta SIMIT aportado.',
+    '',
+    'XI. NOTIFICACIONES',
+    `Agradezco que la respuesta sea remitida al correo electrónico ${email}.`,
+    '',
+    'Atentamente,',
+    '',
+    applicant,
+    `C.C. ${cedula}`,
   ].join('\n');
 }
