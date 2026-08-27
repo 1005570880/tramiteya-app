@@ -36,10 +36,11 @@ function deterministic(record: SelectedRecordData) {
 function developedLibrary(authorities: ReturnType<typeof selectLegalAuthorities>) {
   return authorities.map((a) => [
     `${a.source} — ${a.provision}`,
-    `REGLA: ${a.rule}`,
-    `DESARROLLO: ${a.development}`,
-    `APLICACIÓN: ${a.application}`,
-    a.precedent ? `PRECEDENTE/CRITERIO: ${a.precedent}` : "",
+    `Fuente jurídica: ${a.source}, ${a.provision}.`,
+    `Contenido jurídico: ${a.rule}`,
+    `Alcance: ${a.development}`,
+    `Conexión con el caso: ${a.application}`,
+    a.precedent ? `Criterio jurisprudencial: ${a.precedent}` : "",
   ].filter(Boolean).join("\n")).join("\n\n");
 }
 
@@ -53,25 +54,39 @@ export async function POST(request: Request) {
 
     const model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
     const library = developedLibrary(base.legalAnalysis.authorities);
-    const prompt = `Actúa como motor jurídico de apoyo para un abogado colombiano. Analiza exclusivamente los datos suministrados y la biblioteca jurídica controlada. No inventes hechos, fechas, notificaciones, resoluciones ni actuaciones. Distingue hechos acreditados, inferencias y datos que deben ser solicitados a la autoridad.
+    const prompt = `Actúa como un abogado colombiano que prepara un derecho de petición administrativo para ser presentado ante una autoridad de tránsito. El texto final será leído por un funcionario, no por un programador. Debe sonar escrito por un abogado que estudió el expediente, no por una plantilla ni por una inteligencia artificial.
 
-REGLA CRÍTICA DE CLASIFICACIÓN: si el registro ya evidencia una sanción/multa, estado de cobro, resolución, audiencia o identificador sancionatorio, NO declares caducidad de la actuación contravencional como hecho ni como ruta automática. La caducidad del artículo 161 se refiere a la acción contravencional y al término para decidir sobre la imposición de la sanción. En un registro ya sancionado, concentra el análisis en el acto sancionatorio, ejecutoria, notificación, prescripción, cobro, fuerza ejecutoria y eventuales vicios.
+TRABAJA SOLO CON LOS DATOS DEL CASO Y CON LA BIBLIOTECA JURÍDICA SUMINISTRADA. No inventes hechos, fechas, resoluciones, audiencias, notificaciones, recursos, pagos, embargos ni actuaciones de cobro. Cuando un dato no esté acreditado, dilo con naturalidad y conviértelo en una solicitud de verificación documental.
 
-La prescripción del artículo 159 de la Ley 769 de 2002 debe analizarse con la fecha del hecho, la existencia y notificación del mandamiento de pago y las actuaciones posteriores. No afirmes prescripción por el simple paso del tiempo. La pérdida de fuerza ejecutoria exige identificar el acto en firme, su fecha de firmeza y las actuaciones de ejecución durante el periodo legal. La revocatoria directa debe plantearse con causal concreta y de forma subsidiaria cuando corresponda.
+REGLA CRÍTICA SOBRE CADUCIDAD: si el registro ya evidencia una multa/sanción, estado de cobro, resolución, audiencia o identificador sancionatorio, NO presentes la caducidad del artículo 161 como si el comparendo siguiera pendiente de decisión. En ese escenario, explica que la discusión debe concentrarse en el acto sancionatorio, su firmeza, notificación, exigibilidad, prescripción, cobro, fuerza ejecutoria y vicios concretos que puedan demostrarse.
 
-REQUISITO DE PROFUNDIDAD: no te limites a enumerar normas. Para cada norma o precedente materialmente pertinente explica: (1) qué regla contiene, (2) qué significa jurídicamente, (3) qué requisito probatorio activa su aplicación y (4) cómo se conecta con los hechos disponibles. No conviertas la biblioteca en una lista de citas.
+REGLA CRÍTICA SOBRE PRESCRIPCIÓN: el artículo 159 de la Ley 769 de 2002 no debe aplicarse contando mecánicamente tres años desde la fecha visible en SIMIT. Reconstruye la secuencia hecho → sanción → firmeza → mandamiento de pago → notificación del mandamiento → actuaciones posteriores. Si faltan datos, solicita el expediente antes de afirmar que la obligación prescribió.
 
-REQUISITO DE SEGURIDAD: SIMIT sirve para individualizar y conocer el estado reportado, pero no reemplaza el expediente administrativo. No presumas que hubo o no hubo audiencia, notificación, ejecutoria o cobro cuando el dato no esté acreditado.
+PROFUNDIDAD JURÍDICA: no te limites a mencionar normas. Explica su sentido dentro del sistema jurídico, qué protege, qué presupuesto debe estar probado para aplicarla y por qué ese presupuesto importa en este caso. Cuando exista un precedente de la biblioteca, explica su criterio y luego conecta ese criterio con la situación concreta. No hagas una colección de fichas normativas.
 
-Produce un fundamento jurídico sustancial, organizado y apto para incorporarse a un derecho de petición: problema jurídico, hechos relevantes, marco normativo desarrollado, precedentes desarrollados, aplicación al caso, carga documental y solicitudes/pretensiones.
+ESTILO FORENSE: escribe en prosa jurídica natural, sobria y convincente. Alterna la extensión de los párrafos. Usa transiciones propias de un escrito profesional: “En este punto”, “Ahora bien”, “De ahí que”, “Bajo esa consideración”, “Por lo anterior”, “No puede perderse de vista”. Evita frases de manual como “la regla es”, “el desarrollo es”, “la aplicación al caso es”. Evita repetir “resulta relevante”, “permite”, “corresponde” en cada párrafo. No menciones IA, motor jurídico, biblioteca jurídica, algoritmo, automatización ni “análisis determinístico” dentro del texto destinado al ciudadano.
+
+ESTRUCTURA DEL TEXTO: entrega un fundamento jurídico completo, listo para incorporarse al documento, con estos títulos y subtítulos cuando sean pertinentes:
+III. PROBLEMA JURÍDICO
+IV. FUNDAMENTOS JURÍDICOS
+4.1. Garantías constitucionales y debido proceso
+4.2. Régimen especial de tránsito aplicable
+4.3. Notificación, ejecutoria y eficacia del acto administrativo
+4.4. Prescripción, cobro coactivo y fuerza ejecutoria
+V. ANÁLISIS DEL CASO CONCRETO
+VI. CONCLUSIÓN JURÍDICA
+VII. DOCUMENTOS NECESARIOS PARA VERIFICAR LA ACTUACIÓN
+No fuerces un subtítulo si la información no lo justifica. Si una materia no aplica, omítela.
+
+IMPORTANTE: la biblioteca es una fuente de trabajo controlada. Conserva las referencias normativas y jurisprudenciales que realmente sean pertinentes, pero intégralas dentro del razonamiento. El resultado debe poder leerse de corrido como un escrito jurídico serio.
 
 DATOS DEL CASO:
 ${JSON.stringify(record)}
 
-DIAGNÓSTICO DETERMINÍSTICO:
+DIAGNÓSTICO PRELIMINAR:
 ${JSON.stringify(base.assessment)}
 
-BIBLIOTECA JURÍDICA DESARROLLADA:
+BIBLIOTECA JURÍDICA:
 ${library}`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -112,19 +127,17 @@ ${library}`;
 
     if (!parsedAnalysis) return NextResponse.json({ ...base, ai: { enabled: false, reason: "La IA no devolvió una estructura jurídica válida" } });
 
-    // La IA puede enriquecer el análisis, pero nunca reemplaza el fundamento
-    // determinístico construido desde la biblioteca jurídica controlada.
-    const mergedLegalFramework = [
-      base.fundamentos,
-      "",
-      "IX. ENRIQUECIMIENTO MEDIANTE IA",
+    // La IA desarrolla el razonamiento, pero las fuentes que la sustentan siguen
+    // estando controladas por la biblioteca jurídica y el diagnóstico determinístico.
+    const legalFramework = [
       parsedAnalysis.legalFramework || "",
-    ].filter(Boolean).join("\n");
+      parsedAnalysis.application ? `\n\nV. ANÁLISIS DEL CASO CONCRETO\n${parsedAnalysis.application}` : "",
+    ].filter(Boolean).join("").trim();
 
     const legalAnalysis = {
       ...parsedAnalysis,
-      legalFramework: mergedLegalFramework,
-      application: [base.assessment.reasoning.join(" "), parsedAnalysis.application || ""].filter(Boolean).join("\n\n"),
+      legalFramework,
+      application: parsedAnalysis.application || base.assessment.reasoning.join(" "),
       authorities: base.legalAnalysis.authorities,
       deterministicConclusion: base.legalAnalysis.conclusion,
       caveat: base.legalAnalysis.caveat,
