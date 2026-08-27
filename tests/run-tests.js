@@ -29,4 +29,5 @@ testProcedureStorageSource();
 testPricingCatalog();
 require('./simit-golden-structure.test.cjs');
 require('./legal-caducity.test.cjs');
+require('./legal-document-guard.test.cjs');
 console.log('All TrámiteYa smoke tests passed.');
