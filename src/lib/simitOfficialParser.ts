@@ -9,6 +9,9 @@ const DATE_RE = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/g;
 const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
 const CODE_RE = /\b([A-D]\d{2})\b/i;
+// Colombian vehicle plates: ABC123 / ABC-123 / ABC 123. Keep the label-aware
+// extractor separate so a plate-looking token elsewhere is only accepted when
+// it is plausibly a vehicle plate and is not a known document/record number.
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 
 function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
@@ -21,21 +24,14 @@ function extractTime(value: string): string | undefined { return String(value ||
 function extractStatus(value: string): string | undefined { const match = String(value || '').match(STATUS_RE); return match?.[1] ? clean(match[1]) : undefined; }
 function extractCode(value: string): string | undefined { return String(value || '').match(CODE_RE)?.[1]?.toUpperCase(); }
 
-/** Handles real SIMIT headers such as ESTADO DE CUENTA / 37312647 / Fecha de expedición / Cédula:. */
 export function extractSimitDocumentNumber(input: string): string | undefined {
   const text = normalizeWhitespace(input);
   if (!text) return undefined;
-
-  // Primary SIMIT layout: the document number is the standalone numeric line
-  // immediately after the ESTADO DE CUENTA heading.
   const header = text.match(/estado\s+de\s+cuenta([\s\S]{0,300}?)(?:fecha\s+de\s+expedici[oó]n|c[eé]dula\s*:)/i)?.[1];
   if (header) {
     const candidate = header.match(/(?:^|\n|\|)\s*(\d{6,10})\s*(?=\n|\||$)/)?.[1] || header.match(/\b\d{6,10}\b/)?.[0];
     if (candidate) return candidate;
   }
-
-  // Some PDF text extractors reorder the header lines. In that case, inspect
-  // the first 500 characters after the heading, while rejecting dates/times.
   const headingIndex = text.search(/estado\s+de\s+cuenta/i);
   if (headingIndex >= 0) {
     const window = text.slice(headingIndex, headingIndex + 500);
@@ -43,28 +39,47 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
     const candidate = candidates.find(value => !/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(value));
     if (candidate) return candidate;
   }
-
   const labelledPatterns = [
     /(?:c[eé]dula|cedula)\s*(?:de\s+)?(?:n[uú]mero|no\.?|nro\.?|n[º°])?\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /(?:documento\s+de\s+identidad|n[uú]mero\s+de\s+identificaci[oó]n|identificaci[oó]n)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /\b(?:CC|C\.C\.)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
   ];
   for (const pattern of labelledPatterns) {
-    const match = text.match(pattern);
-    if (!match?.[1]) continue;
-    const digits = compactDigits(match[1]);
-    if (/^\d{6,10}$/.test(digits)) return digits;
+    const match = text.match(pattern); if (!match?.[1]) continue;
+    const digits = compactDigits(match[1]); if (/^\d{6,10}$/.test(digits)) return digits;
   }
   return undefined;
 }
 
-/** Never infer a plate from a cédula, comparendo number, amount or other numeric token. */
+/** Extract a Colombian plate from the actual plate field or nearby OCR/text. */
 export function extractSimitPlate(input: string): string | undefined {
   const text = normalizeWhitespace(input);
-  const labelled = text.match(/(?:placa|plca)\s*(?:del\s+veh[ií]culo)?\s*[:#-]?\s*([A-Z]{3}[ -]?\d{3})\b/i);
-  if (labelled?.[1]) return labelled[1].replace(/\s+/g, '').toUpperCase();
-  const matches = [...text.matchAll(PLATE_RE)].map((m) => m[1].replace(/\s+/g, '').toUpperCase());
-  return matches.find((plate) => /^[A-Z]{3}\d{3}$/.test(plate));
+  if (!text) return undefined;
+
+  // SIMIT/PDF variants seen in practice: PLACA:, PLACA DEL VEHÍCULO:,
+  // PLACA VEHICULO:, PLACA DEL VEHICULO =, and OCR typo PLCA:.
+  const labelledPatterns = [
+    /(?:^|[\n|])\s*(?:placa|plca)\s*(?:del\s+veh[ií]culo|veh[ií]culo)?\s*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im,
+    /(?:placa|plca)[^A-Z0-9]{0,20}([A-Z]{3}[ -]?\d{3})\b/i,
+  ];
+  for (const pattern of labelledPatterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase();
+  }
+
+  // Fallback for PDFs where the extractor loses table labels but preserves the
+  // plate token. Exclude tokens immediately adjacent to words that commonly
+  // identify unrelated alphanumeric values.
+  const matches = [...text.matchAll(PLATE_RE)].map(m => ({
+    plate: m[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase(),
+    index: m.index ?? -1,
+  }));
+  for (const { plate, index } of matches) {
+    const before = text.slice(Math.max(0, index - 60), index).toLowerCase();
+    if (/documento|c[eé]dula|identificaci[oó]n|comparendo|resoluci[oó]n|radicado/.test(before)) continue;
+    if (/^[A-Z]{3}\d{3}$/.test(plate)) return plate;
+  }
+  return undefined;
 }
 
 function authorityFromMunicipality(municipality: string | undefined, body: string): string | undefined { if (municipality) { const direct = findMatchingAuthority(municipality); if (direct) return direct; } return findMatchingAuthority(body); }
