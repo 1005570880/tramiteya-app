@@ -27,4 +27,4 @@ export type FormStep = {
 };
 
 export type FormAnswer = string | string[] | null | boolean;
-export type FormAnswers = Record<string, FormAnswer>;
+export type FormAnswers = Record<string, FormAnswer | unknown>;
