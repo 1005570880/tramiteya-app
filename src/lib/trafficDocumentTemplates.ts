@@ -1,152 +1,115 @@
 import type { FormAnswers } from '../types/form';
-import { generateLegalDraft, type LegalAssessment, type SelectedRecordData } from './legalEngine';
+import { generateUnifiedLegalDocument, sanitizeValue, type LegalAssessment, type SelectedRecordData } from './legalEngine';
 
-const v = (a: FormAnswers, k: string, f = '') => {
-  const x = a[k];
-  if (Array.isArray(x)) return x.join(', ');
-  if (typeof x === 'boolean') return x ? 'Sí' : 'No';
-  if (x == null) return f;
-  const value = String(x).trim();
-  if (!value || /^no especificad[ao] en pdf$/i.test(value)) return f;
-  return value;
-};
-const clean = (value: string) => value.replace(/\s+/g, ' ').trim();
+const fallback = 'No identificado en el documento aportado';
+
+function value(a: FormAnswers, key: string, fallbackValue = ''): string {
+  const raw = a[key];
+  if (Array.isArray(raw)) return raw.join(', ');
+  if (typeof raw === 'boolean') return raw ? 'Sí' : 'No';
+  if (raw == null) return fallbackValue;
+  const text = String(raw).trim();
+  return text || fallbackValue;
+}
 
 function selectedRecord(a: FormAnswers): SelectedRecordData {
-  const source = (a as any).__simitRecord || {};
+  const source = (a as FormAnswers & { __simitRecord?: any }).__simitRecord || {};
   return {
-    comparendo: v(a, 'numero_comparendo', source.number || 'no identificado'),
-    fecha: v(a, 'fecha_comparendo', source.date || 'no identificada'),
-    organismo: v(a, 'entidad', source.authority || v(a, 'autoridad', 'la Autoridad de Tránsito competente')),
-    estado: v(a, 'estado', source.status || v(a, 'estadoComparendo', 'no identificado')),
-    valor: v(a, 'valor', source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : v(a, 'valorMulta', 'no reportado')),
-    placa: v(a, 'placa', source.plate || undefined),
-    cedula: v(a, 'documento', source.documentNumber || v(a, 'cedula', undefined)),
-    codigo: v(a, 'codigo_infraccion', source.code || v(a, 'codigoInfraccion', undefined)),
-    fechaResolucion: v(a, 'fecha_resolucion', source.resolutionDate || undefined),
-    fechaNotificacion: v(a, 'fecha_notificacion', source.notificationDate || undefined),
-    fechaMandamientoPago: v(a, 'fecha_mandamiento_pago', source.paymentOrderDate || undefined),
-    fechaNotificacionMandamiento: v(a, 'fecha_notificacion_mandamiento', source.paymentOrderNotificationDate || undefined),
-    fechaEjecutoria: v(a, 'fecha_ejecutoria', source.executedDate || undefined),
-    actuacionesCobro: v(a, 'actuaciones_cobro', source.collectionActions || undefined),
+    comparendo: value(a, 'numero_comparendo', source.number || fallback),
+    fecha: value(a, 'fecha_comparendo', source.date || fallback),
+    organismo: value(a, 'entidad', source.authority || value(a, 'autoridad', fallback)),
+    estado: value(a, 'estado', source.status || value(a, 'estadoComparendo', fallback)),
+    valor: value(a, 'valor', source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : value(a, 'valorMulta', fallback)),
+    placa: value(a, 'placa', source.plate || fallback),
+    cedula: value(a, 'documento', source.documentNumber || value(a, 'cedula', fallback)),
+    codigo: value(a, 'codigo_infraccion', source.infractionCode || source.code || fallback),
+    fechaResolucion: value(a, 'fecha_resolucion', source.resolutionDate || ''),
+    fechaNotificacion: value(a, 'fecha_notificacion', source.notificationDate || ''),
+    fechaMandamientoPago: value(a, 'fecha_mandamiento_pago', source.mandamientoDate || source.paymentOrderDate || ''),
+    fechaNotificacionMandamiento: value(a, 'fecha_notificacion_mandamiento', source.paymentOrderNotificationDate || ''),
+    fechaEjecutoria: value(a, 'fecha_ejecutoria', source.executedDate || ''),
     huboAudiencia: (a as any).hubo_audiencia,
     existeResolucion: (a as any).existe_resolucion,
+    actuacionesCobro: value(a, 'actuaciones_cobro', source.collectionActions || ''),
   };
 }
 
 function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null {
-  const value = a.__legalAssessment;
-  return value && typeof value === 'object' ? value as LegalAssessment : null;
+  const assessment = a.__legalAssessment;
+  return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null;
 }
+
 function routeLabel(route: string | null | undefined) {
   switch (route) {
-    case 'CADUCIDAD': return 'caducidad de la actuación contravencional';
-    case 'PRESCRIPCION': return 'prescripción de la sanción y/o de la acción de cobro, según corresponda';
-    case 'PERDIDA_EJECUTORIEDAD': return 'pérdida de fuerza ejecutoria del acto administrativo';
-    case 'NOTIFICACION': return 'regularidad y eficacia de las notificaciones';
-    case 'FOTODETECCION': return 'legalidad de la detección tecnológica e imputación personal';
-    case 'DEBIDO_PROCESO': return 'garantías del debido proceso administrativo sancionatorio';
-    case 'REVOCATORIA_DIRECTA': return 'revocatoria directa, si se configura una causal legal';
+    case 'CADUCIDAD': return 'solicitud de revisión de la caducidad de la actuación contravencional';
+    case 'PRESCRIPCION': return 'solicitud de prescripción de la sanción y/o acción de cobro';
+    case 'PERDIDA_EJECUTORIEDAD': return 'solicitud de revisión de la fuerza ejecutoria del acto administrativo';
+    case 'NOTIFICACION': return 'revisión de la regularidad de las notificaciones y del debido proceso';
+    case 'FOTODETECCION': return 'revisión de la actuación de detección tecnológica y de la imputación personal';
+    case 'DEBIDO_PROCESO': return 'revisión de las garantías del debido proceso administrativo';
+    case 'REVOCATORIA_DIRECTA': return 'revisión de la procedencia de la revocatoria directa';
     default: return 'revisión integral de la actuación administrativa';
   }
 }
 
-function buildRequests(a: FormAnswers, assessment: LegalAssessment) {
-  const number = v(a, 'numero_comparendo', 'no identificado');
-  const requests: string[] = [];
-  if (assessment.routes.includes('PRESCRIPCION')) {
-    requests.push(`Que se determine, con base en el expediente y la cronología documental, si se configuró la prescripción respecto de la sanción y/o de la acción de cobro asociada al comparendo No. ${number}, indicando expresamente la fecha del hecho, el vencimiento inicial calculado y, si se alega interrupción, la fecha de notificación del mandamiento de pago que la sustenta.`);
-    requests.push(`Que se informe y acredite documentalmente si antes del ${assessment.temporal?.initialExpiryDate || 'vencimiento del término inicial'} se produjo y notificó válidamente un mandamiento de pago. Si no se acredita, que se adopte la consecuencia jurídica que corresponda conforme al régimen de prescripción aplicable.`);
-  }
-  if (assessment.routes.includes('PERDIDA_EJECUTORIEDAD')) requests.push('Que se determine si el acto administrativo sancionatorio perdió fuerza ejecutoria, verificando su firmeza y las actuaciones efectivamente realizadas para ejecutarlo durante el término legal.');
-  if (assessment.routes.includes('NOTIFICACION') || assessment.routes.includes('DEBIDO_PROCESO')) requests.push('Que se aporten las constancias completas de notificación de cada actuación relevante, indicando acto notificado, destinatario, dirección o canal, fecha, medio empleado, constancia de entrega o publicación y recursos procedentes.');
-  if (assessment.routes.includes('FOTODETECCION')) requests.push('Que se aporte la totalidad de la evidencia de detección tecnológica y de los documentos que sustentaron la individualización e imputación personal de la conducta.');
-  if (assessment.routes.includes('REVOCATORIA_DIRECTA')) requests.push('Que, si del expediente se desprende una causal legal de revocatoria directa o una irregularidad sustancial que afecte la validez o eficacia de la actuación, se adopte la decisión jurídicamente procedente.');
-  requests.push('Que se remita copia íntegra, legible y completa del expediente administrativo, incluyendo orden de comparendo, evidencia, actuaciones de comparecencia, audiencia, resolución sancionatoria, recursos, constancia de ejecutoria, actuaciones de cobro, mandamiento de pago y sus constancias de notificación, si existen.');
-  requests.push('Que se informe expresamente cuáles actuaciones aparecen registradas en los sistemas internos de la entidad y cuáles cuentan con soporte documental, evitando tener el Estado de Cuenta SIMIT como sustituto del expediente administrativo.');
-  requests.push('Que, una vez establecida la situación jurídica mediante los documentos que obran en el expediente, se adopte la consecuencia jurídica correspondiente y se actualicen o depuren los registros administrativos y sistemas de información cuando legalmente proceda.');
-  requests.push('Que se emita respuesta de fondo, clara, congruente, motivada y completa frente a cada una de las solicitudes formuladas.');
-  return requests.map(clean);
-}
-
-function buildTitle(slug: string, assessment: LegalAssessment) {
-  switch (assessment.primaryRoute) {
-    case 'PRESCRIPCION': return 'DERECHO DE PETICIÓN — SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
-    case 'PERDIDA_EJECUTORIEDAD': return 'DERECHO DE PETICIÓN — SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
-    case 'NOTIFICACION': return 'DERECHO DE PETICIÓN — REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
-    case 'FOTODETECCION': return 'DERECHO DE PETICIÓN — REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
-    case 'CADUCIDAD': return 'DERECHO DE PETICIÓN — REVISIÓN DE CADUCIDAD DE ACTUACIÓN CONTRAVENCIONAL';
-    default:
-      if (slug === 'revocatoria-comparendo') return 'SOLICITUD DE REVOCATORIA DIRECTA Y/O CORRECCIÓN DE ACTUACIÓN ADMINISTRATIVA';
-      if (slug === 'solicitud-soportes-comparendo') return 'DERECHO DE PETICIÓN — SOLICITUD DE EXPEDIENTE Y SOPORTES DE ACTUACIÓN DE TRÁNSITO';
-      return 'DERECHO DE PETICIÓN — REVISIÓN JURÍDICA DE SANCIÓN DE TRÁNSITO';
-  }
-}
-
-function section(text: string, heading: string) {
-  const marker = `${heading}\n`;
-  const start = text.indexOf(marker);
+function sectionBody(document: string, heading: string, nextHeading: string): string {
+  const start = document.indexOf(heading);
   if (start < 0) return '';
-  const from = start + marker.length;
-  const next = text.indexOf('\n\n', from);
-  return text.slice(from, next < 0 ? text.length : next).trim();
+  const from = start + heading.length;
+  const end = document.indexOf(nextHeading, from);
+  return document.slice(from, end < 0 ? document.length : end).trim();
 }
 
-function extractAfter(text: string, heading: string) {
-  const marker = `${heading}\n`;
-  const start = text.indexOf(marker);
-  return start < 0 ? '' : text.slice(start + marker.length).trim();
+function replaceSection(document: string, heading: string, nextHeading: string, body: string): string {
+  const start = document.indexOf(heading);
+  if (start < 0 || !body.trim()) return document;
+  const from = start + heading.length;
+  const end = document.indexOf(nextHeading, from);
+  if (end < 0) return document.slice(0, from) + '\n\n' + body.trim() + '\n';
+  return document.slice(0, from) + '\n\n' + body.trim() + '\n\n' + document.slice(end);
 }
 
+/** Single traffic-document assembler. The legal engine owns I–IX; this layer adds only the administrative header and optional user facts. */
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const record = selectedRecord(a);
-  const legalDraft = generateLegalDraft(record);
-  const assessment = assessmentFromAnswers(a) || legalDraft.assessment;
-  const title = buildTitle(slug, assessment);
-  const authority = v(a, 'entidad', record.organismo);
-  const name = `${v(a, 'nombres')} ${v(a, 'apellidos')}`.trim() || 'Solicitante';
-  const number = v(a, 'numero_comparendo', record.comparendo);
-  const date = v(a, 'fecha_comparendo', record.fecha);
-  const route = routeLabel(assessment.primaryRoute);
-  const customFacts = v(a, 'hechos');
+  const draft = generateUnifiedLegalDocument(record);
+  const assessment = assessmentFromAnswers(a) || draft.assessment;
 
-  // The legal engine now owns the factual narrative. A user-supplied narrative is
-  // respected, but the deterministic case facts are always retained when it is absent.
-  const facts = customFacts && !/^no se han incorporado hechos adicionales/i.test(customFacts)
-    ? `${customFacts}\n\n${legalDraft.hechos}`
-    : legalDraft.hechos;
+  let body = draft.document;
+  const userFacts = value(a, 'hechos', '').trim();
+  if (userFacts && !/^no identificado|no se han incorporado hechos adicionales/i.test(userFacts)) {
+    const automaticFacts = sectionBody(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO');
+    body = replaceSection(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO', `${userFacts}\n\n${automaticFacts}`);
+  }
 
-  const foundations = legalDraft.fundamentos;
-  const problem = section(foundations, 'III. PROBLEMA JURÍDICO') || `Debe determinarse la situación jurídica actual de la actuación No. ${number}, estableciendo, a partir de las fechas y documentos disponibles, qué término resulta aplicable, cuál es su fecha de vencimiento, qué actuación podría haberlo interrumpido y qué consecuencia jurídica corresponde.`;
-  const legalBody = extractAfter(foundations, 'IV. FUNDAMENTOS DE DERECHO');
-  const application = legalBody || 'No existe información suficiente para cerrar el análisis sin inventar actuaciones.';
-  const timeline = legalDraft.assessment.temporal?.events?.map((event) => `${event.label}: ${event.date || 'no acreditada'}. Estado probatorio: ${event.status}. Efecto jurídico: ${event.legalEffect}`).join('\n\n') || '';
-  const conclusion = legalDraft.assessment.temporal?.temporalConclusion || 'La conclusión debe ajustarse a las actuaciones y fechas que resulten documentalmente acreditadas.';
-  const evidence = legalDraft.assessment.missingEvidence.map((item) => `• ${item}`).join('\n');
-  const requests = buildRequests(a, assessment);
+  const authority = sanitizeValue(value(a, 'entidad', record.organismo));
+  const name = `${value(a, 'nombres', '')} ${value(a, 'apellidos', '')}`.trim();
+  const applicant = sanitizeValue(name || value(a, 'nombre', fallback));
+  const cedula = sanitizeValue(value(a, 'documento', record.cedula));
+  const email = sanitizeValue(value(a, 'correo', record.correo));
+  const plate = sanitizeValue(value(a, 'placa', record.placa));
+  const number = sanitizeValue(value(a, 'numero_comparendo', record.comparendo));
+  const date = value(a, 'fecha_comparendo', record.fecha);
+  const city = value(a, 'ciudad', 'Sincelejo');
+  const dateDocument = value(a, 'fecha', new Date().toLocaleDateString('es-CO'));
+  const title = (() => {
+    switch (assessment.primaryRoute) {
+      case 'PRESCRIPCION': return 'DERECHO DE PETICIÓN — SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
+      case 'PERDIDA_EJECUTORIEDAD': return 'DERECHO DE PETICIÓN — SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
+      case 'NOTIFICACION': return 'DERECHO DE PETICIÓN — REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
+      case 'FOTODETECCION': return 'DERECHO DE PETICIÓN — REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
+      case 'CADUCIDAD': return 'DERECHO DE PETICIÓN — REVISIÓN DE CADUCIDAD DE ACTUACIÓN CONTRAVENCIONAL';
+      default: return `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute).toUpperCase()}`;
+    }
+  })();
 
   return [
-    v(a, 'ciudad', 'Sincelejo'), v(a, 'fecha', new Date().toLocaleDateString('es-CO')), '',
-    authority.toUpperCase(), 'Dependencia competente', '', title, '',
+    city, dateDocument, '', authority.toUpperCase(), 'Dependencia competente', '', title, '',
     `ASUNTO: ${title}`, `REFERENCIA: Comparendo / acto No. ${number} — Fecha: ${date}`, '',
-    'SOLICITANTE', name, `C.C. ${v(a, 'documento', record.cedula || 'no identificada')}`,
-    v(a, 'correo') ? `Correo electrónico: ${v(a, 'correo')}` : '',
-    v(a, 'placa', record.placa) ? `Placa: ${v(a, 'placa', record.placa)}` : '', '',
+    'SOLICITANTE', applicant, `C.C. ${cedula}`, `Correo electrónico: ${email}`, `Placa: ${plate}`, '',
     'Respetados señores:', '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica del comparendo o acto No. ${number}. La petición no parte de una presunción sobre la inexistencia de actuaciones administrativas: parte de los datos actualmente acreditados, realiza el cómputo que sí puede realizarse y solicita que la autoridad aporte los documentos necesarios para confirmar o descartar las hipótesis jurídicas identificadas.`, '',
-    'I. OBJETO',
-    `Solicito que ${route} sea examinada de manera integral, con especial atención a la cronología del expediente, las actuaciones de notificación, la firmeza del acto, el eventual mandamiento de pago y las actuaciones posteriores de cobro. La autoridad deberá establecer la consecuencia jurídica correspondiente a partir de fechas y documentos verificables.`, '',
-    'II. ANTECEDENTES Y HECHOS', facts, '',
-    'III. PROBLEMA JURÍDICO', problem, '',
-    'IV. FUNDAMENTOS DE DERECHO', application, '',
-    'V. ANÁLISIS DEL CASO CONCRETO',
-    `La información disponible permite efectuar el siguiente análisis individualizado:\n\n${legalDraft.assessment.temporal?.executiveSummary || 'No existe fecha inicial suficiente para realizar un cómputo temporal confiable.'}\n\n${legalDraft.assessment.temporal?.inferences?.join('\n\n') || ''}\n\n${legalDraft.assessment.temporal?.scenarios?.map((s) => `${s.title}. ${s.condition}. Consecuencia: ${s.conclusion}`).join('\n\n') || ''}`, '',
-    'VI. RECONSTRUCCIÓN CRONOLÓGICA Y EFECTOS JURÍDICOS', timeline || 'No se dispone de una cronología suficiente; se solicita su reconstrucción documental.', '',
-    'VII. PRUEBA Y DOCUMENTOS NECESARIOS', evidence || 'No se identifican documentos adicionales con la información disponible.', '',
-    'VIII. CONCLUSIÓN JURÍDICA', conclusion, '',
-    'IX. PETICIONES', requests.map((item, index) => `${index + 1}. ${item}`).join('\n\n'), '',
-    'X. ANEXOS', v(a, 'anexos', 'Estado de Cuenta SIMIT aportado por el solicitante.'), '',
-    'XI. NOTIFICACIONES', v(a, 'correo', 'En el correo electrónico informado por el solicitante.'), '',
-    'Atentamente,', '', name, `C.C. ${v(a, 'documento', record.cedula || 'no identificada')}`,
+    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica del comparendo o acto No. ${number}. La presente solicitud se construye sobre los datos verificables del Estado de Cuenta aportado y distingue expresamente entre hechos acreditados, cálculos jurídicos y actuaciones que deben ser demostradas mediante el expediente administrativo.`, '',
+    body, '', 'X. ANEXOS', 'Estado de Cuenta SIMIT aportado por el solicitante.', '',
+    'XI. NOTIFICACIONES', `Al correo electrónico ${email}.`, '', 'Atentamente', '', applicant, `C.C. ${cedula}`,
   ].join('\n');
 }
