@@ -21,7 +21,9 @@ const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
 function splitOwnerName(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return { nombres: value.trim(), apellidos: "" };
-  return { nombres: parts.slice(0, -2).join(" "), apellidos: parts.slice(-2).join(" ") };
+  if (parts.length === 2) return { nombres: parts[0], apellidos: parts[1] };
+  if (parts.length === 3) return { nombres: parts[0], apellidos: parts.slice(1).join(" ") };
+  return { nombres: parts.slice(0, 2).join(" "), apellidos: parts.slice(-2).join(" ") };
 }
 
 function buildLegalNarrative(record: SimitRecord) {
