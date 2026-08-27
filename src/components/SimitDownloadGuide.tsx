@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 const steps = [
   { title: "Entra al portal oficial de SIMIT", text: "Abre SIMIT y ubica el buscador de Estado de cuenta." },
@@ -32,26 +32,11 @@ export default function SimitDownloadGuide() {
   const [step, setStep] = useState(0);
   const [open, setOpen] = useState(false);
 
-  // La guía debe aparecer ANTES de que el usuario pueda subir el PDF.
-  // Se muestra una vez por sesión para no interrumpir cada visita posterior.
-  useEffect(() => {
-    try {
-      if (!sessionStorage.getItem("tramiteya:simit-guide-seen:v1")) setOpen(true);
-    } catch {
-      setOpen(true);
-    }
-  }, []);
-
-  function closeGuide() {
-    try { sessionStorage.setItem("tramiteya:simit-guide-seen:v1", "1"); } catch {}
-    setOpen(false);
-  }
-
   return (
     <>
       <div className="mb-5 rounded-2xl border border-blue-200 bg-white p-4 shadow-sm md:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="text-xs font-black uppercase tracking-[0.16em] text-blue-600">Antes de subir tu PDF</p><h3 className="mt-1 text-base font-black text-slate-950 md:text-lg">¿No sabes cómo descargar el Estado de Cuenta de SIMIT?</h3><p className="mt-1 text-sm text-slate-600">Te mostramos el procedimiento exacto en 4 pasos.</p></div>
+          <div><p className="text-xs font-black uppercase tracking-[0.16em] text-blue-600">Ayuda opcional</p><h3 className="mt-1 text-base font-black text-slate-950 md:text-lg">¿Necesitas ayuda para descargar el Estado de Cuenta de SIMIT?</h3><p className="mt-1 text-sm text-slate-600">Si no sabes cómo obtenerlo, puedes consultar esta guía ilustrativa en 4 pasos.</p></div>
           <button type="button" onClick={() => { setStep(0); setOpen(true); }} className="shrink-0 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">Ver guía paso a paso</button>
         </div>
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><b>Importante:</b> TrámiteYa necesita el <b>Estado de Cuenta oficial en PDF</b>. No subas una captura, una foto ni un PDF creado a partir de una captura.</div>
@@ -59,9 +44,9 @@ export default function SimitDownloadGuide() {
 
       {open && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-label="Guía para descargar el Estado de Cuenta de SIMIT">
         <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 md:px-6"><div><p className="text-xs font-bold uppercase tracking-wide text-blue-600">Guía de descarga</p><h2 className="text-lg font-black text-slate-950">Cómo obtener tu Estado de Cuenta de SIMIT</h2></div><button type="button" onClick={closeGuide} className="rounded-full px-3 py-1 text-2xl leading-none text-slate-400 hover:bg-slate-100" aria-label="Cerrar">×</button></div>
-          <div className="overflow-y-auto px-5 py-5 md:px-6"><div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]"><div><div className="space-y-2">{steps.map((item, index) => <button key={item.title} type="button" onClick={() => setStep(index)} className={`flex w-full items-start gap-3 rounded-2xl p-3 text-left transition ${step === index ? "bg-blue-50 ring-1 ring-blue-200" : "hover:bg-slate-50"}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-black ${step === index ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><span><span className="block text-sm font-bold text-slate-900">{item.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{item.text}</span></span></button>)}</div><a href="https://www.simit.org.co/" target="_blank" rel="noreferrer" className="mt-4 flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">Abrir SIMIT oficial ↗</a></div><div><div className="mb-3 flex items-center justify-between"><span className="text-xs font-black uppercase tracking-wide text-slate-400">Paso {step + 1} de {steps.length}</span><span className="text-xs font-bold text-blue-700">{step === 3 ? "Pantalla de descarga" : "Vista ilustrada"}</span></div><VisualStep step={step}/><div className="mt-4 flex items-center justify-between gap-3"><button type="button" disabled={step === 0} onClick={() => setStep(v => Math.max(0, v - 1))} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">Atrás</button>{step < steps.length - 1 ? <button type="button" onClick={() => setStep(v => Math.min(steps.length - 1, v + 1))} className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white">Siguiente</button> : <button type="button" onClick={closeGuide} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white">Ya tengo mi PDF ✓</button>}</div></div></div></div>
-          <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-right md:px-6"><button type="button" onClick={closeGuide} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Cerrar guía</button></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 md:px-6"><div><p className="text-xs font-bold uppercase tracking-wide text-blue-600">Guía de descarga</p><h2 className="text-lg font-black text-slate-950">Cómo obtener tu Estado de Cuenta de SIMIT</h2></div><button type="button" onClick={() => setOpen(false)} className="rounded-full px-3 py-1 text-2xl leading-none text-slate-400 hover:bg-slate-100" aria-label="Cerrar">×</button></div>
+          <div className="overflow-y-auto px-5 py-5 md:px-6"><div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]"><div><div className="space-y-2">{steps.map((item, index) => <button key={item.title} type="button" onClick={() => setStep(index)} className={`flex w-full items-start gap-3 rounded-2xl p-3 text-left transition ${step === index ? "bg-blue-50 ring-1 ring-blue-200" : "hover:bg-slate-50"}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-black ${step === index ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span><span><span className="block text-sm font-bold text-slate-900">{item.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{item.text}</span></span></button>)}</div><a href="https://www.simit.org.co/" target="_blank" rel="noreferrer" className="mt-4 flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700">Abrir SIMIT oficial ↗</a></div><div><div className="mb-3 flex items-center justify-between"><span className="text-xs font-black uppercase tracking-wide text-slate-400">Paso {step + 1} de {steps.length}</span><span className="text-xs font-bold text-blue-700">{step === 3 ? "Pantalla de descarga" : "Vista ilustrada"}</span></div><VisualStep step={step}/><div className="mt-4 flex items-center justify-between gap-3"><button type="button" disabled={step === 0} onClick={() => setStep(v => Math.max(0, v - 1))} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">Atrás</button>{step < steps.length - 1 ? <button type="button" onClick={() => setStep(v => Math.min(steps.length - 1, v + 1))} className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white">Siguiente</button> : <button type="button" onClick={() => setOpen(false)} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white">Ya tengo mi PDF ✓</button>}</div></div></div></div>
+          <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-right md:px-6"><button type="button" onClick={() => setOpen(false)} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Cerrar guía</button></div>
         </div>
       </div>}
     </>
