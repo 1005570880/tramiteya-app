@@ -46,11 +46,11 @@ function selectedRecord(a: FormAnswers): SelectedRecordData {
 }
 
 function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null {
-  const assessment = a.__legalAssessment;
+  const assessment = (a as any).__legalAssessment;
   return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null;
 }
 
-function routeLabel(route: string | null | undefined) {
+function routeLabel(route: string | null | undefined): string {
   switch (route) {
     case 'CADUCIDAD': return 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO';
     case 'PRESCRIPCION': return 'SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
@@ -63,80 +63,91 @@ function routeLabel(route: string | null | undefined) {
   }
 }
 
-function configured(a: LegalAssessment) { return a.certainty === 'CONFIGURADO'; }
+function explicitDeletionRelief(route: string | null, record: SelectedRecordData, assessment: LegalAssessment): string {
+  const id = record.comparendo ? ` del comparendo No. ${sanitizeValue(record.comparendo)}` : '';
+  const consequence = `que se deje sin efectos, cancele o termine la obligación y/o el acto sancionatorio, según corresponda; que se archive cualquier actuación de cobro que carezca de fundamento vigente; y que se ordene al organismo competente reportar y materializar la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas de información donde figure la multa o comparendo, de manera que no continúe apareciendo como obligación vigente, exigible o pendiente.`;
 
-function mainRelief(route: string | null, a: LegalAssessment, r: SelectedRecordData): string {
-  const id = r.comparendo ? ` respecto de la obligación derivada del comparendo No. ${sanitizeValue(r.comparendo)}` : '';
-  if (route === 'PRESCRIPCION') {
-    return configured(a)
-      ? `Solicito que se declare la prescripción de la sanción y/o de la acción de cobro${id}; que se termine la obligación; que se archive cualquier actuación de cobro que corresponda; y que, como consecuencia, se ordene la cancelación, eliminación, actualización o depuración del registro de la multa en el SIMIT y demás sistemas de información en los que figure como obligación vigente o exigible, dentro del ámbito de competencia de la entidad.`
-      : `Solicito que se examine integralmente si se configuró la prescripción de la sanción y/o de la acción de cobro${id} y que, si de la cronología documental se establece que el fenómeno prescriptivo ya operó, se declare la prescripción, se termine la obligación y se ordene su cancelación, eliminación, actualización o depuración en el SIMIT y demás sistemas de información en los que figure como obligación vigente o exigible, conforme a las competencias legales de la entidad.`;
+  switch (route) {
+    case 'PRESCRIPCION':
+      return assessment.certainty === 'CONFIGURADO'
+        ? `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se declare la prescripción de la sanción y/o de la acción de cobro${id} y, como consecuencia directa, ${consequence}`
+        : `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine documentalmente si se configuró la prescripción de la sanción y/o de la acción de cobro${id}; si el término ya venció sin interrupción jurídicamente eficaz, solicito que se declare la prescripción y, como consecuencia directa, ${consequence}`;
+    case 'CADUCIDAD':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si operó la caducidad de la actuación${id}; si se acredita, solicito que se declare y, como consecuencia directa, ${consequence}`;
+    case 'FOTODETECCION':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si existe prueba suficiente de responsabilidad personal${id}; si no se acredita legalmente o se configura una irregularidad sustancial, solicito que se deje sin efectos la sanción y, como consecuencia directa, ${consequence}`;
+    case 'NOTIFICACION':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se revise la regularidad de las notificaciones${id}; si se acredita una irregularidad sustancial con afectación del derecho de defensa, solicito que se adopte la consecuencia jurídica correspondiente, incluyendo dejar sin efectos la sanción cuando proceda, y que, como consecuencia, ${consequence}`;
+    case 'PERDIDA_EJECUTORIEDAD':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si se configuró la pérdida de fuerza ejecutoria${id}; si se acredita, solicito que se declare, se termine el cobro y que, como consecuencia, ${consequence}`;
+    case 'DEBIDO_PROCESO':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si existió una vulneración sustancial del debido proceso${id}; si se acredita y afecta la validez o exigibilidad de la actuación, solicito que se adopte la consecuencia jurídica correspondiente, se deje sin efectos la sanción cuando proceda y que, como consecuencia, ${consequence}`;
+    case 'REVOCATORIA_DIRECTA':
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se examine la procedencia de la revocatoria directa${id}; si se configuran sus presupuestos legales, solicito que se deje sin efectos el acto sancionatorio y que, como consecuencia, ${consequence}`;
+    default:
+      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se revise integralmente la actuación${id} y, si se acredita una causal legal que impida mantener vigente la obligación o sanción, que se adopte la consecuencia jurídica correspondiente y que, como consecuencia, ${consequence}`;
   }
-  if (route === 'CADUCIDAD') return `Solicito que se establezca si operó la caducidad de la actuación contravencional${id} y, de ser así, se declare, se dejen sin efectos las actuaciones que jurídicamente correspondan y se ordene la cancelación, eliminación, actualización o depuración del registro asociado.`;
-  if (route === 'PERDIDA_EJECUTORIEDAD') return `Solicito que se determine si se configuró la pérdida de fuerza ejecutoria${id} y, de ser así, se declare, se termine el cobro y se ordene la cancelación, eliminación, actualización o depuración del registro correspondiente.`;
-  if (route === 'FOTODETECCION') return `Solicito que se revise la legalidad de la imputación${id} y, si no se acredita mi responsabilidad personal con las garantías exigibles, se deje sin efectos la sanción y se ordene la cancelación, eliminación, actualización o depuración del registro correspondiente.`;
-  if (route === 'NOTIFICACION' || route === 'DEBIDO_PROCESO') return `Solicito que se revise la regularidad de la actuación${id} y, si se acredita una irregularidad sustancial que afecte mi derecho de defensa o impida mantener sus efectos, se adopte la consecuencia jurídica correspondiente y se ordene la cancelación, eliminación, actualización o depuración del registro.`;
-  if (route === 'REVOCATORIA_DIRECTA') return `Solicito que se revise la procedencia de la revocatoria directa${id} y, si se configuran sus presupuestos legales, se deje sin efectos la actuación o sanción y se ordene la cancelación, eliminación, actualización o depuración del registro correspondiente.`;
-  return `Solicito que se revise integralmente la actuación${id} y que, si se establece una causal legal que impida mantener vigente la obligación, se adopte la decisión correspondiente y se ordene la cancelación, eliminación, actualización o depuración del registro.`;
 }
 
-function facts(r: SelectedRecordData, t: any): string {
+function facts(record: SelectedRecordData, temporal: any): string {
   const out: string[] = [];
-  if (r.comparendo || r.fecha || r.organismo) out.push(`1. En el Estado de Cuenta SIMIT que aporté aparece la actuación${r.comparendo ? ` No. ${sanitizeValue(r.comparendo)}` : ''}${r.organismo ? `, asociada a ${sanitizeValue(r.organismo)}` : ''}${r.fecha ? `, con fecha del hecho ${r.fecha}` : ''}.`);
-  if (r.cedula) out.push(`${out.length + 1}. La actuación aparece asociada a mi documento de identidad No. ${sanitizeValue(r.cedula)}.`);
-  if (r.placa) out.push(`${out.length + 1}. La placa asociada que aparece en la información disponible es ${sanitizeValue(r.placa)}.`);
-  if (r.valor) out.push(`${out.length + 1}. El valor registrado para la obligación es ${sanitizeValue(r.valor)}.`);
-  if (r.codigo) out.push(`${out.length + 1}. El registro identifica la infracción con el código ${sanitizeValue(r.codigo)}.`);
-  if (r.fechaResolucion) out.push(`${out.length + 1}. Se registra una resolución o acto sancionatorio de fecha ${r.fechaResolucion}, cuya copia y constancia de ejecutoria deben verificarse en el expediente.`);
-  else out.push(`${out.length + 1}. El Estado de Cuenta aportado no permite identificar, por sí solo, el número, contenido, fecha de expedición o ejecutoria del acto mediante el cual se habría impuesto la sanción.`);
-  if (r.fechaNotificacion) out.push(`${out.length + 1}. Se registra una fecha de notificación (${r.fechaNotificacion}); debe verificarse qué actuación fue notificada y la constancia documental correspondiente.`);
-  else out.push(`${out.length + 1}. El Estado de Cuenta aportado no permite establecer la fecha ni el medio mediante el cual se habría notificado el acto sancionatorio.`);
-  if (r.fechaMandamientoPago) out.push(`${out.length + 1}. Se registra un mandamiento de pago de fecha ${r.fechaMandamientoPago}; su notificación y efectos deben verificarse documentalmente.`);
-  else out.push(`${out.length + 1}. No se encuentra acreditada en la información aportada la existencia o fecha de un mandamiento de pago relacionado con esta obligación.`);
-  if (r.fechaNotificacionMandamiento) out.push(`${out.length + 1}. Se registra como fecha de notificación del mandamiento de pago el ${r.fechaNotificacionMandamiento}; solicito la constancia que permita verificarla.`);
-  else out.push(`${out.length + 1}. Tampoco se encuentra acreditada una fecha de notificación del mandamiento de pago. Esta ausencia no demuestra que la notificación jamás ocurrió, pero sí identifica una cuestión probatoria decisiva.`);
-  if (t?.initialExpiryDate) out.push(`${out.length + 1}. Tomando como referencia la fecha del hecho, ${t.initialDate}, el término inicial de tres años proyecta su vencimiento al ${t.initialExpiryDate}. Este cálculo debe confrontarse con las actuaciones que obren en el expediente.`);
-  return out.join('\n\n');
+  if (record.comparendo || record.fecha || record.organismo) out.push(`En el Estado de Cuenta SIMIT aportado aparece la actuación${record.comparendo ? ` No. ${sanitizeValue(record.comparendo)}` : ''}${record.organismo ? `, asociada a ${sanitizeValue(record.organismo)}` : ''}${record.fecha ? `, con fecha del hecho ${record.fecha}` : ''}.`);
+  if (record.cedula) out.push(`La actuación aparece asociada al documento de identidad No. ${sanitizeValue(record.cedula)}.`);
+  if (record.placa) out.push(`La placa que aparece en la información disponible es ${sanitizeValue(record.placa)}.`);
+  if (record.valor) out.push(`El valor reportado para la obligación es ${sanitizeValue(record.valor)}.`);
+  if (record.codigo) out.push(`El registro identifica la infracción con el código ${sanitizeValue(record.codigo)}.`);
+  if (record.fechaResolucion) out.push(`Se reporta un acto o resolución sancionatoria de fecha ${record.fechaResolucion}; deben verificarse su contenido, notificación y ejecutoria.`);
+  else out.push('El Estado de Cuenta aportado no permite identificar por sí solo el acto sancionatorio, su fecha de expedición ni su ejecutoria.');
+  if (record.fechaNotificacion) out.push(`Se reporta una fecha de notificación (${record.fechaNotificacion}); debe establecerse qué actuación fue notificada y aportarse la constancia correspondiente.`);
+  else out.push('No se encuentra acreditada en la información aportada la fecha ni el medio de notificación del acto sancionatorio.');
+  if (record.fechaMandamientoPago) out.push(`Se reporta mandamiento de pago de fecha ${record.fechaMandamientoPago}; su fecha de expedición no se tendrá como equivalente a su notificación.`);
+  else out.push('No se encuentra acreditada la existencia o fecha de un mandamiento de pago.');
+  if (record.fechaNotificacionMandamiento) out.push(`Se reporta como fecha de notificación del mandamiento de pago el ${record.fechaNotificacionMandamiento}; debe verificarse documentalmente su eficacia.`);
+  else out.push('No se encuentra acreditada una fecha de notificación del mandamiento de pago. Esta ausencia no demuestra por sí sola que nunca ocurrió, pero identifica una prueba decisiva que debe aportar la autoridad.');
+  if (temporal?.initialExpiryDate) out.push(`Desde la fecha del hecho (${temporal.initialDate}) puede efectuarse el cómputo inicial de tres años, cuyo vencimiento calculado corresponde al ${temporal.initialExpiryDate}.`);
+  return out.map((text, index) => `${index + 1}. ${text}`).join('\n\n');
 }
 
-function legalGrounds(a: LegalAssessment): string {
-  const routes = a.routes || [];
-  const parts = ['El artículo 23 de la Constitución Política garantiza el derecho a obtener una respuesta de fondo, clara y congruente. El artículo 29 protege el debido proceso dentro de la actuación administrativa.'];
-  if (routes.includes('PRESCRIPCION')) parts.push('El artículo 159 de la Ley 769 de 2002 establece el régimen especial de prescripción de las sanciones de tránsito y contempla la notificación del mandamiento de pago como actuación con incidencia en el término. La cronología de la obligación debe acreditarse documentalmente.');
-  if (routes.includes('CADUCIDAD')) parts.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravención de tránsito. Su aplicación exige verificar la fecha del hecho y la oportunidad de la actuación sancionatoria.');
-  if (routes.includes('FOTODETECCION')) parts.push('Cuando la actuación proviene de ayudas tecnológicas, la existencia de una imagen o la identificación del vehículo no sustituye el análisis de responsabilidad personal. La Sentencia C-038 de 2020 exige respetar el principio de imputación personal.');
-  if (routes.includes('NOTIFICACION')) parts.push('Las actuaciones administrativas que deban notificarse deben contar con constancias que permitan verificar el acto comunicado, el destinatario, el medio utilizado y la fecha de notificación.');
-  if (routes.includes('PERDIDA_EJECUTORIEDAD')) parts.push('La exigibilidad actual de la obligación debe confrontarse con la firmeza del acto, su ejecutoria y las actuaciones posteriores de cobro.');
+function legalGrounds(assessment: LegalAssessment): string {
+  const routes = assessment.routes || [];
+  const parts = [
+    'El artículo 23 de la Constitución Política garantiza el derecho de petición y el derecho a obtener una respuesta de fondo, clara, congruente y motivada.',
+    'El artículo 29 de la Constitución Política protege el debido proceso en las actuaciones administrativas, incluida la posibilidad real de conocer, controvertir y probar frente a la imputación.'
+  ];
+  if (routes.includes('PRESCRIPCION')) parts.push('El artículo 159 de la Ley 769 de 2002 establece el régimen especial de prescripción de las sanciones de tránsito. La cronología debe reconstruirse con especial atención a la notificación del mandamiento de pago y no únicamente a su expedición.');
+  if (routes.includes('CADUCIDAD')) parts.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravención de tránsito; deben verificarse la fecha del hecho, la decisión y la audiencia efectiva dentro del término legal.');
+  if (routes.includes('FOTODETECCION')) parts.push('En actuaciones originadas en ayudas tecnológicas debe verificarse la prueba y la imputación de responsabilidad personal, conforme a las garantías desarrolladas por la jurisprudencia constitucional.');
+  if (routes.includes('NOTIFICACION')) parts.push('Las actuaciones sujetas a notificación deben contar con soportes que permitan establecer el acto comunicado, destinatario, medio, fecha y constancia de entrega o publicación, según corresponda.');
+  if (routes.includes('PERDIDA_EJECUTORIEDAD')) parts.push('La exigibilidad actual debe confrontarse con la firmeza y ejecutoria del acto y con las actuaciones posteriores de cobro.');
   return parts.join('\n\n');
 }
 
-function requests(r: SelectedRecordData, a: LegalAssessment): string {
-  const route = a.primaryRoute;
+function requests(record: SelectedRecordData, assessment: LegalAssessment): string {
+  const expiry = assessment.temporal?.initialExpiryDate || 'el vencimiento del término aplicable';
   const req = [
-    `1. Que se me entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${sanitizeValue(r.comparendo)}.`,
-    '2. Que se me informe cuál fue la decisión mediante la cual se impuso la sanción, indicando número, fecha, contenido y constancia de ejecutoria, y se me entregue copia íntegra.',
-    '3. Que se me entreguen las constancias de notificación de la orden de comparendo, de la decisión sancionatoria, de los recursos que se hubieren presentado y de las demás actuaciones relevantes.'
+    `1. Que se determine expresamente la situación jurídica de la multa o comparendo No. ${sanitizeValue(record.comparendo)} y, especialmente, si existe una razón legal para que continúe vigente, exigible o registrada como obligación pendiente.`,
+    `2. Que se me entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${sanitizeValue(record.comparendo)}.`,
+    '3. Que se me informe cuál fue el acto mediante el cual se impuso la sanción, indicando número, fecha, contenido y constancia de ejecutoria, y se entregue copia íntegra.',
+    '4. Que se remitan las constancias de notificación de la orden de comparendo, acto sancionatorio, recursos, resolución y mandamiento de pago, indicando acto, destinatario, medio, fecha y soporte documental.',
+    '5. Que se informe si existe o existió proceso de cobro coactivo y se remitan sus actuaciones completas, incluyendo mandamiento de pago, constancia de notificación, medidas cautelares, acuerdos de pago, pagos, terminación y demás actuaciones posteriores, con sus fechas.',
+    `6. Que se determine, con base en el expediente, si antes de ${expiry} se produjo y notificó válidamente una actuación jurídicamente eficaz para modificar el término de prescripción y, de ser así, se identifique exactamente el acto, fecha de expedición, fecha de notificación y soporte documental.`
   ];
-  if (route === 'PRESCRIPCION') {
-    req.push('4. Que se me informe si existe o existió proceso de cobro coactivo y, en caso afirmativo, se me entregue copia íntegra del mandamiento de pago, de su constancia de notificación y de todas las actuaciones posteriores, con sus respectivas fechas.');
-    req.push(configured(a)
-      ? '5. Que se declare la prescripción de la sanción y/o de la acción de cobro y, como consecuencia, se termine la obligación, se archive cualquier actuación de cobro y se ordene la cancelación, eliminación, actualización o depuración del registro de la multa en el SIMIT y demás sistemas de información en los que figure como obligación vigente o exigible, dentro de las competencias de la entidad.'
-      : '5. Que se determine, con base en el expediente y en la cronología documental, si se configuró la prescripción de la sanción y/o de la acción de cobro y, si se encuentra configurada, se declare, se termine la obligación y se ordene la cancelación, eliminación, actualización o depuración del registro de la multa en el SIMIT y demás sistemas de información en los que figure como obligación vigente o exigible.');
-    req.push('6. Si la entidad considera que la prescripción no se ha configurado, solicito que indique expresamente la fecha de inicio y vencimiento que considera aplicables, la actuación que habría interrumpido el término, la fecha exacta de su notificación y el soporte documental de cada circunstancia.');
-  } else if (route === 'CADUCIDAD') {
-    req.push('4. Que se establezca si operó la caducidad y, de ser así, se declare, se adopten las consecuencias jurídicas correspondientes y se ordene la cancelación, eliminación, actualización o depuración del registro asociado.');
-  } else if (route === 'PERDIDA_EJECUTORIEDAD') {
-    req.push('4. Que se establezca si se configuró la pérdida de fuerza ejecutoria y, de ser así, se declare, se termine cualquier actuación de cobro que carezca de fundamento vigente y se ordene la cancelación, eliminación, actualización o depuración del registro correspondiente.');
-  } else if (route === 'FOTODETECCION') {
-    req.push('4. Que se me entregue la evidencia de la detección, la prueba técnica, las comunicaciones efectuadas y los documentos con los cuales se estableció mi responsabilidad personal.');
-    req.push('5. Que, si no se acredita legalmente mi responsabilidad personal o se establece una irregularidad que afecte la validez de la sanción, se deje sin efectos la actuación en lo jurídicamente procedente y se ordene la cancelación, eliminación, actualización o depuración del registro.');
+
+  if (assessment.primaryRoute === 'PRESCRIPCION') {
+    req.push('7. Que, si se acredita la configuración de la prescripción, se declare expresamente la prescripción de la sanción y/o de la acción de cobro.');
+    req.push('8. Que, como consecuencia de la prescripción o de cualquier otra causal favorable que elimine la exigibilidad de la obligación, se termine y archive la obligación y cualquier actuación de cobro relacionada.');
+    req.push('9. Que, como consecuencia directa de la decisión favorable, se deje sin efectos el acto sancionatorio cuando jurídicamente corresponda y se ordene la cancelación o eliminación de la multa/comparendo del registro que la mantenga como obligación vigente, exigible o pendiente.');
+    req.push('10. Que se reporte y materialice ante el SIMIT y demás sistemas de información competentes la novedad correspondiente, de forma que el registro quede cancelado, eliminado, depurado o actualizado conforme a la decisión adoptada y no continúe reflejando una obligación que jurídicamente ya no puede exigirse.');
+    req.push('11. Si la entidad considera que la prescripción no se ha configurado, que indique la fecha inicial, fecha de vencimiento, norma aplicada, actuación interruptiva, fecha exacta de notificación y prueba documental que sustenta cada una de esas fechas.');
   } else {
-    req.push('4. Que se determine si existe una irregularidad de notificación, debido proceso, responsabilidad personal, ejecutoria o cualquier otra circunstancia que afecte la validez o exigibilidad de la obligación.');
-    req.push('5. Que, si se acredita una causal que impida mantener vigente la sanción o el cobro, se adopte la consecuencia jurídica correspondiente y se ordene la cancelación, eliminación, actualización o depuración del registro en los sistemas de información respectivos.');
+    req.push(`7. Que se determine expresamente si se configuró la causal principal (${assessment.primaryRoute || 'revisión integral'}) y se motive la decisión con base en el expediente.`);
+    req.push('8. Que, si se acredita una causal que afecte la validez, eficacia o exigibilidad de la sanción, se deje sin efectos el acto sancionatorio en lo jurídicamente procedente, se termine la obligación y se archive el cobro relacionado.');
+    req.push('9. Que, como consecuencia de la decisión favorable, se ordene la cancelación o eliminación de la multa/comparendo del registro administrativo correspondiente y se reporte la novedad al SIMIT y demás sistemas de información competentes para que deje de figurar como obligación vigente, exigible o pendiente.');
+    req.push('10. Que se analicen de oficio, dentro de las competencias de la autoridad, las demás causales jurídicas evidenciadas por el expediente —prescripción, caducidad, notificación, pérdida de fuerza ejecutoria, debido proceso, responsabilidad personal o revocatoria directa— y se adopte la consecuencia que corresponda.');
   }
-  req.push(`${req.length + 1}. Que se me informe qué actuaciones aparecen registradas en los sistemas internos de la entidad y cuáles cuentan con soporte documental dentro del expediente.`);
-  req.push(`${req.length + 1}. Que, una vez establecida la situación jurídica de la obligación, se adopten las medidas administrativas necesarias para que los registros de la multa sean coherentes con la decisión adoptada y, cuando legalmente proceda, dejen de figurar como obligación pendiente o exigible en el SIMIT y demás sistemas de información.`);
-  req.push(`${req.length + 1}. Que se emita una respuesta de fondo, clara, precisa, congruente y debidamente motivada frente a cada una de las solicitudes anteriores.`);
+
+  req.push('11. Que se informe cuáles actuaciones aparecen registradas en los sistemas internos y cuáles cuentan con soporte documental dentro del expediente, sin utilizar el Estado de Cuenta SIMIT como sustituto del expediente administrativo.');
+  req.push('12. Que se emita respuesta de fondo, clara, precisa, congruente, completa y debidamente motivada frente a cada una de las solicitudes anteriores.');
   return req.join('\n\n');
 }
 
@@ -175,7 +186,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     '',
     'I. OBJETO',
     '',
-    mainRelief(route, assessment, record),
+    explicitDeletionRelief(route, record, assessment),
     '',
     'II. HECHOS',
     '',
