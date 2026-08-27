@@ -1,24 +1,57 @@
-// Repository-level smoke tests. Keep this runner dependency-free so CI can execute it before Next.js build.
+// Repository-level smoke tests. Keep this runner dependency-free (beyond the `typescript`
+// dev dependency already used by other specs) so CI can execute it before the Next.js build.
 
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-const { procedureStorage } = require('../src/lib/procedureStorage');
+const vm = require('node:vm');
+const ts = require('typescript');
+
+// Load a TypeScript module by transpiling it to CommonJS and running it in a sandbox.
+// `sandbox` lets callers inject globals (e.g. a `window`/`localStorage` shim) that the
+// module expects at runtime.
+function loadTsModule(relativePath, sandbox = {}) {
+  const source = readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const module = { exports: {} };
+  vm.runInNewContext(transpiled, { module, exports: module.exports, require, console, ...sandbox });
+  return module.exports;
+}
+
+// Minimal in-memory localStorage so the browser-oriented procedureStorage module works in Node.
+function createLocalStorageShim() {
+  const store = new Map();
+  return {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: (key) => { store.delete(key); },
+    clear: () => { store.clear(); },
+  };
+}
 
 function testProcedureStorage() {
   console.log('Running procedureStorage tests...');
+  const windowShim = { localStorage: createLocalStorageShim() };
+  const { procedureStorage } = loadTsModule('src/lib/procedureStorage.ts', { window: windowShim });
+
   const inst = procedureStorage.create('proc_test', 'proc-test', { a: 'b' });
-  console.assert(inst.procedureSlug === 'proc-test', 'create slug');
+  assert(inst.procedureSlug === 'proc-test', 'create slug');
   const fetched = procedureStorage.get(inst.id);
-  console.assert(fetched && fetched.id === inst.id, 'get instance');
+  assert(fetched && fetched.id === inst.id, 'get instance');
   const list = procedureStorage.list();
-  console.assert(Array.isArray(list), 'list is array');
+  assert(Array.isArray(list) && list.length === 1, 'list is array with one item');
   procedureStorage.update(inst.id, { status: 'document_ready' });
   const updated = procedureStorage.get(inst.id);
-  console.assert(updated && updated.status === 'document_ready', 'update status');
+  assert(updated && updated.status === 'document_ready', 'update status');
   procedureStorage.remove(inst.id);
   const after = procedureStorage.get(inst.id);
-  console.assert(after === null, 'remove');
+  assert(after === null, 'remove');
   console.log('procedureStorage checks passed.');
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(`Assertion failed: ${message}`);
 }
 
 function testPricingCatalog() {
