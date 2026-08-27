@@ -63,29 +63,31 @@ function routeLabel(route: string | null | undefined): string {
   }
 }
 
+function deletionConsequence(record: SelectedRecordData): string {
+  const id = record.comparendo ? ` del comparendo No. ${sanitizeValue(record.comparendo)}` : '';
+  return `que, como consecuencia de la decisión favorable, se deje sin efectos la sanción o actuación cuando jurídicamente corresponda; se termine y archive la obligación y cualquier actuación de cobro derivada de ella; y se ordene al organismo competente cancelar, eliminar, depurar o actualizar el registro${id} en el SIMIT y demás sistemas de información donde figure, para que no continúe apareciendo como obligación vigente, exigible, pendiente o susceptible de cobro.`;
+}
+
 function explicitDeletionRelief(route: string | null, record: SelectedRecordData, assessment: LegalAssessment): string {
   const id = record.comparendo ? ` del comparendo No. ${sanitizeValue(record.comparendo)}` : '';
-  const consequence = `que se deje sin efectos, cancele o termine la obligación y/o el acto sancionatorio, según corresponda; que se archive cualquier actuación de cobro que carezca de fundamento vigente; y que se ordene al organismo competente reportar y materializar la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas de información donde figure la multa o comparendo, de manera que no continúe apareciendo como obligación vigente, exigible o pendiente.`;
-
+  const consequence = deletionConsequence(record);
   switch (route) {
     case 'PRESCRIPCION':
-      return assessment.certainty === 'CONFIGURADO'
-        ? `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se declare la prescripción de la sanción y/o de la acción de cobro${id} y, como consecuencia directa, ${consequence}`
-        : `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine documentalmente si se configuró la prescripción de la sanción y/o de la acción de cobro${id}; si el término ya venció sin interrupción jurídicamente eficaz, solicito que se declare la prescripción y, como consecuencia directa, ${consequence}`;
+      return `Solicito como pretensión principal que se determine y, si se encuentra configurada, se declare la prescripción de la sanción y/o de la acción de cobro${id}. Si el término se encuentra vencido sin una actuación interruptiva jurídicamente eficaz, solicito que se adopte inmediatamente la consecuencia legal correspondiente: ${consequence}`;
     case 'CADUCIDAD':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si operó la caducidad de la actuación${id}; si se acredita, solicito que se declare y, como consecuencia directa, ${consequence}`;
-    case 'FOTODETECCION':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si existe prueba suficiente de responsabilidad personal${id}; si no se acredita legalmente o se configura una irregularidad sustancial, solicito que se deje sin efectos la sanción y, como consecuencia directa, ${consequence}`;
-    case 'NOTIFICACION':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se revise la regularidad de las notificaciones${id}; si se acredita una irregularidad sustancial con afectación del derecho de defensa, solicito que se adopte la consecuencia jurídica correspondiente, incluyendo dejar sin efectos la sanción cuando proceda, y que, como consecuencia, ${consequence}`;
+      return `Solicito como pretensión principal que se determine si operó la caducidad de la actuación${id} y, de acreditarse, se declare. Como consecuencia, solicito: ${consequence}`;
     case 'PERDIDA_EJECUTORIEDAD':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si se configuró la pérdida de fuerza ejecutoria${id}; si se acredita, solicito que se declare, se termine el cobro y que, como consecuencia, ${consequence}`;
+      return `Solicito como pretensión principal que se determine si se configuró la pérdida de fuerza ejecutoria${id} y, de acreditarse, se declare. Como consecuencia, solicito: ${consequence}`;
+    case 'FOTODETECCION':
+      return `Solicito como pretensión principal que se verifique la legalidad de la fotodetección y la existencia de prueba suficiente de responsabilidad personal${id}. Si la responsabilidad no está legalmente acreditada o existe una irregularidad sustancial, solicito que se deje sin efectos la sanción. Como consecuencia, solicito: ${consequence}`;
+    case 'NOTIFICACION':
+      return `Solicito como pretensión principal que se verifique la regularidad de las notificaciones${id}. Si se acredita una irregularidad sustancial con afectación del derecho de defensa, solicito que se adopte la consecuencia jurídica correspondiente y, cuando proceda, se deje sin efectos la sanción. Como consecuencia, solicito: ${consequence}`;
     case 'DEBIDO_PROCESO':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se determine si existió una vulneración sustancial del debido proceso${id}; si se acredita y afecta la validez o exigibilidad de la actuación, solicito que se adopte la consecuencia jurídica correspondiente, se deje sin efectos la sanción cuando proceda y que, como consecuencia, ${consequence}`;
+      return `Solicito como pretensión principal que se determine si la actuación${id} respetó integralmente el debido proceso. Si se acredita una vulneración sustancial que afecte su validez o exigibilidad, solicito que se adopte la consecuencia jurídica correspondiente y se deje sin efectos la sanción cuando proceda. Como consecuencia, solicito: ${consequence}`;
     case 'REVOCATORIA_DIRECTA':
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se examine la procedencia de la revocatoria directa${id}; si se configuran sus presupuestos legales, solicito que se deje sin efectos el acto sancionatorio y que, como consecuencia, ${consequence}`;
+      return `Solicito como pretensión principal que se examine la procedencia de la revocatoria directa${id}. Si se configuran sus presupuestos legales, solicito que se revoque o deje sin efectos el acto sancionatorio. Como consecuencia, solicito: ${consequence}`;
     default:
-      return `SOLICITUD PRINCIPAL — ELIMINACIÓN/CANCELACIÓN DE LA MULTA: Solicito que se revise integralmente la actuación${id} y, si se acredita una causal legal que impida mantener vigente la obligación o sanción, que se adopte la consecuencia jurídica correspondiente y que, como consecuencia, ${consequence}`;
+      return `Solicito como pretensión principal que se revise integralmente la actuación${id} y que, si se acredita una causal legal que impida mantener vigente, exigible o registrada la obligación, se adopte la consecuencia jurídica correspondiente. Como consecuencia, solicito: ${consequence}`;
   }
 }
 
@@ -114,41 +116,67 @@ function legalGrounds(assessment: LegalAssessment): string {
     'El artículo 23 de la Constitución Política garantiza el derecho de petición y el derecho a obtener una respuesta de fondo, clara, congruente y motivada.',
     'El artículo 29 de la Constitución Política protege el debido proceso en las actuaciones administrativas, incluida la posibilidad real de conocer, controvertir y probar frente a la imputación.'
   ];
-  if (routes.includes('PRESCRIPCION')) parts.push('El artículo 159 de la Ley 769 de 2002 establece el régimen especial de prescripción de las sanciones de tránsito. La cronología debe reconstruirse con especial atención a la notificación del mandamiento de pago y no únicamente a su expedición.');
-  if (routes.includes('CADUCIDAD')) parts.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravención de tránsito; deben verificarse la fecha del hecho, la decisión y la audiencia efectiva dentro del término legal.');
-  if (routes.includes('FOTODETECCION')) parts.push('En actuaciones originadas en ayudas tecnológicas debe verificarse la prueba y la imputación de responsabilidad personal, conforme a las garantías desarrolladas por la jurisprudencia constitucional.');
+  if (routes.includes('PRESCRIPCION')) parts.push('El artículo 159 de la Ley 769 de 2002 establece el régimen especial de prescripción de las sanciones de tránsito. La cronología debe reconstruirse con atención a la notificación del mandamiento de pago y no únicamente a su expedición.');
+  if (routes.includes('CADUCIDAD')) parts.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravención de tránsito; deben verificarse la fecha del hecho y las actuaciones exigidas dentro del término legal.');
+  if (routes.includes('FOTODETECCION')) parts.push('En actuaciones originadas en ayudas tecnológicas debe verificarse la prueba de la infracción y la imputación de responsabilidad personal, conforme a las garantías constitucionales aplicables.');
   if (routes.includes('NOTIFICACION')) parts.push('Las actuaciones sujetas a notificación deben contar con soportes que permitan establecer el acto comunicado, destinatario, medio, fecha y constancia de entrega o publicación, según corresponda.');
   if (routes.includes('PERDIDA_EJECUTORIEDAD')) parts.push('La exigibilidad actual debe confrontarse con la firmeza y ejecutoria del acto y con las actuaciones posteriores de cobro.');
+  if (routes.includes('REVOCATORIA_DIRECTA')) parts.push('La revocatoria directa deberá analizarse frente a los presupuestos legales aplicables al acto administrativo concreto y a la situación acreditada en el expediente.');
   return parts.join('\n\n');
 }
 
 function requests(record: SelectedRecordData, assessment: LegalAssessment): string {
+  const number = record.comparendo ? sanitizeValue(record.comparendo) : 'que figura registrado';
   const expiry = assessment.temporal?.initialExpiryDate || 'el vencimiento del término aplicable';
-  const req = [
-    `1. Que se determine expresamente la situación jurídica de la multa o comparendo No. ${sanitizeValue(record.comparendo)} y, especialmente, si existe una razón legal para que continúe vigente, exigible o registrada como obligación pendiente.`,
-    `2. Que se me entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${sanitizeValue(record.comparendo)}.`,
-    '3. Que se me informe cuál fue el acto mediante el cual se impuso la sanción, indicando número, fecha, contenido y constancia de ejecutoria, y se entregue copia íntegra.',
-    '4. Que se remitan las constancias de notificación de la orden de comparendo, acto sancionatorio, recursos, resolución y mandamiento de pago, indicando acto, destinatario, medio, fecha y soporte documental.',
-    '5. Que se informe si existe o existió proceso de cobro coactivo y se remitan sus actuaciones completas, incluyendo mandamiento de pago, constancia de notificación, medidas cautelares, acuerdos de pago, pagos, terminación y demás actuaciones posteriores, con sus fechas.',
-    `6. Que se determine, con base en el expediente, si antes de ${expiry} se produjo y notificó válidamente una actuación jurídicamente eficaz para modificar el término de prescripción y, de ser así, se identifique exactamente el acto, fecha de expedición, fecha de notificación y soporte documental.`
+  const req: string[] = [
+    `Que se determine expresamente la situación jurídica actual de la multa o comparendo No. ${number}, indicando por qué razón continúa vigente, exigible o registrado, si así ocurre.`,
+    `Que se me entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${number}.`,
+    'Que se identifique el acto mediante el cual se impuso la sanción, indicando número, fecha, contenido, autoridad que lo expidió y constancia de ejecutoria, y se entregue copia íntegra.',
+    'Que se entreguen las constancias de notificación de la orden de comparendo, acto sancionatorio, recursos, resolución y demás actuaciones relevantes, indicando acto, destinatario, dirección o canal, medio utilizado, fecha y soporte de entrega, publicación o recepción.',
+    'Que se informe si existe o existió proceso de cobro coactivo y, en caso afirmativo, se remita copia íntegra de sus actuaciones, incluyendo mandamiento de pago, fecha de expedición, fecha y forma de notificación, medidas cautelares, acuerdos de pago, pagos, excepciones, terminación y demás actuaciones posteriores.',
+    `Que se reconstruya documentalmente la cronología de la obligación y se determine si antes de ${expiry} se produjo y notificó una actuación jurídicamente eficaz para modificar el término aplicable; de ser así, que se identifique la norma, actuación, fecha de expedición, fecha exacta de notificación y soporte documental.`
   ];
 
-  if (assessment.primaryRoute === 'PRESCRIPCION') {
-    req.push('7. Que, si se acredita la configuración de la prescripción, se declare expresamente la prescripción de la sanción y/o de la acción de cobro.');
-    req.push('8. Que, como consecuencia de la prescripción o de cualquier otra causal favorable que elimine la exigibilidad de la obligación, se termine y archive la obligación y cualquier actuación de cobro relacionada.');
-    req.push('9. Que, como consecuencia directa de la decisión favorable, se deje sin efectos el acto sancionatorio cuando jurídicamente corresponda y se ordene la cancelación o eliminación de la multa/comparendo del registro que la mantenga como obligación vigente, exigible o pendiente.');
-    req.push('10. Que se reporte y materialice ante el SIMIT y demás sistemas de información competentes la novedad correspondiente, de forma que el registro quede cancelado, eliminado, depurado o actualizado conforme a la decisión adoptada y no continúe reflejando una obligación que jurídicamente ya no puede exigirse.');
-    req.push('11. Si la entidad considera que la prescripción no se ha configurado, que indique la fecha inicial, fecha de vencimiento, norma aplicada, actuación interruptiva, fecha exacta de notificación y prueba documental que sustenta cada una de esas fechas.');
-  } else {
-    req.push(`7. Que se determine expresamente si se configuró la causal principal (${assessment.primaryRoute || 'revisión integral'}) y se motive la decisión con base en el expediente.`);
-    req.push('8. Que, si se acredita una causal que afecte la validez, eficacia o exigibilidad de la sanción, se deje sin efectos el acto sancionatorio en lo jurídicamente procedente, se termine la obligación y se archive el cobro relacionado.');
-    req.push('9. Que, como consecuencia de la decisión favorable, se ordene la cancelación o eliminación de la multa/comparendo del registro administrativo correspondiente y se reporte la novedad al SIMIT y demás sistemas de información competentes para que deje de figurar como obligación vigente, exigible o pendiente.');
-    req.push('10. Que se analicen de oficio, dentro de las competencias de la autoridad, las demás causales jurídicas evidenciadas por el expediente —prescripción, caducidad, notificación, pérdida de fuerza ejecutoria, debido proceso, responsabilidad personal o revocatoria directa— y se adopte la consecuencia que corresponda.');
+  switch (assessment.primaryRoute) {
+    case 'PRESCRIPCION':
+      req.push('Que, si del expediente se acredita la configuración de la prescripción de la sanción y/o de la acción de cobro, se declare expresamente dicha prescripción.');
+      req.push('Que, declarada la prescripción, se termine y archive la obligación y cualquier actuación de cobro relacionada, y se deje sin efectos el acto o actuación en aquello que jurídicamente corresponda.');
+      req.push('Que, como consecuencia directa de la decisión favorable, se ordene la cancelación, eliminación, depuración o actualización del registro de la multa o comparendo en el SIMIT y demás sistemas de información competentes, para que deje de figurar como obligación vigente, exigible o pendiente.');
+      req.push('Que la entidad materialice y, cuando corresponda, comunique al organismo administrador del sistema la novedad derivada de la decisión, verificando que el registro quede efectivamente actualizado.');
+      req.push('Si la entidad sostiene que la prescripción no se configuró, que explique de manera concreta el término aplicado, su fecha inicial, cada actuación con incidencia en el cómputo, la fecha y forma de notificación de cada una y la prueba documental que sustenta esas fechas.');
+      break;
+    case 'CADUCIDAD':
+      req.push('Que, si se acredita la caducidad de la actuación, se declare expresamente, se deje sin efectos la consecuencia sancionatoria cuando corresponda y se termine la obligación.');
+      req.push('Que, como consecuencia de la decisión favorable, se ordene la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas competentes para que la multa o comparendo deje de figurar como obligación vigente o exigible.');
+      break;
+    case 'PERDIDA_EJECUTORIEDAD':
+      req.push('Que, si se acredita la pérdida de fuerza ejecutoria, se declare expresamente y se termine la exigibilidad de la obligación en los términos jurídicamente procedentes.');
+      req.push('Que, como consecuencia, se archive el cobro y se ordene la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas competentes cuando legalmente corresponda.');
+      break;
+    case 'FOTODETECCION':
+      req.push('Que se aporte la evidencia completa de la fotodetección, identificación del vehículo, trazabilidad de la prueba, comunicación al interesado y actuaciones destinadas a garantizar comparecencia y defensa.');
+      req.push('Que, si no se acredita legalmente la responsabilidad personal o existe una irregularidad sustancial que afecte la actuación, se deje sin efectos la sanción y se termine la obligación.');
+      req.push('Que, como consecuencia de la decisión favorable, se ordene la cancelación, eliminación, depuración o actualización del registro correspondiente en el SIMIT y demás sistemas competentes.');
+      break;
+    case 'NOTIFICACION':
+    case 'DEBIDO_PROCESO':
+      req.push('Que se determine si las garantías de notificación, defensa, contradicción, prueba y recursos fueron efectivamente respetadas y se aporten las constancias documentales correspondientes.');
+      req.push('Que, si se acredita una irregularidad sustancial que afecte la validez, eficacia o exigibilidad de la actuación, se adopte la consecuencia jurídica procedente y, cuando corresponda, se deje sin efectos la sanción.');
+      req.push('Que, como consecuencia de una decisión favorable, se ordene la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas competentes.');
+      break;
+    case 'REVOCATORIA_DIRECTA':
+      req.push('Que se determine la procedencia de la revocatoria directa frente al acto sancionatorio y, si se configuran sus presupuestos, se revoque o deje sin efectos.');
+      req.push('Que, como consecuencia de la revocatoria, se termine la obligación y se ordene la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas competentes.');
+      break;
+    default:
+      req.push('Que se determinen las causales jurídicas que resulten acreditadas en el expediente y se adopte respecto de ellas la consecuencia legal correspondiente.');
+      req.push('Que, si una causal favorable impide mantener vigente o exigible la obligación, se deje sin efectos la actuación cuando corresponda, se termine el cobro y se ordene la cancelación, eliminación, depuración o actualización del registro en el SIMIT y demás sistemas competentes.');
   }
 
-  req.push('11. Que se informe cuáles actuaciones aparecen registradas en los sistemas internos y cuáles cuentan con soporte documental dentro del expediente, sin utilizar el Estado de Cuenta SIMIT como sustituto del expediente administrativo.');
-  req.push('12. Que se emita respuesta de fondo, clara, precisa, congruente, completa y debidamente motivada frente a cada una de las solicitudes anteriores.');
-  return req.join('\n\n');
+  req.push('Que se informe cuáles actuaciones aparecen registradas en los sistemas internos de la entidad y cuáles cuentan con soporte documental dentro del expediente, sin utilizar el Estado de Cuenta SIMIT como sustituto del expediente administrativo.');
+  req.push('Que se emita una respuesta de fondo, clara, precisa, congruente, completa y debidamente motivada frente a cada una de las solicitudes anteriores.');
+
+  return req.map((text, index) => `${index + 1}. ${text}`).join('\n\n');
 }
 
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
@@ -166,7 +194,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const dateDocument = rawValue(a, 'fecha') || new Date().toLocaleDateString('es-CO');
   const title = `DERECHO DE PETICIÓN — ${routeLabel(route)}`;
 
-  const document = [
+  return [
     city,
     dateDocument,
     '',
@@ -218,6 +246,4 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     '',
     applicant || ''
   ].filter((line, i, arr) => !(line === '' && (arr[i - 1] === '' || arr[i + 1] === ''))).join('\n').trim();
-
-  return document;
 }
