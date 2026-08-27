@@ -17,11 +17,11 @@ export async function POST(request: Request) {
     if (result.provider !== 'verifik') return NextResponse.json({ error: 'SIMIT_PROVIDER_UNAVAILABLE', code: 'SIMIT_PROVIDER_UNAVAILABLE', message: 'El proveedor SIMIT activo no es Verifik.' }, { status: 502 });
     if (result.raw !== undefined) console.log('[SIMIT AUDIT] rawResponse', JSON.stringify({ documentType, documentNumber, raw: result.raw }));
     console.log('[SIMIT AUDIT] normalized', JSON.stringify({ documentType, documentNumber, provider: result.provider, found: result.found, pendingCount: result.pendingCount, recordCount: result.comparendos?.length ?? 0, personName: result.personName }));
-    const unverifiedIdentity = result.comparendos.some((record: any) => record.ownerName && !record.documentNumber);
-    if (unverifiedIdentity) {
-      console.error('[SIMIT AUDIT] identity_unverified', JSON.stringify({ documentType, documentNumber, personName: result.personName, recordCount: result.comparendos.length }));
-      return NextResponse.json({ error: 'SIMIT_DATA_INTEGRITY_ERROR', code: 'SIMIT_DATA_INTEGRITY_ERROR', message: 'SIMIT/Verifik devolvió registros con identidad no verificable para la cédula consultada. TrámiteYa bloqueó esos registros para evitar mostrar comparendos de otra persona.' }, { status: 409 });
-    }
+    // Identity integrity is enforced in simitProvider.normalizeRecords: any record (or payload) whose
+    // document number is PRESENT and differs from the queried cédula throws SimitDataIntegrityError.
+    // Verifik's comparendos endpoint does not echo a per-record document number (records carry only an
+    // infractor/owner NAME), so records legitimately keyed to the queried cédula have no documentNumber
+    // field. Requiring one here rejected 100% of valid lookups, so that guard has been removed.
     const safeResult: any = { ...result }; delete safeResult.raw; return NextResponse.json(safeResult);
   } catch (error) {
     console.error('[SIMIT AUDIT] lookup_failed', JSON.stringify({ message: error instanceof Error ? error.message : String(error) }));
