@@ -72,15 +72,10 @@ function cleanUserFacts(text: string): string {
   const cleaned = text.trim();
   if (!cleaned || /^no identificado en el documento aportado$/i.test(cleaned)) return '';
   const generatedMarkers = ['estado de cuenta simit', 'vencimiento calculado', 'mandamiento de pago', 'hechos acreditados'];
-  const hits = generatedMarkers.filter(marker => cleaned.toLowerCase().includes(marker)).length;
-  return hits >= 2 ? '' : cleaned;
+  return generatedMarkers.filter(marker => cleaned.toLowerCase().includes(marker)).length >= 2 ? '' : cleaned;
 }
 
-/**
- * Convierte el borrador jurídico del motor en un escrito que realmente parece
- * presentado por la persona interesada: primera persona, una sola narración
- * de hechos, una sola línea argumentativa y peticiones sin duplicaciones.
- */
+/** Turns generated prose into a natural first-person legal filing. */
 function humanize(text: string): string {
   return text
     .replace(/El Estado de Cuenta SIMIT aportado por el solicitante/gi, 'El Estado de Cuenta SIMIT que aporté')
@@ -94,52 +89,116 @@ function humanize(text: string): string {
     .replace(/Tampoco se encuentra acreditada una fecha/gi, 'Tampoco encuentro acreditada una fecha')
     .replace(/por el solicitante/gi, 'por mí')
     .replace(/del solicitante/gi, 'mío')
-    .replace(/al solicitante/gi, 'a mí');
+    .replace(/al solicitante/gi, 'a mí')
+    .replace(/\bsolicitante\b/gi, 'interesado');
 }
 
-function removeDuplicateSections(document: string): string {
-  const matches = [...document.matchAll(/^((?:I|II|III|IV|V|VI|VII|VIII|IX)\.)\s+[^\n]+$/gm)];
-  if (!matches.length) return document.trim();
-
-  const blocks: string[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < matches.length; i++) {
-    const heading = matches[i][1];
-    const start = matches[i].index ?? 0;
-    const end = i + 1 < matches.length ? (matches[i + 1].index ?? document.length) : document.length;
-    if (seen.has(heading)) continue;
-    seen.add(heading);
-    blocks.push(document.slice(start, end));
-  }
-  const prefix = document.slice(0, matches[0].index ?? 0).trim();
-  return [prefix, ...blocks].filter(Boolean).join('\n\n').trim();
-}
-
-function removeMechanicalSentences(text: string): string {
+function stripMechanicalText(text: string): string {
   return text
-    .replace(/La jurisprudencia pertinente se utiliza para resolver las cuestiones identificadas en este expediente y no como una lista bibliográfica aislada\.\s*/gi, '')
-    .replace(/El motor no debe declarar prescripción sin esa cronología\.\s*/gi, '')
-    .replace(/Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta que aporté y en las circunstancias que conozco directamente\.\s*/gi, '')
-    .replace(/Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente\.\s*/gi, '')
+    .replace(/^En el caso concreto,\s*(?:Permite|Sirve|No se debe presentar)[^\n]*\n?/gim, '')
+    .replace(/^La jurisprudencia pertinente se utiliza para resolver las cuestiones identificadas en este expediente y no como una lista bibliográfica aislada\.\s*\n?/gim, '')
+    .replace(/^El motor no debe declarar prescripción sin esa cronología\.\s*\n?/gim, '')
+    .replace(/^Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta que aporté y en las circunstancias que conozco directamente\.\s*\n?/gim, '')
+    .replace(/^Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente\.\s*\n?/gim, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-function numberedParagraphs(text: string): string {
-  const lines = text.split('\n');
-  const result: string[] = [];
-  let counter = 0;
+function sectionHeading(line: string): string | null {
+  const match = line.trim().match(/^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI)\.\s+(.+)$/);
+  return match ? `${match[1]}. ${match[2].trim().toLowerCase()}` : null;
+}
+
+/** Removes duplicated full sections while preserving the first occurrence. */
+function removeDuplicateSections(document: string): string {
+  const lines = document.split('\n');
+  const output: string[] = [];
+  const seen = new Set<string>();
+  let skipping = false;
+  let skipKey = '';
+
   for (const line of lines) {
-    const clean = line.trim();
-    if (!clean) { result.push(''); continue; }
-    if (/^\d+\.\s+/.test(clean)) {
-      counter += 1;
-      result.push(`${counter}. ${clean.replace(/^\d+\.\s+/, '')}`);
-    } else {
-      result.push(clean);
+    const heading = sectionHeading(line);
+    if (heading) {
+      const key = heading;
+      if (seen.has(key)) {
+        skipping = true;
+        skipKey = key;
+        continue;
+      }
+      skipping = false;
+      skipKey = '';
+      seen.add(key);
+    }
+    if (!skipping) output.push(line);
+  }
+
+  // A duplicated generated block can contain a second V. section with a different
+  // title. Treat the second complete analytical block as redundant if it follows IX.
+  const normalized = output.join('\n');
+  const analysisMarker = /\nV\. ANÁLISIS DEL CASO CONCRETO\n/i;
+  const firstAnalysis = normalized.search(analysisMarker);
+  const lastRequests = normalized.search(/\nIX\. PETICIONES\n/i);
+  if (firstAnalysis >= 0 && lastRequests > firstAnalysis) {
+    // Keep the first coherent V–IX sequence. If another V appears after IX, drop it.
+    const afterRequests = normalized.slice(lastRequests + 1);
+    const secondV = afterRequests.search(/\nV\. ANÁLISIS DEL CASO CONCRETO\n/i);
+    if (secondV >= 0) {
+      const cut = lastRequests + 1 + secondV;
+      return normalized.slice(0, cut).trim();
     }
   }
-  return result.join('\n');
+  return normalized.trim();
+}
+
+function renumberFacts(text: string): string {
+  const lines = text.split('\n');
+  let n = 0;
+  return lines.map(line => {
+    const clean = line.trim();
+    if (/^\d+\.\s+/.test(clean)) {
+      n += 1;
+      return `${n}. ${clean.replace(/^\d+\.\s+/, '')}`;
+    }
+    return line;
+  }).join('\n');
+}
+
+function replaceFactsSection(document: string, r: SelectedRecordData, t: any): string {
+  const start = document.search(/^II\. ANTECEDENTES Y HECHOS\s*$/im);
+  const end = document.search(/^III\. PROBLEMA JURÍDICO\s*$/im);
+  if (start < 0 || end < 0 || end <= start) return document;
+
+  const facts: string[] = [
+    `1. El Estado de Cuenta SIMIT que aporté registra la actuación No. ${sanitizeValue(r.comparendo)}, asociada a ${sanitizeValue(r.organismo)}, y señala como fecha del hecho el ${r.fecha || 'no identificada'}.`,
+    r.cedula ? `2. La actuación aparece asociada a mi documento de identidad No. ${sanitizeValue(r.cedula)}.` : '',
+    r.placa ? `3. En la información que aporté no aparece especificada la placa asociada a la actuación.` : '',
+    r.valor ? `4. El valor registrado para la obligación es ${sanitizeValue(r.valor)}.` : '',
+    r.codigo ? `5. El registro identifica la infracción con el código ${sanitizeValue(r.codigo)}.` : '',
+    `6. El Estado de Cuenta que aporté no contiene, por sí solo, información suficiente para establecer el número, contenido, fecha de expedición o ejecutoria del acto mediante el cual se habría impuesto la sanción.`,
+    r.fechaNotificacion
+      ? `7. Se registra una fecha de notificación (${r.fechaNotificacion}), pero necesito que se precise qué actuación fue notificada y que se aporte la constancia que permita verificarla.`
+      : `7. En el Estado de Cuenta que aporté no aparece la fecha ni el medio mediante el cual se habría notificado el acto sancionatorio.`,
+    r.fechaMandamientoPago
+      ? `8. Se registra un mandamiento de pago de fecha ${r.fechaMandamientoPago}; sin embargo, su notificación debe acreditarse de manera independiente.`
+      : `8. No tengo acreditada la existencia ni la fecha de un mandamiento de pago relacionado con esta obligación.`,
+    r.fechaNotificacionMandamiento
+      ? `9. Se registra como fecha de notificación del mandamiento de pago el ${r.fechaNotificacionMandamiento}; solicito que se aporte la constancia correspondiente para verificar su validez y efectos.`
+      : `9. Tampoco tengo acreditada la fecha en que se habría notificado un mandamiento de pago. Esta circunstancia debe establecerse a partir del expediente administrativo y no puede presumirse en mi contra.`,
+    t?.initialExpiryDate
+      ? `10. Tomando como punto de partida la fecha del hecho, ${t.initialDate}, el término inicial de tres años proyecta su vencimiento al ${t.initialExpiryDate}. Este cálculo es preliminar y debe confrontarse con las actuaciones que obren en el expediente.`
+      : '',
+  ].filter(Boolean);
+
+  const userFacts = cleanUserFacts(rawValue(r as unknown as FormAnswers, 'hechos'));
+  const extra = userFacts ? `\n\n${userFacts}` : '';
+  return `${document.slice(0, start)}II. ANTECEDENTES Y HECHOS\n\n${renumberFacts(facts.join('\n\n'))}${extra}\n\n${document.slice(end)}`;
+}
+
+function buildFirstPersonIntro(applicant: string, cedula: string): string {
+  return [
+    `Yo, ${applicant}${cedula ? `, identificado(a) con cédula de ciudadanía No. ${cedula}` : ''}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,
+  ].join(' ');
 }
 
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
@@ -148,15 +207,9 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const assessment = assessmentFromAnswers(a) || draft.assessment;
 
   let body = humanize(draft.document);
+  body = stripMechanicalText(body);
   body = removeDuplicateSections(body);
-  body = removeMechanicalSentences(body);
-
-  const userFacts = cleanUserFacts(rawValue(a, 'hechos'));
-  if (userFacts) {
-    const marker = 'III. PROBLEMA JURÍDICO';
-    const position = body.indexOf(marker);
-    if (position >= 0) body = `${body.slice(0, position)}\n\n${userFacts}\n\n${body.slice(position)}`;
-  }
+  body = replaceFactsSection(body, record, assessment.temporal);
 
   const authority = valueOrEmpty(rawValue(a, 'entidad')) || valueOrEmpty(record.organismo) || 'AUTORIDAD DE TRÁNSITO COMPETENTE';
   const applicant = valueOrEmpty(`${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`.trim()) || valueOrEmpty(rawValue(a, 'nombre')) || valueOrEmpty(record.nombre) || 'la persona interesada';
@@ -171,19 +224,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     ? `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute)}`
     : 'DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
 
-  const identity = [
-    `Yo, ${applicant}`,
-    cedula ? `identificado(a) con cédula de ciudadanía No. ${cedula}` : '',
-    'actuando en nombre propio, presento respetuosamente este derecho de petición.'
-  ].filter(Boolean).join(' ');
-
-  const metadata = [
-    email ? `Correo electrónico: ${email}` : '',
-    plate ? `Placa: ${plate}` : '',
-  ].filter(Boolean);
-
   const reference = `REFERENCIA: Comparendo / acto No. ${number || 'que se identifica en el Estado de Cuenta'}${date ? ` — Fecha: ${date}` : ''}`;
-
   const notification = email
     ? `Agradezco que la respuesta sea remitida al correo electrónico ${email}.`
     : 'Agradezco que la respuesta sea remitida por el medio legalmente procedente.';
@@ -200,12 +241,13 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     `ASUNTO: ${title}`,
     reference,
     '',
-    identity,
-    ...metadata,
+    buildFirstPersonIntro(applicant, cedula),
+    email ? `Correo electrónico: ${email}` : '',
+    plate ? `Placa: ${plate}` : '',
     '',
     'Respetados señores:',
     '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise la situación jurídica de la actuación ${number ? `No. ${number}` : 'registrada a mi nombre'}, con fundamento en la información que aporté y en los documentos que reposan en el expediente administrativo.`,
+    `En ejercicio del derecho fundamental de petición, solicito que se revise la situación jurídica de la actuación ${number ? `No. ${number}` : 'que figura registrada a mi nombre'}, con fundamento en la información que aporté y en los documentos que reposan en el expediente administrativo.`,
     '',
     body,
     '',
