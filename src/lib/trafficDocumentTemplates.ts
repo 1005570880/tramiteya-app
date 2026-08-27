@@ -12,6 +12,8 @@ const v = (a: FormAnswers, k: string, f = '') => {
   return value;
 };
 
+const cleanSentence = (value: string) => value.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '.') ;
+
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const titles: Record<string, string> = {
     'prescripcion-comparendo': 'SOLICITUD DE PRESCRIPCIÓN DE OBLIGACIÓN DE TRÁNSITO',
@@ -31,16 +33,17 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
 
   const primaryRequest = favorable.length
     ? `Solicito que se declare o reconozca la procedencia de ${favorable.map((d) => d.id === 'prescripcion' ? 'la prescripción' : d.id === 'caducidad' ? 'la caducidad' : d.label.toLowerCase()).join(' y ')}, previo el análisis integral del expediente.`
-    : `Solicito que se verifique la procedencia de ${ruleLabels || 'la actuación solicitada'} y se adopte la decisión jurídicamente correspondiente, sin presumir la existencia de los presupuestos que deban acreditarse.`;
+    : `Solicito que se verifique la procedencia de ${ruleLabels || 'la actuación administrativa cuestionada'} y se adopte la decisión jurídicamente correspondiente, sin presumir hechos o presupuestos que deban acreditarse.`;
 
-  const evidenceRequest = uncertain.length
-    ? `Para resolver lo anterior, solicito especialmente: ${uncertain.map((d) => d.nextStep).join(' ')}`
-    : 'Solicito copia íntegra del expediente y de los soportes pertinentes.';
+  const evidenceItems = uncertain.map((d) => cleanSentence(d.nextStep));
+  const evidenceRequest = evidenceItems.length
+    ? evidenceItems.join(' ')
+    : 'se remita copia íntegra del expediente y de los soportes pertinentes.';
 
-  const soportes = 'Solicito copia íntegra de los soportes que sustentan la actuación, incluyendo comparendo, evidencia, constancias de notificación, mandamiento de pago si existe, actos administrativos, recursos y demás documentos pertinentes.';
+  const soportes = 'Solicito copia íntegra de los soportes que sustentan la actuación, incluyendo la orden de comparendo, evidencia disponible, constancias de notificación, mandamiento de pago si existe, actos administrativos, recursos y demás documentos pertinentes.';
   const legalAnalysis = decisions.length
     ? decisions.map((d) => `• ${d.label}: ${d.reason} Siguiente actuación: ${d.nextStep} Fundamento orientador: ${d.legalBasis.join('; ')}.`).join('\n')
-    : 'No se identificó una decisión jurídica automatizada concluyente. Se requiere revisión del expediente y de la información aportada.';
+    : 'No se identificó una conclusión jurídica automatizada. Se requiere revisión del expediente y de la información aportada.';
 
   const placa = v(a, 'placa');
   const solicitud = v(a, 'pretension', primaryRequest);
@@ -61,11 +64,13 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
   ];
   if (placa) header.push(`Placa: ${placa}`);
 
+  const objeto = `Solicito la revisión integral de la actuación administrativa asociada al comparendo No. ${v(a, 'numero_comparendo', 'no identificado')} de fecha ${v(a, 'fecha_comparendo', 'no identificada')}, con el fin de establecer, con base en el expediente y los soportes oficiales, si existe fundamento para la eliminación, archivo, revocatoria o reconocimiento de la situación jurídica que corresponda.`;
+
   return [
     ...header,
     '',
     'I. OBJETO',
-    solicitud,
+    objeto,
     '',
     'II. HECHOS',
     hechos,
@@ -75,7 +80,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     '',
     'IV. PETICIONES',
     solicitud,
-    `Solicito además que ${evidenceRequest.toLowerCase()}.`,
+    `Para resolver lo anterior, solicito especialmente que ${evidenceRequest}`,
     'Se remita respuesta de fondo, clara, congruente y completa dentro del término legal aplicable.',
     '',
     'V. INFORMACIÓN Y SOPORTES',
