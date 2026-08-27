@@ -36,16 +36,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Guest flow: generate the real legal document, persist it server-side and
-    // return a high-entropy access token. No Supabase Auth account is required.
     const guestToken = user ? null : createGuestAccessToken();
-    const generated = await generateDocument({
-      procedure,
-      answers: answers || {},
-      previousVersion: 0,
-      instanceId: undefined,
-    });
-
+    const generated = await generateDocument({ procedure, answers: answers || {}, previousVersion: 0, instanceId: undefined });
     const docRepo = factory.getDocumentRepo();
     if (!docRepo) return NextResponse.json({ error: 'Document persistence is not configured.' }, { status: 503 });
 
@@ -54,7 +46,17 @@ export async function POST(req: NextRequest) {
       meta: guestToken ? { guestAccessTokenHash: hashGuestAccessToken(guestToken) } : undefined,
     } as any);
 
-    return NextResponse.json({ data: persisted, accessToken: guestToken || undefined, guest: Boolean(guestToken) }, { status: 201 });
+    const response = NextResponse.json({ data: persisted, accessToken: guestToken || undefined, guest: Boolean(guestToken) }, { status: 201 });
+    if (guestToken) {
+      response.cookies.set('tramiteya_guest_access', guestToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7,
+      });
+    }
+    return response;
   } catch (e) {
     console.error('Unable to create document', e);
     return NextResponse.json({ error: 'Unable to create document' }, { status: 500 });
