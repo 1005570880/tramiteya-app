@@ -13,13 +13,13 @@ function documentContent(procedure: Procedure, answers: FormAnswers): string {
 }
 
 function extractPetitions(content: string): string | null {
-  const match = content.match(/(?:^|\n)(V|IX)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X)\. |$)/i);
+  const match = content.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
   if (!match) return null;
   return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
 }
 
 function hasDuplicatedTopLevelSections(content: string): boolean {
-  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+/gim) || [];
+  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+/gim) || [];
   const counts = new Map<string, number>();
   for (const heading of headings) {
     const key = heading.trim().toUpperCase();
@@ -32,7 +32,7 @@ function preserveDeterministicPetitions(deterministic: string, refined: string):
   if (hasDuplicatedTopLevelSections(refined)) return deterministic;
   const sourcePetitions = extractPetitions(deterministic);
   if (!sourcePetitions) return deterministic;
-  const target = refined.match(/(?:^|\n)(V|IX)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X)\. |$)/i);
+  const target = refined.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
   if (!target) return deterministic;
   const start = target.index ?? 0;
   const block = target[0];
@@ -46,7 +46,10 @@ function finalizeTrafficDocument(content: string): string {
   const cleaned = cleanLegalDocumentOutput(content);
   // Fail closed: never ship a traffic pleading that contains OCR placeholders,
   // duplicated major sections, or loses the requested favorable relief.
-  return isLegallySafeTrafficDocument(cleaned) ? cleaned : content;
+  if (!isLegallySafeTrafficDocument(cleaned)) {
+    throw new Error('TRAFFIC_DOCUMENT_SAFETY_REJECTED: el documento jurídico no superó las validaciones de integridad y no será entregado.');
+  }
+  return cleaned;
 }
 
 async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
@@ -74,7 +77,7 @@ export async function generateDocxFromContent(content: string): Promise<Uint8Arr
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
 
 function isHeading(line: string) {
-  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|4\.\d+\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
+  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|XI\.|XII\.|XIII\.|4\.\d+\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
 }
 async function renderDocx(content: string): Promise<Uint8Array> {
   const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
