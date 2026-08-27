@@ -7,259 +7,42 @@ import {
 } from './legalEngine';
 
 const UNKNOWN = 'No identificado en el documento aportado';
-
-function rawValue(a: FormAnswers, key: string): string {
-  const raw = a[key];
-  if (Array.isArray(raw)) return raw.join(', ');
-  if (typeof raw === 'boolean') return raw ? 'Sí' : 'No';
-  if (raw == null) return '';
-  return String(raw).replace(/\s+/g, ' ').trim();
-}
-
-function valueOrEmpty(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const text = value.trim();
-  if (!text || /^no identificado en el documento aportado$/i.test(text)) return '';
-  return sanitizeValue(text) === UNKNOWN ? '' : sanitizeValue(text);
-}
-
+function rawValue(a: FormAnswers, key: string): string { const raw = a[key]; if (Array.isArray(raw)) return raw.join(', '); if (typeof raw === 'boolean') return raw ? 'Sí' : 'No'; if (raw == null) return ''; return String(raw).replace(/\s+/g, ' ').trim(); }
+function valueOrEmpty(value: unknown): string { if (typeof value !== 'string') return ''; const text = value.trim(); if (!text || /^no identificado en el documento aportado$/i.test(text)) return ''; return sanitizeValue(text) === UNKNOWN ? '' : sanitizeValue(text); }
 function selectedRecord(a: FormAnswers): SelectedRecordData {
   const source = (a as FormAnswers & { __simitRecord?: any }).__simitRecord || {};
-  const pick = (formKey: string, sourceValue?: unknown) =>
-    valueOrEmpty(rawValue(a, formKey)) || valueOrEmpty(sourceValue);
-
-  return {
-    comparendo: pick('numero_comparendo', source.number),
-    fecha: rawValue(a, 'fecha_comparendo') || String(source.date || ''),
-    organismo: pick('entidad', source.authority || rawValue(a, 'autoridad')),
-    estado: rawValue(a, 'estado') || String(source.status || rawValue(a, 'estadoComparendo') || ''),
-    valor: rawValue(a, 'valor') || (source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : rawValue(a, 'valorMulta')),
-    placa: pick('placa', source.plate),
-    cedula: pick('documento', source.documentNumber || rawValue(a, 'cedula')),
-    codigo: pick('codigo_infraccion', source.infractionCode || source.code),
-    nombre: pick('nombre', source.name),
-    correo: pick('correo', source.email),
-    fechaResolucion: rawValue(a, 'fecha_resolucion') || String(source.resolutionDate || ''),
-    fechaNotificacion: rawValue(a, 'fecha_notificacion') || String(source.notificationDate || ''),
-    fechaMandamientoPago: rawValue(a, 'fecha_mandamiento_pago') || String(source.mandamientoDate || source.paymentOrderDate || ''),
-    fechaNotificacionMandamiento: rawValue(a, 'fecha_notificacion_mandamiento') || String(source.paymentOrderNotificationDate || ''),
-    fechaEjecutoria: rawValue(a, 'fecha_ejecutoria') || String(source.executedDate || ''),
-    huboAudiencia: (a as any).hubo_audiencia,
-    existeResolucion: (a as any).existe_resolucion,
-    actuacionesCobro: rawValue(a, 'actuaciones_cobro') || String(source.collectionActions || ''),
-  };
+  const pick = (formKey: string, sourceValue?: unknown) => valueOrEmpty(rawValue(a, formKey)) || valueOrEmpty(sourceValue);
+  return { comparendo: pick('numero_comparendo', source.number), fecha: rawValue(a, 'fecha_comparendo') || String(source.date || ''), organismo: pick('entidad', source.authority || rawValue(a, 'autoridad')), estado: rawValue(a, 'estado') || String(source.status || rawValue(a, 'estadoComparendo') || ''), valor: rawValue(a, 'valor') || (source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : rawValue(a, 'valorMulta')), placa: pick('placa', source.plate), cedula: pick('documento', source.documentNumber || rawValue(a, 'cedula')), codigo: pick('codigo_infraccion', source.infractionCode || source.code), nombre: pick('nombre', source.name), correo: pick('correo', source.email), fechaResolucion: rawValue(a, 'fecha_resolucion') || String(source.resolutionDate || ''), fechaNotificacion: rawValue(a, 'fecha_notificacion') || String(source.notificationDate || ''), fechaMandamientoPago: rawValue(a, 'fecha_mandamiento_pago') || String(source.mandamientoDate || source.paymentOrderDate || ''), fechaNotificacionMandamiento: rawValue(a, 'fecha_notificacion_mandamiento') || String(source.paymentOrderNotificationDate || ''), fechaEjecutoria: rawValue(a, 'fecha_ejecutoria') || String(source.executedDate || ''), huboAudiencia: (a as any).hubo_audiencia, existeResolucion: (a as any).existe_resolucion, actuacionesCobro: rawValue(a, 'actuaciones_cobro') || String(source.collectionActions || '') };
 }
-
-function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null {
-  const assessment = a.__legalAssessment;
-  return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null;
-}
-
-function routeLabel(route: string | null | undefined) {
-  switch (route) {
-    case 'CADUCIDAD': return 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO';
-    case 'PRESCRIPCION': return 'SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
-    case 'PERDIDA_EJECUTORIEDAD': return 'SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
-    case 'NOTIFICACION': return 'REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
-    case 'FOTODETECCION': return 'REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
-    case 'DEBIDO_PROCESO': return 'REVISIÓN DE LAS GARANTÍAS DEL DEBIDO PROCESO ADMINISTRATIVO';
-    case 'REVOCATORIA_DIRECTA': return 'REVISIÓN DE LA PROCEDENCIA DE LA REVOCATORIA DIRECTA';
-    default: return 'REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
-  }
-}
-
-function cleanUserFacts(text: string): string {
-  const cleaned = text.trim();
-  if (!cleaned || /^no identificado en el documento aportado$/i.test(cleaned)) return '';
-  const generatedMarkers = ['estado de cuenta simit', 'vencimiento calculado', 'mandamiento de pago', 'hechos acreditados'];
-  return generatedMarkers.filter(marker => cleaned.toLowerCase().includes(marker)).length >= 2 ? '' : cleaned;
-}
-
-/** Turns generated prose into a natural first-person legal filing. */
-function humanize(text: string): string {
-  return text
-    .replace(/El Estado de Cuenta SIMIT aportado por el solicitante/gi, 'El Estado de Cuenta SIMIT que aporté')
-    .replace(/el Estado de Cuenta aportado por el solicitante/gi, 'el Estado de Cuenta que aporté')
-    .replace(/Estado de Cuenta aportado por el solicitante/gi, 'Estado de Cuenta que aporté')
-    .replace(/El registro aportado identifica/gi, 'El registro que aporté identifica')
-    .replace(/La actuación aparece asociada al documento de identidad/gi, 'La actuación aparece asociada a mi documento de identidad')
-    .replace(/La información disponible sobre la placa es/gi, 'La información que pude verificar sobre la placa es')
-    .replace(/El valor reportado para la obligación es/gi, 'El valor que aparece registrado para la obligación es')
-    .replace(/No se encuentra acreditada en la información aportada/gi, 'En la información que aporté no encuentro acreditada')
-    .replace(/Tampoco se encuentra acreditada una fecha/gi, 'Tampoco encuentro acreditada una fecha')
-    .replace(/por el solicitante/gi, 'por mí')
-    .replace(/del solicitante/gi, 'mío')
-    .replace(/al solicitante/gi, 'a mí')
-    .replace(/\bsolicitante\b/gi, 'interesado');
-}
-
-function stripMechanicalText(text: string): string {
-  return text
-    .replace(/^En el caso concreto,\s*(?:Permite|Sirve|No se debe presentar)[^\n]*\n?/gim, '')
-    .replace(/^La jurisprudencia pertinente se utiliza para resolver las cuestiones identificadas en este expediente y no como una lista bibliográfica aislada\.\s*\n?/gim, '')
-    .replace(/^El motor no debe declarar prescripción sin esa cronología\.\s*\n?/gim, '')
-    .replace(/^Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta que aporté y en las circunstancias que conozco directamente\.\s*\n?/gim, '')
-    .replace(/^Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente\.\s*\n?/gim, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function sectionHeading(line: string): string | null {
-  const match = line.trim().match(/^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI)\.\s+(.+)$/);
-  return match ? `${match[1]}. ${match[2].trim().toLowerCase()}` : null;
-}
-
-/** Removes duplicated full sections while preserving the first occurrence. */
-function removeDuplicateSections(document: string): string {
-  const lines = document.split('\n');
-  const output: string[] = [];
-  const seen = new Set<string>();
-  let skipping = false;
-  let skipKey = '';
-
-  for (const line of lines) {
-    const heading = sectionHeading(line);
-    if (heading) {
-      const key = heading;
-      if (seen.has(key)) {
-        skipping = true;
-        skipKey = key;
-        continue;
-      }
-      skipping = false;
-      skipKey = '';
-      seen.add(key);
-    }
-    if (!skipping) output.push(line);
-  }
-
-  // A duplicated generated block can contain a second V. section with a different
-  // title. Treat the second complete analytical block as redundant if it follows IX.
-  const normalized = output.join('\n');
-  const analysisMarker = /\nV\. ANÁLISIS DEL CASO CONCRETO\n/i;
-  const firstAnalysis = normalized.search(analysisMarker);
-  const lastRequests = normalized.search(/\nIX\. PETICIONES\n/i);
-  if (firstAnalysis >= 0 && lastRequests > firstAnalysis) {
-    // Keep the first coherent V–IX sequence. If another V appears after IX, drop it.
-    const afterRequests = normalized.slice(lastRequests + 1);
-    const secondV = afterRequests.search(/\nV\. ANÁLISIS DEL CASO CONCRETO\n/i);
-    if (secondV >= 0) {
-      const cut = lastRequests + 1 + secondV;
-      return normalized.slice(0, cut).trim();
-    }
-  }
-  return normalized.trim();
-}
-
-function renumberFacts(text: string): string {
-  const lines = text.split('\n');
-  let n = 0;
-  return lines.map(line => {
-    const clean = line.trim();
-    if (/^\d+\.\s+/.test(clean)) {
-      n += 1;
-      return `${n}. ${clean.replace(/^\d+\.\s+/, '')}`;
-    }
-    return line;
-  }).join('\n');
-}
-
-function replaceFactsSection(document: string, r: SelectedRecordData, t: any): string {
-  const start = document.search(/^II\. ANTECEDENTES Y HECHOS\s*$/im);
-  const end = document.search(/^III\. PROBLEMA JURÍDICO\s*$/im);
-  if (start < 0 || end < 0 || end <= start) return document;
-
-  const facts: string[] = [
+function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null { const assessment = a.__legalAssessment; return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null; }
+function routeLabel(route: string | null | undefined) { switch (route) { case 'CADUCIDAD': return 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO'; case 'PRESCRIPCION': return 'SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO'; case 'PERDIDA_EJECUTORIEDAD': return 'SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA'; case 'NOTIFICACION': return 'REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO'; case 'FOTODETECCION': return 'REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN'; case 'DEBIDO_PROCESO': return 'REVISIÓN DE LAS GARANTÍAS DEL DEBIDO PROCESO ADMINISTRATIVO'; case 'REVOCATORIA_DIRECTA': return 'REVISIÓN DE LA PROCEDENCIA DE LA REVOCATORIA DIRECTA'; default: return 'REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA'; } }
+function cleanUserFacts(text: string): string { const cleaned = text.trim(); if (!cleaned || /^no identificado en el documento aportado$/i.test(cleaned)) return ''; const markers = ['estado de cuenta simit', 'vencimiento calculado', 'mandamiento de pago', 'hechos acreditados']; return markers.filter(marker => cleaned.toLowerCase().includes(marker)).length >= 2 ? '' : cleaned; }
+function humanize(text: string): string { return text.replace(/El Estado de Cuenta SIMIT aportado por el solicitante/gi, 'El Estado de Cuenta SIMIT que aporté').replace(/el Estado de Cuenta aportado por el solicitante/gi, 'el Estado de Cuenta que aporté').replace(/Estado de Cuenta aportado por el solicitante/gi, 'Estado de Cuenta que aporté').replace(/El registro aportado identifica/gi, 'El registro que aporté identifica').replace(/La actuación aparece asociada al documento de identidad/gi, 'La actuación aparece asociada a mi documento de identidad').replace(/La información disponible sobre la placa es/gi, 'La información que pude verificar sobre la placa es').replace(/El valor reportado para la obligación es/gi, 'El valor que aparece registrado para la obligación es').replace(/No se encuentra acreditada en la información aportada/gi, 'En la información que aporté no encuentro acreditada').replace(/Tampoco se encuentra acreditada una fecha/gi, 'Tampoco encuentro acreditada una fecha').replace(/por el solicitante/gi, 'por mí').replace(/del solicitante/gi, 'mío').replace(/al solicitante/gi, 'a mí').replace(/\bsolicitante\b/gi, 'interesado'); }
+function stripMechanicalText(text: string): string { return text.replace(/^En el caso concreto,\s*(?:Permite|Sirve|No se debe presentar)[^\n]*\n?/gim, '').replace(/^La jurisprudencia pertinente se utiliza para resolver las cuestiones identificadas en este expediente y no como una lista bibliográfica aislada\.\s*\n?/gim, '').replace(/^El motor no debe declarar prescripción sin esa cronología\.\s*\n?/gim, '').replace(/^Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta que aporté y en las circunstancias que conozco directamente\.\s*\n?/gim, '').replace(/^Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente\.\s*\n?/gim, '').replace(/\n{3,}/g, '\n\n').trim(); }
+function sectionHeading(line: string): string | null { const match = line.trim().match(/^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI)\.\s+(.+)$/); return match ? `${match[1]}. ${match[2].trim().toLowerCase()}` : null; }
+function removeDuplicateSections(document: string): string { const lines = document.split('\n'); const output: string[] = []; const seen = new Set<string>(); let skipping = false; for (const line of lines) { const heading = sectionHeading(line); if (heading) { if (seen.has(heading)) { skipping = true; continue; } skipping = false; seen.add(heading); } if (!skipping) output.push(line); } return output.join('\n').replace(/\n{3,}/g, '\n\n').trim(); }
+function replaceFactsSection(document: string, r: SelectedRecordData, t: any, answers: FormAnswers): string {
+  const start = document.search(/^II\. ANTECEDENTES Y HECHOS\s*$/im); const end = document.search(/^III\. PROBLEMA JURÍDICO\s*$/im); if (start < 0 || end < 0 || end <= start) return document;
+  const facts = [
     `1. El Estado de Cuenta SIMIT que aporté registra la actuación No. ${sanitizeValue(r.comparendo)}, asociada a ${sanitizeValue(r.organismo)}, y señala como fecha del hecho el ${r.fecha || 'no identificada'}.`,
     r.cedula ? `2. La actuación aparece asociada a mi documento de identidad No. ${sanitizeValue(r.cedula)}.` : '',
-    r.placa ? `3. En la información que aporté no aparece especificada la placa asociada a la actuación.` : '',
+    `3. ${r.placa ? `La placa asociada que aparece en la información disponible es ${sanitizeValue(r.placa)}.` : 'En la información que aporté no aparece especificada la placa asociada a la actuación.'}`,
     r.valor ? `4. El valor registrado para la obligación es ${sanitizeValue(r.valor)}.` : '',
     r.codigo ? `5. El registro identifica la infracción con el código ${sanitizeValue(r.codigo)}.` : '',
     `6. El Estado de Cuenta que aporté no contiene, por sí solo, información suficiente para establecer el número, contenido, fecha de expedición o ejecutoria del acto mediante el cual se habría impuesto la sanción.`,
-    r.fechaNotificacion
-      ? `7. Se registra una fecha de notificación (${r.fechaNotificacion}), pero necesito que se precise qué actuación fue notificada y que se aporte la constancia que permita verificarla.`
-      : `7. En el Estado de Cuenta que aporté no aparece la fecha ni el medio mediante el cual se habría notificado el acto sancionatorio.`,
-    r.fechaMandamientoPago
-      ? `8. Se registra un mandamiento de pago de fecha ${r.fechaMandamientoPago}; sin embargo, su notificación debe acreditarse de manera independiente.`
-      : `8. No tengo acreditada la existencia ni la fecha de un mandamiento de pago relacionado con esta obligación.`,
-    r.fechaNotificacionMandamiento
-      ? `9. Se registra como fecha de notificación del mandamiento de pago el ${r.fechaNotificacionMandamiento}; solicito que se aporte la constancia correspondiente para verificar su validez y efectos.`
-      : `9. Tampoco tengo acreditada la fecha en que se habría notificado un mandamiento de pago. Esta circunstancia debe establecerse a partir del expediente administrativo y no puede presumirse en mi contra.`,
-    t?.initialExpiryDate
-      ? `10. Tomando como punto de partida la fecha del hecho, ${t.initialDate}, el término inicial de tres años proyecta su vencimiento al ${t.initialExpiryDate}. Este cálculo es preliminar y debe confrontarse con las actuaciones que obren en el expediente.`
-      : '',
+    r.fechaNotificacion ? `7. Se registra una fecha de notificación (${r.fechaNotificacion}), pero necesito que se precise qué actuación fue notificada y que se aporte la constancia que permita verificarla.` : `7. En el Estado de Cuenta que aporté no aparece la fecha ni el medio mediante el cual se habría notificado el acto sancionatorio.`,
+    r.fechaMandamientoPago ? `8. Se registra un mandamiento de pago de fecha ${r.fechaMandamientoPago}; sin embargo, su notificación debe acreditarse de manera independiente.` : `8. No tengo acreditada la existencia ni la fecha de un mandamiento de pago relacionado con esta obligación.`,
+    r.fechaNotificacionMandamiento ? `9. Se registra como fecha de notificación del mandamiento de pago el ${r.fechaNotificacionMandamiento}; solicito que se aporte la constancia correspondiente para verificar su validez y efectos.` : `9. Tampoco tengo acreditada la fecha en que se habría notificado un mandamiento de pago. Esta circunstancia debe establecerse a partir del expediente administrativo y no puede presumirse en mi contra.`,
+    t?.initialExpiryDate ? `10. Tomando como punto de partida la fecha del hecho, ${t.initialDate}, el término inicial de tres años proyecta su vencimiento al ${t.initialExpiryDate}. Este cálculo es preliminar y debe confrontarse con las actuaciones que obren en el expediente.` : '',
   ].filter(Boolean);
-
-  const userFacts = cleanUserFacts(rawValue(r as unknown as FormAnswers, 'hechos'));
-  const extra = userFacts ? `\n\n${userFacts}` : '';
-  return `${document.slice(0, start)}II. ANTECEDENTES Y HECHOS\n\n${renumberFacts(facts.join('\n\n'))}${extra}\n\n${document.slice(end)}`;
+  const userFacts = cleanUserFacts(rawValue(answers, 'hechos')); const extra = userFacts ? `\n\n${userFacts}` : '';
+  return `${document.slice(0, start)}II. ANTECEDENTES Y HECHOS\n\n${facts.join('\n\n')}${extra}\n\n${document.slice(end)}`;
 }
-
-function buildFirstPersonIntro(applicant: string, cedula: string): string {
-  return [
-    `Yo, ${applicant}${cedula ? `, identificado(a) con cédula de ciudadanía No. ${cedula}` : ''}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,
-  ].join(' ');
-}
-
+function buildFirstPersonIntro(applicant: string, cedula: string): string { return `Yo, ${applicant}${cedula ? `, identificado(a) con cédula de ciudadanía No. ${cedula}` : ''}, actuando en nombre propio, presento respetuosamente este derecho de petición.`; }
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
-  const record = selectedRecord(a);
-  const draft = generateUnifiedLegalDocument(record);
-  const assessment = assessmentFromAnswers(a) || draft.assessment;
-
-  let body = humanize(draft.document);
-  body = stripMechanicalText(body);
-  body = removeDuplicateSections(body);
-  body = replaceFactsSection(body, record, assessment.temporal);
-
-  const authority = valueOrEmpty(rawValue(a, 'entidad')) || valueOrEmpty(record.organismo) || 'AUTORIDAD DE TRÁNSITO COMPETENTE';
-  const applicant = valueOrEmpty(`${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`.trim()) || valueOrEmpty(rawValue(a, 'nombre')) || valueOrEmpty(record.nombre) || 'la persona interesada';
-  const cedula = valueOrEmpty(rawValue(a, 'documento')) || valueOrEmpty(record.cedula);
-  const email = valueOrEmpty(rawValue(a, 'correo')) || valueOrEmpty(record.correo);
-  const plate = valueOrEmpty(rawValue(a, 'placa')) || valueOrEmpty(record.placa);
-  const number = valueOrEmpty(rawValue(a, 'numero_comparendo')) || valueOrEmpty(record.comparendo);
-  const date = rawValue(a, 'fecha_comparendo') || record.fecha || '';
-  const city = rawValue(a, 'ciudad') || 'Sincelejo';
-  const dateDocument = rawValue(a, 'fecha') || new Date().toLocaleDateString('es-CO');
-  const title = assessment.primaryRoute
-    ? `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute)}`
-    : 'DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
-
-  const reference = `REFERENCIA: Comparendo / acto No. ${number || 'que se identifica en el Estado de Cuenta'}${date ? ` — Fecha: ${date}` : ''}`;
-  const notification = email
-    ? `Agradezco que la respuesta sea remitida al correo electrónico ${email}.`
-    : 'Agradezco que la respuesta sea remitida por el medio legalmente procedente.';
-
-  return [
-    city,
-    dateDocument,
-    '',
-    authority.toUpperCase(),
-    'Dependencia competente',
-    '',
-    title,
-    '',
-    `ASUNTO: ${title}`,
-    reference,
-    '',
-    buildFirstPersonIntro(applicant, cedula),
-    email ? `Correo electrónico: ${email}` : '',
-    plate ? `Placa: ${plate}` : '',
-    '',
-    'Respetados señores:',
-    '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise la situación jurídica de la actuación ${number ? `No. ${number}` : 'que figura registrada a mi nombre'}, con fundamento en la información que aporté y en los documentos que reposan en el expediente administrativo.`,
-    '',
-    body,
-    '',
-    'ANEXOS',
-    'Estado de Cuenta SIMIT aportado.',
-    '',
-    'NOTIFICACIONES',
-    notification,
-    '',
-    'Atentamente,',
-    '',
-    applicant,
-    cedula ? `C.C. ${cedula}` : '',
-  ].filter((line, index, arr) => !(line === '' && arr[index - 1] === '')).join('\n').trim();
+  const record = selectedRecord(a); const draft = generateUnifiedLegalDocument(record); const assessment = assessmentFromAnswers(a) || draft.assessment;
+  let body = humanize(draft.document); body = stripMechanicalText(body); body = removeDuplicateSections(body); body = replaceFactsSection(body, record, assessment.temporal, a);
+  const authority = valueOrEmpty(rawValue(a, 'entidad')) || valueOrEmpty(record.organismo) || 'AUTORIDAD DE TRÁNSITO COMPETENTE'; const applicant = valueOrEmpty(`${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`.trim()) || valueOrEmpty(rawValue(a, 'nombre')) || valueOrEmpty(record.nombre) || 'la persona interesada'; const cedula = valueOrEmpty(rawValue(a, 'documento')) || valueOrEmpty(record.cedula); const email = valueOrEmpty(rawValue(a, 'correo')) || valueOrEmpty(record.correo); const plate = valueOrEmpty(rawValue(a, 'placa')) || valueOrEmpty(record.placa); const number = valueOrEmpty(rawValue(a, 'numero_comparendo')) || valueOrEmpty(record.comparendo); const date = rawValue(a, 'fecha_comparendo') || record.fecha || ''; const city = rawValue(a, 'ciudad') || 'Sincelejo'; const dateDocument = rawValue(a, 'fecha') || new Date().toLocaleDateString('es-CO'); const title = assessment.primaryRoute ? `DERECHO DE PETICIÓN — ${routeLabel(assessment.primaryRoute)}` : 'DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
+  const reference = `REFERENCIA: Comparendo / acto No. ${number || 'que se identifica en el Estado de Cuenta'}${date ? ` — Fecha: ${date}` : ''}`; const notification = email ? `Agradezco que la respuesta sea remitida al correo electrónico ${email}.` : 'Agradezco que la respuesta sea remitida por el medio legalmente procedente.';
+  return [city, dateDocument, '', authority.toUpperCase(), 'Dependencia competente', '', title, '', `ASUNTO: ${title}`, reference, '', buildFirstPersonIntro(applicant, cedula), email ? `Correo electrónico: ${email}` : '', plate ? `Placa: ${plate}` : '', '', 'Respetados señores:', '', `En ejercicio del derecho fundamental de petición, solicito que se revise la situación jurídica de la actuación ${number ? `No. ${number}` : 'que figura registrada a mi nombre'}, con fundamento en la información que aporté y en los documentos que reposan en el expediente administrativo.`, '', body, '', 'ANEXOS', 'Estado de Cuenta SIMIT aportado.', '', 'NOTIFICACIONES', notification, '', 'Atentamente,', '', applicant, cedula ? `C.C. ${cedula}` : ''].filter((line, index, arr) => !(line === '' && arr[index - 1] === '')).join('\n').trim();
 }
