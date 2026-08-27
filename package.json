@@ -1,6 +1,6 @@
 {
   "name": "tramiteya-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "scripts": { "dev": "next dev", "build": "next build", "start": "next start", "test": "node tests/run-tests.js" },
   "dependencies": {
