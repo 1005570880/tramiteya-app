@@ -27,7 +27,6 @@ function selectedRecord(a: FormAnswers): SelectedRecordData {
   };
 
   return {
-    // El registro SIMIT conserva prioridad cuando el formulario contiene basura OCR.
     comparendo: fromFormOrSource('numero_comparendo', source.number),
     fecha: rawValue(a, 'fecha_comparendo') || String(source.date || fallback),
     organismo: fromFormOrSource('entidad', source.authority || rawValue(a, 'autoridad')),
@@ -67,7 +66,6 @@ function looksLikeGeneratedFacts(text: string): boolean {
 function cleanUserFacts(text: string): string {
   const cleaned = text.trim();
   if (!cleaned || /^no identificado en el documento aportado$/i.test(cleaned)) return '';
-  // El formulario puede conservar la versión automática anterior. No la volvemos a insertar.
   if (looksLikeGeneratedFacts(cleaned)) return '';
   return cleaned;
 }
@@ -92,24 +90,35 @@ function deduplicateTopLevelSections(document: string): string {
 
   const seen = new Set<string>();
   const chunks: string[] = [];
-  let previous = 0;
 
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i];
     const start = match.index ?? 0;
     const roman = match[1];
     const next = i + 1 < matches.length ? (matches[i + 1].index ?? document.length) : document.length;
-    const chunk = document.slice(start, next);
-
     if (seen.has(roman)) continue;
     seen.add(roman);
-
     if (chunks.length === 0) chunks.push(document.slice(0, start));
-    chunks.push(chunk);
-    previous = next;
+    chunks.push(document.slice(start, next));
   }
 
   return chunks.join('').trim() || document.trim();
+}
+
+function humanizeFirstPerson(text: string): string {
+  return text
+    .replace(/El Estado de Cuenta SIMIT aportado por el solicitante/gi, 'El Estado de Cuenta SIMIT que aporté')
+    .replace(/el Estado de Cuenta aportado por el solicitante/gi, 'el Estado de Cuenta que aporté')
+    .replace(/El registro aportado identifica/gi, 'El registro que aporté identifica')
+    .replace(/La actuación aparece asociada al documento de identidad/gi, 'La actuación aparece asociada a mi documento de identidad')
+    .replace(/La información disponible sobre la placa es/gi, 'La información que pude verificar sobre la placa es')
+    .replace(/El valor reportado para la obligación es/gi, 'El valor que aparece registrado para la obligación es')
+    .replace(/No se encuentra acreditada en la información aportada/gi, 'En la información que aporté no encuentro acreditada')
+    .replace(/Tampoco se encuentra acreditada una fecha/gi, 'Tampoco encuentro acreditada una fecha')
+    .replace(/La ausencia de una constancia en el Estado de Cuenta no constituye por sí sola prueba/gi, 'Reconozco que la ausencia de una constancia en el Estado de Cuenta no constituye por sí sola prueba')
+    .replace(/La presente solicitud se fundamenta/gi, 'Esta solicitud se fundamenta')
+    .replace(/por el solicitante/gi, 'por mí')
+    .replace(/del solicitante/gi, 'mío');
 }
 
 /**
@@ -122,9 +131,8 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const assessment = assessmentFromAnswers(a) || draft.assessment;
 
   let body = deduplicateTopLevelSections(draft.document);
+  body = humanizeFirstPerson(body);
 
-  // Solo agregamos hechos escritos realmente por la persona. La versión automática
-  // que pueda haber quedado guardada en 'hechos' se descarta para evitar duplicados.
   const userFacts = cleanUserFacts(rawValue(a, 'hechos'));
   if (userFacts) {
     const marker = 'III. PROBLEMA JURÍDICO';
@@ -162,7 +170,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     '',
     'Respetados señores:',
     '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica de la actuación No. ${number}. Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta aportado y en las circunstancias que conozco directamente. Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente.`,
+    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica de la actuación No. ${number}. Esta solicitud se fundamenta en la información que obra en el Estado de Cuenta que aporté y en las circunstancias que conozco directamente. Cuando un aspecto no puede establecerse con ese documento, solicito que sea verificado en el expediente administrativo y que la respuesta indique claramente el soporte documental correspondiente.`,
     '',
     body,
     '',
