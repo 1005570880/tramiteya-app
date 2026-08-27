@@ -3,34 +3,50 @@ import { generateUnifiedLegalDocument, sanitizeValue, type LegalAssessment, type
 
 const fallback = 'No identificado en el documento aportado';
 
-function value(a: FormAnswers, key: string, fallbackValue = ''): string {
+function rawValue(a: FormAnswers, key: string): string {
   const raw = a[key];
   if (Array.isArray(raw)) return raw.join(', ');
   if (typeof raw === 'boolean') return raw ? 'Sí' : 'No';
-  if (raw == null) return fallbackValue;
-  const text = String(raw).trim();
-  return text || fallbackValue;
+  if (raw == null) return '';
+  return String(raw).trim();
+}
+
+function cleanOrFallback(value: unknown, fallbackValue = fallback): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return fallbackValue;
+  const cleaned = sanitizeValue(text);
+  return cleaned === fallback ? fallbackValue : cleaned;
 }
 
 function selectedRecord(a: FormAnswers): SelectedRecordData {
   const source = (a as FormAnswers & { __simitRecord?: any }).__simitRecord || {};
+  const fromFormOrSource = (formKey: string, sourceValue: unknown, fallbackValue = fallback) => {
+    const form = rawValue(a, formKey);
+    const cleanForm = form ? sanitizeValue(form) : fallback;
+    if (cleanForm !== fallback) return cleanForm;
+    return cleanOrFallback(sourceValue, fallbackValue);
+  };
+
   return {
-    comparendo: value(a, 'numero_comparendo', source.number || fallback),
-    fecha: value(a, 'fecha_comparendo', source.date || fallback),
-    organismo: value(a, 'entidad', source.authority || value(a, 'autoridad', fallback)),
-    estado: value(a, 'estado', source.status || value(a, 'estadoComparendo', fallback)),
-    valor: value(a, 'valor', source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : value(a, 'valorMulta', fallback)),
-    placa: value(a, 'placa', source.plate || fallback),
-    cedula: value(a, 'documento', source.documentNumber || value(a, 'cedula', fallback)),
-    codigo: value(a, 'codigo_infraccion', source.infractionCode || source.code || fallback),
-    fechaResolucion: value(a, 'fecha_resolucion', source.resolutionDate || ''),
-    fechaNotificacion: value(a, 'fecha_notificacion', source.notificationDate || ''),
-    fechaMandamientoPago: value(a, 'fecha_mandamiento_pago', source.mandamientoDate || source.paymentOrderDate || ''),
-    fechaNotificacionMandamiento: value(a, 'fecha_notificacion_mandamiento', source.paymentOrderNotificationDate || ''),
-    fechaEjecutoria: value(a, 'fecha_ejecutoria', source.executedDate || ''),
+    // El registro SIMIT es la fuente de verdad cuando el formulario contiene basura OCR.
+    comparendo: fromFormOrSource('numero_comparendo', source.number),
+    fecha: rawValue(a, 'fecha_comparendo') || String(source.date || fallback),
+    organismo: fromFormOrSource('entidad', source.authority || rawValue(a, 'autoridad')),
+    estado: rawValue(a, 'estado') || String(source.status || rawValue(a, 'estadoComparendo') || fallback),
+    valor: rawValue(a, 'valor') || (source.value != null ? `$${Number(source.value).toLocaleString('es-CO')}` : (rawValue(a, 'valorMulta') || fallback)),
+    placa: fromFormOrSource('placa', source.plate),
+    cedula: fromFormOrSource('documento', source.documentNumber || rawValue(a, 'cedula')),
+    codigo: fromFormOrSource('codigo_infraccion', source.infractionCode || source.code),
+    nombre: fromFormOrSource('nombre', source.name),
+    correo: fromFormOrSource('correo', source.email),
+    fechaResolucion: rawValue(a, 'fecha_resolucion') || String(source.resolutionDate || ''),
+    fechaNotificacion: rawValue(a, 'fecha_notificacion') || String(source.notificationDate || ''),
+    fechaMandamientoPago: rawValue(a, 'fecha_mandamiento_pago') || String(source.mandamientoDate || source.paymentOrderDate || ''),
+    fechaNotificacionMandamiento: rawValue(a, 'fecha_notificacion_mandamiento') || String(source.paymentOrderNotificationDate || ''),
+    fechaEjecutoria: rawValue(a, 'fecha_ejecutoria') || String(source.executedDate || ''),
     huboAudiencia: (a as any).hubo_audiencia,
     existeResolucion: (a as any).existe_resolucion,
-    actuacionesCobro: value(a, 'actuaciones_cobro', source.collectionActions || ''),
+    actuacionesCobro: rawValue(a, 'actuaciones_cobro') || String(source.collectionActions || ''),
   };
 }
 
@@ -60,38 +76,47 @@ function sectionBody(document: string, heading: string, nextHeading: string): st
   return document.slice(from, end < 0 ? document.length : end).trim();
 }
 
-function replaceSection(document: string, heading: string, nextHeading: string, body: string): string {
-  const start = document.indexOf(heading);
-  if (start < 0 || !body.trim()) return document;
-  const from = start + heading.length;
-  const end = document.indexOf(nextHeading, from);
-  if (end < 0) return document.slice(0, from) + '\n\n' + body.trim() + '\n';
-  return document.slice(0, from) + '\n\n' + body.trim() + '\n\n' + document.slice(end);
+function normalizeForCompare(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/** Single traffic-document assembler. The legal engine owns I–IX; this layer adds only the administrative header and optional user facts. */
+/**
+ * Single traffic-document assembler.
+ * legalEngine owns the complete legal body I–IX. This layer only adds the
+ * administrative header/footer and, when genuinely different, user-authored facts.
+ */
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
   const record = selectedRecord(a);
   const draft = generateUnifiedLegalDocument(record);
   const assessment = assessmentFromAnswers(a) || draft.assessment;
 
   let body = draft.document;
-  const userFacts = value(a, 'hechos', '').trim();
-  if (userFacts && !/^no identificado|no se han incorporado hechos adicionales/i.test(userFacts)) {
-    const automaticFacts = sectionBody(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO');
-    body = replaceSection(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO', `${userFacts}\n\n${automaticFacts}`);
+  const userFacts = rawValue(a, 'hechos');
+  const automaticFacts = sectionBody(body, 'II. ANTECEDENTES Y HECHOS', 'III. PROBLEMA JURÍDICO');
+
+  // Nunca anteponer el bloque automático ya generado por el motor. Solo se
+  // incorpora contenido si el usuario realmente lo modificó/agregó.
+  if (
+    userFacts &&
+    !/^no identificado|no se han incorporado hechos adicionales/i.test(userFacts) &&
+    normalizeForCompare(userFacts) !== normalizeForCompare(automaticFacts)
+  ) {
+    body = body.replace(
+      automaticFacts,
+      `${automaticFacts}\n\nHechos adicionales aportados por el solicitante:\n${userFacts}`
+    );
   }
 
-  const authority = sanitizeValue(value(a, 'entidad', record.organismo));
-  const name = `${value(a, 'nombres', '')} ${value(a, 'apellidos', '')}`.trim();
-  const applicant = sanitizeValue(name || value(a, 'nombre', fallback));
-  const cedula = sanitizeValue(value(a, 'documento', record.cedula));
-  const email = sanitizeValue(value(a, 'correo', record.correo));
-  const plate = sanitizeValue(value(a, 'placa', record.placa));
-  const number = sanitizeValue(value(a, 'numero_comparendo', record.comparendo));
-  const date = value(a, 'fecha_comparendo', record.fecha);
-  const city = value(a, 'ciudad', 'Sincelejo');
-  const dateDocument = value(a, 'fecha', new Date().toLocaleDateString('es-CO'));
+  const authority = sanitizeValue(rawValue(a, 'entidad') || record.organismo);
+  const nameFromParts = `${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`.trim();
+  const applicant = cleanOrFallback(nameFromParts || rawValue(a, 'nombre'), fallback);
+  const cedula = cleanOrFallback(rawValue(a, 'documento') || record.cedula, fallback);
+  const email = cleanOrFallback(rawValue(a, 'correo') || record.correo, fallback);
+  const plate = cleanOrFallback(rawValue(a, 'placa') || record.placa, fallback);
+  const number = cleanOrFallback(rawValue(a, 'numero_comparendo') || record.comparendo, fallback);
+  const date = rawValue(a, 'fecha_comparendo') || record.fecha;
+  const city = rawValue(a, 'ciudad') || 'Sincelejo';
+  const dateDocument = rawValue(a, 'fecha') || new Date().toLocaleDateString('es-CO');
   const title = (() => {
     switch (assessment.primaryRoute) {
       case 'PRESCRIPCION': return 'DERECHO DE PETICIÓN — SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO';
