@@ -26,6 +26,7 @@ function deterministic(record: SelectedRecordData) {
       inferences: temporal?.inferences || [],
       rules: temporal?.rules || [],
       evidenceQuestions: temporal?.evidenceQuestions || draft.assessment.missingEvidence,
+      application: draft.fundamentos,
       caveat: "Una fecha calculada no equivale a una fecha probada. Las conclusiones condicionadas a actuaciones no acreditadas deben mantenerse expresamente como escenarios jurídicos.",
     },
   };
@@ -55,32 +56,21 @@ export async function POST(request: Request) {
 
 REGLA ABSOLUTA DE EVIDENCIA: trabaja exclusivamente con los datos del caso y la biblioteca jurídica suministrada. No inventes fechas, resoluciones, ejecutorias, audiencias, notificaciones, pagos, embargos, acuerdos ni actuaciones de cobro. Distingue siempre entre HECHO ACREDITADO, INFERENCIA/CÁLCULO y HECHO PENDIENTE DE PRUEBA.
 
-REGLA DE CÓMPUTO: si existe fecha del hecho, calcula expresamente el término de tres años previsto por el artículo 159 de la Ley 769 de 2002 y muestra la fecha de vencimiento. No digas simplemente “han pasado más de tres años”. Ejemplo de lógica: hecho 17/07/2012 → vencimiento inicial calculado 17/07/2015. Si no existe fecha de notificación del mandamiento, no supongas que ocurrió; explica que su existencia y fecha son determinantes.
+REGLA DE CÓMPUTO: si existe fecha del hecho, calcula expresamente el término de tres años previsto por el artículo 159 de la Ley 769 de 2002 y muestra la fecha de vencimiento. Ejemplo de lógica: hecho 17/07/2012 → vencimiento inicial calculado 17/07/2015. Si no existe fecha de notificación del mandamiento, no supongas que ocurrió; explica que su existencia y fecha son determinantes.
 
 REGLA DE ESCENARIOS: cuando falte la notificación del mandamiento, analiza al menos estos escenarios: (1) no hubo actuación interruptiva acreditada antes del vencimiento; (2) hubo mandamiento notificado válidamente antes del vencimiento; (3) la primera notificación eficaz ocurrió después del vencimiento. Explica la consecuencia jurídica de cada escenario sin convertir una hipótesis en hecho probado.
 
-REGLA DE CADUCIDAD: si el registro evidencia multa/sanción, resolución, audiencia, estado de cobro o identificador sancionatorio, no presentes el artículo 161 como si el comparendo siguiera pendiente de decisión. En ese supuesto analiza acto sancionatorio, firmeza, notificación, exigibilidad, prescripción, cobro y fuerza ejecutoria. Si no hay sanción acreditada, sí analiza la caducidad confrontando la fecha del hecho con la fecha de decisión.
+REGLA DE CADUCIDAD: si el registro evidencia multa/sanción, resolución, audiencia, estado de cobro o identificador sancionatorio, no presentes el artículo 161 como si el comparendo siguiera pendiente de decisión. En ese supuesto analiza acto sancionatorio, firmeza, notificación, exigibilidad, prescripción, cobro y fuerza ejecutoria. Si no hay sanción acreditada, analiza la caducidad confrontando la fecha del hecho con la fecha de decisión.
 
 REGLA DE NOTIFICACIÓN: la ausencia de una fecha en SIMIT no demuestra que jamás se notificó. Identifica exactamente qué constancia falta, por qué importa y qué debe aportar la autoridad.
 
-REGLA DE JURISPRUDENCIA: no hagas una lista de sentencias. Para cada precedente pertinente explica: (a) qué problema resolvió, (b) qué criterio fijó y (c) por qué ese criterio es aplicable a este caso. Usa únicamente precedentes presentes en la biblioteca.
+REGLA DE JURISPRUDENCIA: no hagas una lista de sentencias. Para cada precedente pertinente explica qué problema resolvió, qué criterio fijó y por qué ese criterio es aplicable a este caso. Usa únicamente precedentes presentes en la biblioteca.
 
 REGLA DE PETICIONES: cada petición debe derivarse de una cuestión jurídica o probatoria identificada. Si falta una prueba crítica, solicita esa prueba y formula la consecuencia para el escenario en que la autoridad no pueda acreditarla. No solicites una declaración definitiva si los datos solo permiten una hipótesis objetiva.
 
 ESTILO: prosa forense natural, firme y profesional. No menciones IA, motor, algoritmo, automatización ni biblioteca. No uses fórmulas vacías como “consulte el expediente” sin explicar qué actuación debe verificarse y qué efecto tendría. El escrito debe demostrar que el abogado hizo la cuenta y entendió el problema.
 
-ESTRUCTURA OBLIGATORIA DEL CONTENIDO CUANDO SEA PERTINENTE:
-III. PROBLEMA JURÍDICO
-IV. FUNDAMENTOS DE DERECHO
-4.1. Norma aplicable
-4.2. Cómputo del término en el caso concreto
-4.3. Actuaciones interruptivas y efectos de la notificación
-4.4. Hechos acreditados, inferencias y prueba pendiente
-4.5. Jurisprudencia aplicada al caso
-4.6. Escenarios jurídicos posibles
-V. ANÁLISIS DEL CASO CONCRETO
-VI. CONCLUSIÓN JURÍDICA
-VII. DOCUMENTOS NECESARIOS PARA VERIFICAR LA ACTUACIÓN
+ESTRUCTURA: III. PROBLEMA JURÍDICO; IV. FUNDAMENTOS DE DERECHO; 4.1 Norma aplicable; 4.2 Cómputo del término en el caso concreto; 4.3 Actuaciones interruptivas y efectos de la notificación; 4.4 Hechos acreditados, inferencias y prueba pendiente; 4.5 Jurisprudencia aplicada al caso; 4.6 Escenarios jurídicos posibles; V. ANÁLISIS DEL CASO CONCRETO; VI. CONCLUSIÓN JURÍDICA; VII. DOCUMENTOS NECESARIOS PARA VERIFICAR LA ACTUACIÓN.
 
 DATOS DEL CASO:
 ${JSON.stringify(record)}
@@ -94,17 +84,11 @@ ${library}`;
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        input: prompt,
-        text: { format: { type: "json_schema", name: "legal_analysis", strict: true, schema: {
-          type: "object", additionalProperties: false,
-          properties: {
-            title: { type: "string" }, problem: { type: "string" }, facts: { type: "string" }, legalFramework: { type: "string" }, application: { type: "string" }, requests: { type: "string" }, warnings: { type: "string" },
-          },
-          required: ["title", "problem", "facts", "legalFramework", "application", "requests", "warnings"],
-        } } },
-      }),
+      body: JSON.stringify({ model, input: prompt, text: { format: { type: "json_schema", name: "legal_analysis", strict: true, schema: {
+        type: "object", additionalProperties: false,
+        properties: { title: { type: "string" }, problem: { type: "string" }, facts: { type: "string" }, legalFramework: { type: "string" }, application: { type: "string" }, requests: { type: "string" }, warnings: { type: "string" } },
+        required: ["title", "problem", "facts", "legalFramework", "application", "requests", "warnings"],
+      } } } }),
     });
     if (!response.ok) return NextResponse.json({ ...base, ai: { enabled: false, reason: `OpenAI ${response.status}` } });
 
