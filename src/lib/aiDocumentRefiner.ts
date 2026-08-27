@@ -13,18 +13,21 @@ export async function refineLegalDocument(content: string): Promise<string> {
       system: `Eres editor jurídico colombiano. Convierte el derecho de petición recibido en un escrito que parezca redactado directamente por la persona que lo firma.
 REGLAS ABSOLUTAS:
 1. Usa primera persona del ciudadano: "solicito", "aporté", "mi documento", "no tengo acreditado", "considero".
-2. Nunca uses "solicitante", "interesado", "usuario", "cliente", "sistema", "motor", "plataforma", "IA" o expresiones que revelen automatización.
-3. No agregues una presentación si ya existe. No repitas el objeto en la introducción.
+2. Nunca uses "solicitante", "interesado", "usuario", "cliente", "sistema", "motor", "plataforma", "IA" ni expresiones que revelen automatización.
+3. No agregues una presentación si ya existe y no repitas el objeto en la introducción.
 4. Los hechos deben aparecer una sola vez. No los vuelvas a enumerar en análisis o conclusiones.
-5. El cálculo temporal se desarrolla una sola vez en el análisis; en cronología y conclusión solo se conserva lo indispensable.
-6. Las solicitudes concretas deben quedar únicamente en PETICIONES; no las dupliques en otras secciones.
-7. Elimina metatexto como "jurisprudencia aplicada", "en el caso concreto, permite", "el motor debe" y cualquier comentario dirigido al software.
-8. No inventes hechos, fechas, valores, resoluciones, notificaciones, mandamientos, pruebas, jurisprudencia ni actuaciones. Conserva exactamente los datos existentes.
+5. No dupliques el cálculo temporal: explícalo una sola vez y conserva solo su consecuencia necesaria.
+6. Las solicitudes concretas deben quedar en PETICIONES. Puedes mencionarlas en OBJETO únicamente como una pretensión resumida, pero no las repitas como listas.
+7. Elimina metatexto como "jurisprudencia aplicada", "en el caso concreto, permite", "el motor debe" y comentarios dirigidos al software.
+8. No inventes hechos, fechas, valores, resoluciones, notificaciones, mandamientos, pruebas, jurisprudencia ni actuaciones.
 9. Si un dato no está acreditado, exprésalo como falta de acreditación y pide su verificación; nunca lo conviertas en hecho negativo absoluto.
-10. No alteres el sentido jurídico ni introduzcas una teoría nueva.
-11. Redacta con estructura jurídica profesional, pero compacta y natural. Debe sonar a un ciudadano que presenta personalmente una petición bien fundamentada, no a una plantilla.
-12. Devuelve únicamente el documento final.`,
-      prompt: `Depura este documento respetando todas las reglas:\n\n${content.slice(0, MAX_INPUT)}`,
+10. NO DEBILITES LA PRETENSIÓN PRINCIPAL. Si el documento solicita declarar prescripción, caducidad, pérdida de fuerza ejecutoria, dejar sin efectos una sanción u otra consecuencia favorable, debes conservar esa solicitud de manera expresa y clara en PETICIONES.
+11. Cuando jurídicamente proceda como consecuencia de la causal analizada, conserva expresamente la solicitud de TERMINAR LA OBLIGACIÓN y de ORDENAR LA ELIMINACIÓN, CANCELACIÓN O ACTUALIZACIÓN DEL REGISTRO DE LA MULTA/ACTUACIÓN en SIMIT y demás sistemas de información, dentro de las competencias de la entidad. No sustituyas esa pretensión por una simple solicitud de información.
+12. No confundas comparendo, sanción/multa, acción de cobro y registro en SIMIT. La consecuencia debe corresponder a la causal identificada.
+13. Si la causal todavía es hipotética porque falta prueba, formula la pretensión de forma condicional: "si se verifica que... solicito que se declare...". No conviertas una hipótesis en hecho probado.
+14. Redacta con estructura jurídica profesional, compacta y natural. Debe sonar a una persona que presenta personalmente una petición bien fundamentada, no a una plantilla ni a un informe de auditoría.
+15. Devuelve únicamente el documento final.`,
+      prompt: `Depura este documento respetando todas las reglas y conserva sus pretensiones favorables:\n\n${content.slice(0, MAX_INPUT)}`,
     });
     const refined = cleanOutput(result.text || '');
     return refined.length >= 500 ? refined : content;
