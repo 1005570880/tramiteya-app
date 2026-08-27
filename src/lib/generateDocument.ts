@@ -3,67 +3,33 @@ import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
-import { analyzeLegalBasis } from './normativeEngine';
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
-
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
-
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
 }
-
-function appendLegalBasis(content: string, procedure: Procedure, answers: FormAnswers): string {
-  const analysis = analyzeLegalBasis(procedure.slug, answers);
-  if (!analysis.norms.length) return content;
-  const normativeLines = analysis.norms.flatMap((norm) => [
-    `${norm.title}${norm.article ? ` — ${norm.article}` : ''}`,
-    norm.description,
-    `Fuente: ${norm.authority} — ${norm.sourceUrl}`,
-    '',
-  ]);
-  return [content, '', 'FUNDAMENTO NORMATIVO DE REFERENCIA', ...normativeLines, 'CRITERIO DE SELECCIÓN', ...analysis.rationale, '', 'ADVERTENCIA DE REVISIÓN', ...analysis.alerts].join('\n');
-}
-
 function buildFinalContent(procedure: Procedure, answers: FormAnswers): string {
-  return appendLegalBasis(documentContent(procedure, answers), procedure, answers);
+  // Traffic documents already contain the developed legal framework. Do not append
+  // the old generic normative appendix, which produced duplicate/vague documents.
+  return documentContent(procedure, answers);
 }
-
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
   const content = buildFinalContent(procedure, answers);
-  return {
-    id: generateId('doc'),
-    title: `${procedure.title} - Documento generado`,
-    procedureId: procedure.id,
-    content,
-    createdAt: generatedAt,
-    generatedAt,
-    version,
-    status: 'ready',
-    instanceId,
-    sourceVersion: `v${version}`,
-    snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content },
-  };
+  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content } };
 }
 
 // Binary generators are lazy-loaded so the JSON generation route does not load docx/pdfkit.
-export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> {
-  return renderDocx(buildFinalContent(procedure, answers));
-}
-
-export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> {
-  return renderPdf(buildFinalContent(procedure, answers));
-}
-
+export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(buildFinalContent(procedure, answers)); }
+export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(buildFinalContent(procedure, answers)); }
 export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
 
 function isHeading(line: string) {
-  return /^(HECHOS|PETICIÓN|NOTIFICACIONES|ANEXOS|FUNDAMENTO NORMATIVO DE REFERENCIA|CRITERIO DE SELECCIÓN|ADVERTENCIA DE REVISIÓN|PRIMERA\.|SEGUNDA\.|TERCERA\.|CUARTA\.|QUINTA\.|SEXTA\.|SÉPTIMA\.|I\.|II\.|III\.|IV\.|V\.|VI\.)/.test(line);
+  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|4\.\d+\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
 }
-
 async function renderDocx(content: string): Promise<Uint8Array> {
   const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
   const paragraphs = content.split('\n').map(line => isHeading(line)
@@ -71,7 +37,6 @@ async function renderDocx(content: string): Promise<Uint8Array> {
     : new Paragraph({ children: [new TextRun(line)] }));
   return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
 }
-
 async function renderPdf(content: string): Promise<Buffer> {
   const PDFDocument = (await import('pdfkit')).default;
   return new Promise((resolve, reject) => {
