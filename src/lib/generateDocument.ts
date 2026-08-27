@@ -4,6 +4,7 @@ import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
 import { refineLegalDocument } from './aiDocumentRefiner';
+import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalDocumentGuard';
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
@@ -41,16 +42,23 @@ function preserveDeterministicPetitions(deterministic: string, refined: string):
   return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function finalizeTrafficDocument(content: string): string {
+  const cleaned = cleanLegalDocumentOutput(content);
+  // Fail closed: never ship a traffic pleading that contains OCR placeholders,
+  // duplicated major sections, or loses the requested favorable relief.
+  return isLegallySafeTrafficDocument(cleaned) ? cleaned : content;
+}
+
 async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
-  const deterministic = documentContent(procedure, answers);
+  const deterministic = finalizeTrafficDocument(documentContent(procedure, answers));
   if (!trafficSlugs.has(procedure.slug)) return deterministic;
 
   const refined = await refineLegalDocument(deterministic);
   if (!refined || refined.length < 500) return deterministic;
 
-  // La IA solo puede mejorar estilo. Las PETICIONES determinísticas son la fuente de verdad
-  // y cualquier salida estructuralmente defectuosa se descarta íntegramente.
-  return preserveDeterministicPetitions(deterministic, refined);
+  const merged = preserveDeterministicPetitions(deterministic, refined);
+  const finalContent = cleanLegalDocumentOutput(merged);
+  return isLegallySafeTrafficDocument(finalContent) ? finalContent : deterministic;
 }
 
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
