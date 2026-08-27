@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { FormStep, FormField, FormAnswers } from "../types/form";
 import { localDraftStorage } from "../lib/draftStorage";
 import { getSupabaseBrowser } from "../lib/supabaseBrowserClient";
-import { generateLegalDraft } from "../lib/legalEngine";
+import { assessTrafficRecord, generateLegalDraft } from "../lib/legalEngine";
 
 function visible(field: FormField, answers: FormAnswers) {
   if (!field.condition) return true;
@@ -13,6 +13,14 @@ function visible(field: FormField, answers: FormAnswers) {
   if (field.condition.operator === "equals") return current === expected;
   if (field.condition.operator === "notEquals") return current !== expected;
   return current.includes(expected);
+}
+
+function toIsoDate(value: unknown) {
+  if (!value) return "";
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : raw;
 }
 
 export default function StepForm({
@@ -41,42 +49,58 @@ export default function StepForm({
 
   useEffect(() => {
     if (!initialAnswers) return;
-
     const source = (initialAnswers as FormAnswers & { __simitRecord?: any }).__simitRecord;
     if (!source) {
       setAnswers(initialAnswers);
       return;
     }
 
-    const draft = generateLegalDraft({
+    const record = {
       comparendo: String(source.number || ""),
       fecha: String(source.date || ""),
       organismo: String(source.authority || ""),
       estado: String(source.status || ""),
-      valor:
-        source.value != null
-          ? `$${Number(source.value).toLocaleString("es-CO")}`
-          : "no reportado",
+      valor: source.value != null ? `$${Number(source.value).toLocaleString("es-CO")}` : "no reportado",
       placa: source.plate,
       cedula: String(source.documentNumber || ""),
-    });
+      fechaResolucion: String(source.resolutionDate || ""),
+      fechaNotificacion: String(source.notificationDate || ""),
+      fechaMandamientoPago: String(source.mandamientoDate || source.paymentOrderDate || ""),
+      huboAudiencia: source.huboAudiencia,
+      existeResolucion: source.resolutionNumber || source.existeResolucion,
+    };
+    const draft = generateLegalDraft(record);
+    const assessment = draft.assessment;
+    const routeToCause: Record<string, string> = {
+      PRESCRIPCION: "prescripcion",
+      CADUCIDAD: "caducidad",
+      NOTIFICACION: "notificacion",
+      REVOCATORIA_DIRECTA: "revocatoria",
+      PERDIDA_EJECUTORIEDAD: "perdida_ejecutoriedad",
+    };
+    const causalPrincipal = routeToCause[assessment.primaryRoute || ""] || "eliminacion";
 
     setAnswers({
       ...initialAnswers,
       causal: draft.fundamentos,
+      causal_principal: causalPrincipal,
       hechos: draft.hechos,
       pretension: draft.solicitudConcreta,
+      solicitud: draft.solicitudConcreta,
       fundamentos: draft.fundamentos,
       solicitudConcreta: draft.solicitudConcreta,
-    });
+      fecha_mandamiento_pago: toIsoDate(source.mandamientoDate || source.paymentOrderDate),
+      fecha_resolucion: toIsoDate(source.resolutionDate),
+      fecha_notificacion: toIsoDate(source.notificationDate),
+      existe_resolucion: source.resolutionNumber || source.resolutionDate ? "si" : "no_se",
+      __legalAssessment: assessment,
+    } as FormAnswers);
   }, [initialAnswers]);
 
   useEffect(() => {
     if (!draftKey) return;
     const saved = localDraftStorage.load(draftKey) as any;
-    if (saved?.data && !initialAnswers) {
-      setAnswers(saved.data as FormAnswers);
-    }
+    if (saved?.data && !initialAnswers) setAnswers(saved.data as FormAnswers);
     setSavedAt(saved?.savedAt || null);
   }, [draftKey, initialAnswers]);
 
@@ -91,35 +115,24 @@ export default function StepForm({
   useEffect(() => {
     if (!draftKey) return;
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-
     timeoutRef.current = window.setTimeout(async () => {
       try {
         localDraftStorage.save(draftKey, answers);
         const supabase = getSupabaseBrowser();
         if (supabase && instanceId) {
-          const {
-            data: { session },
-          } = await supabase.auth.getSession();
+          const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
             await fetch(`/api/instances/${instanceId}`, {
               method: "PATCH",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${session.access_token}`,
-              },
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
               body: JSON.stringify({ answers, status: "in_progress" }),
             });
           }
         }
         setSavedAt(new Date().toISOString());
-      } catch {
-        // Draft persistence must never block the form.
-      }
+      } catch {}
     }, 700);
-
-    return () => {
-      if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-    };
+    return () => { if (timeoutRef.current) window.clearTimeout(timeoutRef.current); };
   }, [answers, draftKey, instanceId]);
 
   function setField(id: string, value: FormAnswers[string]) {
@@ -134,167 +147,30 @@ export default function StepForm({
   }
 
   function next() {
-    const missing = step.fields.find(
-      (field) =>
-        field.required &&
-        visible(field, answers) &&
-        !hasValue(answers[field.id])
-    );
-
+    const missing = step.fields.find((field) => field.required && visible(field, answers) && !hasValue(answers[field.id]));
     if (missing) {
       setError(`Complete el campo obligatorio: ${missing.label}`);
       return;
     }
-
     setError(null);
-    if (index < steps.length - 1) {
-      setIndex(index + 1);
-    } else {
-      onComplete(answers);
-    }
+    if (index < steps.length - 1) setIndex(index + 1);
+    else onComplete(answers);
   }
 
   function renderField(field: FormField) {
     const value = answers[field.id];
-
-    if (field.type === "textarea") {
-      return (
-        <textarea
-          value={typeof value === "string" ? value : ""}
-          placeholder={field.placeholder}
-          onChange={(event) => setField(field.id, event.target.value)}
-          className="w-full border rounded-md p-2 min-h-28"
-        />
-      );
-    }
-
-    if (field.type === "select") {
-      return (
-        <select
-          value={typeof value === "string" ? value : ""}
-          onChange={(event) => setField(field.id, event.target.value)}
-          className="w-full border rounded-md p-2"
-        >
-          <option value="">Seleccione...</option>
-          {field.options?.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      );
-    }
-
-    if (field.type === "radio") {
-      return (
-        <div className="flex flex-wrap gap-4">
-          {field.options?.map((option) => (
-            <label key={option.value} className="flex items-center gap-2">
-              <input
-                type="radio"
-                name={field.id}
-                checked={value === option.value}
-                onChange={() => setField(field.id, option.value)}
-              />
-              {option.label}
-            </label>
-          ))}
-        </div>
-      );
-    }
-
-    if (field.type === "checkbox") {
-      return (
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={value === true}
-            onChange={(event) => setField(field.id, event.target.checked)}
-          />
-          Sí
-        </label>
-      );
-    }
-
-    return (
-      <input
-        value={typeof value === "string" ? value : ""}
-        placeholder={field.placeholder}
-        onChange={(event) => setField(field.id, event.target.value)}
-        type={
-          field.type === "phone"
-            ? "tel"
-            : field.type === "date"
-              ? "date"
-              : field.type === "email"
-                ? "email"
-                : "text"
-        }
-        className="w-full border rounded-md p-2"
-      />
-    );
+    if (field.type === "textarea") return <textarea value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(event) => setField(field.id, event.target.value)} className="w-full border rounded-md p-2 min-h-28" />;
+    if (field.type === "select") return <select value={typeof value === "string" ? value : ""} onChange={(event) => setField(field.id, event.target.value)} className="w-full border rounded-md p-2"><option value="">Seleccione...</option>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>;
+    if (field.type === "radio") return <div className="flex flex-wrap gap-4">{field.options?.map((option) => <label key={option.value} className="flex items-center gap-2"><input type="radio" name={field.id} checked={value === option.value} onChange={() => setField(field.id, option.value)} />{option.label}</label>)}</div>;
+    if (field.type === "checkbox") return <label className="flex items-center gap-2"><input type="checkbox" checked={value === true} onChange={(event) => setField(field.id, event.target.checked)} />Sí</label>;
+    return <input value={typeof value === "string" ? value : ""} placeholder={field.placeholder} onChange={(event) => setField(field.id, event.target.value)} type={field.type === "phone" ? "tel" : field.type === "date" ? "date" : field.type === "email" ? "email" : "text"} className="w-full border rounded-md p-2" />;
   }
 
   if (!step) return null;
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-xl font-bold">{step.title}</h3>
-          {step.description && (
-            <p className="text-sm text-slate-500 mt-1">{step.description}</p>
-          )}
-        </div>
-        <div className="text-sm text-slate-500">
-          {savedAt
-            ? `Guardado ${new Date(savedAt).toLocaleString()}`
-            : "Sin guardar"}
-        </div>
-      </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-        >
-          {error}
-        </div>
-      )}
-
-      <div className="grid gap-4">
-        {step.fields.filter((field) => visible(field, answers)).map((field) => (
-          <div key={field.id}>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              {field.label}
-              {field.required ? " *" : ""}
-            </label>
-            {renderField(field)}
-          </div>
-        ))}
-      </div>
-
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => index > 0 && setIndex(index - 1)}
-          disabled={index === 0}
-          className="px-4 py-2 rounded-md border text-slate-700 disabled:opacity-50"
-        >
-          Atrás
-        </button>
-
-        <div className="flex items-center gap-3">
-          <div className="text-sm text-slate-500">
-            Paso {index + 1} de {steps.length}
-          </div>
-          <button
-            onClick={next}
-            className="px-4 py-2 rounded-md bg-blue-600 text-white font-semibold"
-          >
-            {index === steps.length - 1 ? "Vista previa" : "Continuar"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="space-y-6">
+    <div className="flex items-center justify-between"><div><h3 className="text-xl font-bold">{step.title}</h3>{step.description && <p className="text-sm text-slate-500 mt-1">{step.description}</p>}</div><div className="text-sm text-slate-500">{savedAt ? `Guardado ${new Date(savedAt).toLocaleString()}` : "Sin guardar"}</div></div>
+    {error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+    <div className="grid gap-4">{step.fields.filter((field) => visible(field, answers)).map((field) => <div key={field.id}><label className="block text-sm font-medium text-slate-700 mb-1">{field.label}{field.required ? " *" : ""}</label>{renderField(field)}</div>)}</div>
+    <div className="flex items-center justify-between"><button onClick={() => index > 0 && setIndex(index - 1)} disabled={index === 0} className="px-4 py-2 rounded-md border text-slate-700 disabled:opacity-50">Atrás</button><div className="flex items-center gap-3"><div className="text-sm text-slate-500">Paso {index + 1} de {steps.length}</div><button onClick={next} className="px-4 py-2 rounded-md bg-blue-600 text-white font-semibold">{index === steps.length - 1 ? "Vista previa" : "Continuar"}</button></div></div>
+  </div>;
 }
