@@ -4,14 +4,15 @@ export type ParsedSimitRecord = {
   kind: 'multa' | 'comparendo'; number?: string; date?: string; time?: string; authority?: string; municipality?: string; department?: string; plate?: string; ownerName?: string; documentNumber?: string; infractionCode?: string; description?: string; status?: string; value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string;
 };
 
-const IDENTIFIER_RE = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
+// Official SIMIT layouts include 20-digit records, 10-digit records, FAD/TC
+// identifiers and legacy 9-10 digit identifiers ending in S. Do not broaden
+// this to arbitrary 8-10 digit numbers because the PDF header contains the
+// citizen's cédula and must never become a false comparendo.
+const IDENTIFIER_RE = /(?:\d{20}|\d{9,10}S|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
 const DATE_RE = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/g;
 const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
 const CODE_RE = /\b([A-D]\d{2})\b/i;
-// Colombian vehicle plates: ABC123 / ABC-123 / ABC 123. Keep the label-aware
-// extractor separate so a plate-looking token elsewhere is only accepted when
-// it is plausibly a vehicle plate and is not a known document/record number.
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 
 function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
@@ -55,9 +56,6 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
 export function extractSimitPlate(input: string): string | undefined {
   const text = normalizeWhitespace(input);
   if (!text) return undefined;
-
-  // SIMIT/PDF variants seen in practice: PLACA:, PLACA DEL VEHÍCULO:,
-  // PLACA VEHICULO:, PLACA DEL VEHICULO =, and OCR typo PLCA:.
   const labelledPatterns = [
     /(?:^|[\n|])\s*(?:placa|plca)\s*(?:del\s+veh[ií]culo|veh[ií]culo)?\s*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im,
     /(?:placa|plca)[^A-Z0-9]{0,20}([A-Z]{3}[ -]?\d{3})\b/i,
@@ -66,14 +64,7 @@ export function extractSimitPlate(input: string): string | undefined {
     const match = text.match(pattern);
     if (match?.[1]) return match[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase();
   }
-
-  // Fallback for PDFs where the extractor loses table labels but preserves the
-  // plate token. Exclude tokens immediately adjacent to words that commonly
-  // identify unrelated alphanumeric values.
-  const matches = [...text.matchAll(PLATE_RE)].map(m => ({
-    plate: m[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase(),
-    index: m.index ?? -1,
-  }));
+  const matches = [...text.matchAll(PLATE_RE)].map(m => ({ plate: m[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase(), index: m.index ?? -1 }));
   for (const { plate, index } of matches) {
     const before = text.slice(Math.max(0, index - 60), index).toLowerCase();
     if (/documento|c[eé]dula|identificaci[oó]n|comparendo|resoluci[oó]n|radicado/.test(before)) continue;
@@ -93,9 +84,9 @@ function extractMunicipality(body: string, date: string, code?: string): string 
 function parseRecord(number: string, chunk: string): ParsedSimitRecord | undefined {
   const body = clean(chunk); const date = extractDate(body); if (!date) return undefined;
   const code = extractCode(body); const status = extractStatus(body) || 'Pendiente'; const municipality = extractMunicipality(body, date, code); const authority = authorityFromMunicipality(municipality, body);
-  return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority, infractionCode: code, status, value: extractMoney(body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')) };
+  return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority, plate: extractSimitPlate(body), infractionCode: code, status, value: extractMoney(body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')) };
 }
-function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] { const map = new Map<string, ParsedSimitRecord>(); for (const record of records) { const key = `${record.number || ''}|${record.date || ''}`; const previous = map.get(key); if (!previous) map.set(key, record); else map.set(key, { ...previous, ...record, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, value: record.value ?? previous.value }); } return [...map.values()]; }
+function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] { const map = new Map<string, ParsedSimitRecord>(); for (const record of records) { const key = `${record.number || ''}|${record.date || ''}`; const previous = map.get(key); if (!previous) map.set(key, record); else map.set(key, { ...previous, ...record, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value }); } return [...map.values()]; }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
