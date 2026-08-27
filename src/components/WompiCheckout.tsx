@@ -18,12 +18,9 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     document.body.appendChild(script);
   }, []);
 
-  async function waitForApproval(token: string, attempts = 20): Promise<boolean> {
+  async function waitForApproval(attempts = 30): Promise<boolean> {
     for (let i = 0; i < attempts; i += 1) {
-      const response = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&documentVersionId=${encodeURIComponent(documentVersionId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      });
+      const response = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&documentVersionId=${encodeURIComponent(documentVersionId)}`, { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
         if (data.approved) return true;
@@ -38,14 +35,9 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     setError(null);
     onPending?.();
     try {
-      const supabaseModule = await import('../lib/supabaseBrowserClient');
-      const supabase = supabaseModule.getSupabaseBrowser();
-      const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any;
-      if (!session?.access_token) throw new Error('Inicia sesión para continuar.');
-
       const response = await fetch('/api/payments/wompi', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ procedureId, documentVersionId }),
       });
       const data: CheckoutData = await response.json();
@@ -69,7 +61,7 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
       checkout.open(async (result: any) => {
         const status = String(result?.transaction?.status || '').toUpperCase();
         if (status === 'APPROVED') {
-          const approved = await waitForApproval(session.access_token);
+          const approved = await waitForApproval();
           if (approved) window.location.reload();
           else setError('El pago fue aprobado, pero estamos esperando la confirmación del servidor. Actualiza esta página en unos segundos.');
         } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
@@ -83,5 +75,5 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     }
   }
 
-  return <div className="space-y-2"><button type="button" onClick={openCheckout} disabled={loading} className="w-full px-4 py-3 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-60">{loading ? 'Preparando pago…' : 'Pagar y desbloquear documento'}</button>{error && <p className="text-xs text-red-600">{error}</p>}<p className="text-[11px] text-slate-400 text-center">Pago seguro procesado por Wompi.</p></div>;
+  return <div className="space-y-2"><button type="button" onClick={openCheckout} disabled={loading} className="w-full px-4 py-3 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-60">{loading ? 'Preparando pago…' : 'Pagar y desbloquear documento'}</button>{error && <p className="text-xs text-red-600">{error}</p>}<p className="text-[11px] text-slate-400 text-center">Pago seguro procesado por Wompi. No necesitas crear una cuenta.</p></div>;
 }
