@@ -4,33 +4,15 @@ import { selectLegalAuthorities } from "../../../../lib/legalLibrary";
 import { assessTrafficRecord, generateLegalDraft, type SelectedRecordData } from "../../../../lib/legalEngine";
 
 const RecordSchema = z.object({
-  comparendo: z.string().optional().default(""),
-  fecha: z.string().optional().default(""),
-  organismo: z.string().optional().default(""),
-  estado: z.string().optional().default(""),
-  valor: z.string().optional().default(""),
-  placa: z.string().optional(),
-  cedula: z.string().optional(),
-  codigo: z.string().optional(),
-  fechaResolucion: z.string().optional(),
-  fechaNotificacion: z.string().optional(),
-  fechaMandamientoPago: z.string().optional(),
-  huboAudiencia: z.union([z.boolean(), z.string()]).optional(),
-  existeResolucion: z.union([z.boolean(), z.string()]).optional(),
+  comparendo: z.string().optional().default(""), fecha: z.string().optional().default(""), organismo: z.string().optional().default(""), estado: z.string().optional().default(""), valor: z.string().optional().default(""),
+  placa: z.string().optional(), cedula: z.string().optional(), codigo: z.string().optional(), fechaResolucion: z.string().optional(), fechaNotificacion: z.string().optional(), fechaMandamientoPago: z.string().optional(),
+  huboAudiencia: z.union([z.boolean(), z.string()]).optional(), existeResolucion: z.union([z.boolean(), z.string()]).optional(),
 });
 
 function deterministic(record: SelectedRecordData) {
   const draft = generateLegalDraft(record);
   const authorities = selectLegalAuthorities(draft.assessment.routes, `${draft.fundamentos} ${record.estado}`);
-  return {
-    ...draft,
-    legalAnalysis: {
-      conclusion: `Ruta principal: ${draft.assessment.primaryRoute || "REVISIÓN INTEGRAL"}.`,
-      confidence: draft.assessment.missingEvidence.length ? "media" : "alta",
-      authorities,
-      caveat: "Las conclusiones que dependan de fechas o actuaciones no visibles en SIMIT quedan condicionadas a la verificación del expediente administrativo.",
-    },
-  };
+  return { ...draft, legalAnalysis: { conclusion: `Ruta principal: ${draft.assessment.primaryRoute || "REVISIÓN INTEGRAL"}.`, confidence: draft.assessment.missingEvidence.length ? "media" : "alta", authorities, caveat: "Las conclusiones que dependan de fechas o actuaciones no visibles en SIMIT quedan condicionadas a la verificación del expediente administrativo." } };
 }
 
 function developedLibrary(authorities: ReturnType<typeof selectLegalAuthorities>) {
@@ -89,62 +71,21 @@ ${JSON.stringify(base.assessment)}
 BIBLIOTECA JURÍDICA:
 ${library}`;
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        input: prompt,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "legal_analysis",
-            strict: true,
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                title: { type: "string" },
-                problem: { type: "string" },
-                facts: { type: "string" },
-                legalFramework: { type: "string" },
-                application: { type: "string" },
-                requests: { type: "string" },
-                warnings: { type: "string" },
-              },
-              required: ["title", "problem", "facts", "legalFramework", "application", "requests", "warnings"],
-            },
-          },
-        },
-      }),
-    });
+    const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model, input: prompt, text: { format: { type: "json_schema", name: "legal_analysis", strict: true, schema: { type: "object", additionalProperties: false, properties: { title: { type: "string" }, problem: { type: "string" }, facts: { type: "string" }, legalFramework: { type: "string" }, application: { type: "string" }, requests: { type: "string" }, warnings: { type: "string" } }, required: ["title", "problem", "facts", "legalFramework", "application", "requests", "warnings"] } } } }) });
     if (!response.ok) return NextResponse.json({ ...base, ai: { enabled: false, reason: `OpenAI ${response.status}` } });
 
     const data = await response.json();
     const outputText = data.output_text || data.output?.flatMap((item: any) => item.content || []).map((part: any) => part.text || "").join("") || "";
     let parsedAnalysis: any = null;
     try { parsedAnalysis = JSON.parse(outputText); } catch { parsedAnalysis = null; }
-
     if (!parsedAnalysis) return NextResponse.json({ ...base, ai: { enabled: false, reason: "La IA no devolvió una estructura jurídica válida" } });
 
-    // La IA desarrolla el razonamiento, pero las fuentes que la sustentan siguen
-    // estando controladas por la biblioteca jurídica y el diagnóstico determinístico.
-    const legalFramework = [
-      parsedAnalysis.legalFramework || "",
-      parsedAnalysis.application ? `\n\nV. ANÁLISIS DEL CASO CONCRETO\n${parsedAnalysis.application}` : "",
-    ].filter(Boolean).join("").trim();
-
-    const legalAnalysis = {
-      ...parsedAnalysis,
-      legalFramework,
-      application: parsedAnalysis.application || base.assessment.reasoning.join(" "),
-      authorities: base.legalAnalysis.authorities,
-      deterministicConclusion: base.legalAnalysis.conclusion,
-      caveat: base.legalAnalysis.caveat,
-    };
-
+    const legalFramework = [parsedAnalysis.legalFramework || "", parsedAnalysis.application ? `\n\nV. ANÁLISIS DEL CASO CONCRETO\n${parsedAnalysis.application}` : ""].filter(Boolean).join("").trim();
+    const legalAnalysis = { ...parsedAnalysis, legalFramework, application: parsedAnalysis.application || base.assessment.reasoning.join(" "), authorities: base.legalAnalysis.authorities, deterministicConclusion: base.legalAnalysis.conclusion, caveat: base.legalAnalysis.caveat };
     return NextResponse.json({ ...base, legalAnalysis, ai: { enabled: true, model } });
   } catch (error) {
     return NextResponse.json({ error: "No fue posible analizar jurídicamente el caso", detail: error instanceof Error ? error.message : "unknown" }, { status: 400 });
   }
 }
+
+// Humanización jurídica: las fuentes se conservan, pero el texto final se integra como argumentación continua.
