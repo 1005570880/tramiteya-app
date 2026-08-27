@@ -1,5 +1,6 @@
 import type { FormAnswers } from '../types/form';
 import { evaluateTrafficCase, getApplicableTrafficRules } from './legalRules';
+import type { LegalAssessment } from './legalEngine';
 
 const v = (a: FormAnswers, k: string, f = '') => {
   const x = a[k];
@@ -7,47 +8,99 @@ const v = (a: FormAnswers, k: string, f = '') => {
   if (typeof x === 'boolean') return x ? 'Sí' : 'No';
   if (x == null) return f;
   const value = String(x).trim();
-  // Never expose parser/UI fallback text as if it were a fact from SIMIT.
   if (/^no especificad[ao] en pdf$/i.test(value)) return f;
   return value;
 };
 
-const cleanSentence = (value: string) => value.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '.') ;
+const cleanSentence = (value: string) => value.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '.');
+
+function getAssessment(a: FormAnswers): LegalAssessment | null {
+  const value = a.__legalAssessment;
+  return value && typeof value === 'object' ? value as LegalAssessment : null;
+}
+
+function routeLabel(route: string | null | undefined) {
+  switch (route) {
+    case 'CADUCIDAD': return 'caducidad de la actuación contravencional';
+    case 'PRESCRIPCION': return 'prescripción de la acción de cobro / obligación, según corresponda';
+    case 'PERDIDA_EJECUTORIEDAD': return 'pérdida de fuerza ejecutoria del acto administrativo';
+    case 'NOTIFICACION': return 'notificación y debido proceso';
+    case 'DEBIDO_PROCESO': return 'debido proceso';
+    case 'REVOCATORIA_DIRECTA': return 'revocatoria directa, si resulta procedente';
+    default: return 'revisión integral de la actuación administrativa';
+  }
+}
+
+function buildRouteRequests(a: FormAnswers, assessment: LegalAssessment | null) {
+  const number = v(a, 'numero_comparendo', 'no identificado');
+  const date = v(a, 'fecha_comparendo', 'no identificada');
+  const routes = assessment?.routes ?? [];
+  const requests: string[] = [];
+
+  if (routes.includes('CADUCIDAD')) {
+    requests.push(`Se determine, con base en las fechas que obren en el expediente, si operó la caducidad de la actuación contravencional relacionada con el comparendo No. ${number}, verificando audiencia, decisión sancionatoria, recursos y ejecutoria.`);
+  }
+  if (routes.includes('PRESCRIPCION')) {
+    requests.push('Se establezca la fecha de ejecutoria de la sanción y, de existir cobro coactivo, la fecha de expedición y notificación del mandamiento de pago, así como las actuaciones posteriores que puedan incidir en el término de prescripción.');
+  }
+  if (routes.includes('PERDIDA_EJECUTORIEDAD')) {
+    requests.push('Se determine si se configura la pérdida de fuerza ejecutoria del acto administrativo, verificando la fecha en que quedó en firme y las actuaciones efectivamente realizadas para su ejecución dentro del término legal.');
+  }
+  if (routes.includes('NOTIFICACION') || routes.includes('DEBIDO_PROCESO')) {
+    requests.push('Se aporten las constancias completas de notificación de la orden de comparendo, resolución sancionatoria y demás actos relevantes, indicando fecha, medio, dirección o canal utilizado y constancia de entrega o conocimiento.');
+  }
+  if (routes.includes('REVOCATORIA_DIRECTA')) {
+    requests.push('Subsidiariamente, si se acredita una causal legal de revocatoria directa o una irregularidad que afecte la validez o eficacia de la actuación, se adopte la decisión que jurídicamente corresponda.');
+  }
+
+  requests.push('Se remita copia íntegra, legible y completa del expediente administrativo, incluyendo orden de comparendo, evidencia disponible, resolución sancionatoria, constancia de ejecutoria, recursos, actuaciones de cobro, mandamiento de pago y sus constancias de notificación, si existen.');
+  return requests.map(cleanSentence);
+}
+
+function buildTitle(slug: string, assessment: LegalAssessment | null) {
+  const primary = assessment?.primaryRoute;
+  if (primary === 'PRESCRIPCION') return 'SOLICITUD DE PRESCRIPCIÓN DE OBLIGACIÓN DE TRÁNSITO';
+  if (primary === 'PERDIDA_EJECUTORIEDAD') return 'SOLICITUD DE DECLARATORIA DE PÉRDIDA DE FUERZA EJECUTORIA';
+  if (primary === 'CADUCIDAD') return 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE ACTUACIÓN DE TRÁNSITO';
+  if (primary === 'NOTIFICACION') return 'DERECHO DE PETICIÓN — REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
+  if (slug === 'fotomultas') return 'DERECHO DE PETICIÓN — SOLICITUD RELACIONADA CON FOTODETECCIÓN / FOTOMULTA';
+  if (slug === 'revocatoria-comparendo') return 'SOLICITUD DE REVOCATORIA / CORRECCIÓN DE ACTUACIÓN DE TRÁNSITO';
+  if (slug === 'solicitud-soportes-comparendo') return 'DERECHO DE PETICIÓN — SOLICITUD DE INFORMACIÓN Y SOPORTES DE TRÁNSITO';
+  return 'DERECHO DE PETICIÓN — SOLICITUD DE REVISIÓN Y ELIMINACIÓN DE MULTA';
+}
 
 export function buildTrafficDocument(slug: string, a: FormAnswers) {
-  const titles: Record<string, string> = {
-    'prescripcion-comparendo': 'SOLICITUD DE PRESCRIPCIÓN DE OBLIGACIÓN DE TRÁNSITO',
-    'caducidad-comparendo': 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE ACTUACIÓN DE TRÁNSITO',
-    'revocatoria-comparendo': 'SOLICITUD DE REVOCATORIA / CORRECCIÓN DE ACTUACIÓN DE TRÁNSITO',
-    'solicitud-soportes-comparendo': 'DERECHO DE PETICIÓN — SOLICITUD DE INFORMACIÓN Y SOPORTES DE TRÁNSITO',
-    fotomultas: 'DERECHO DE PETICIÓN — SOLICITUD RELACIONADA CON FOTODETECCIÓN / FOTOMULTA',
-    'derecho-de-peticion-eliminar-multa': 'DERECHO DE PETICIÓN — SOLICITUD DE REVISIÓN Y ELIMINACIÓN DE MULTA',
-  };
-
-  const title = titles[slug] ?? 'SOLICITUD ADMINISTRATIVA DE TRÁNSITO';
+  const assessment = getAssessment(a);
+  const title = buildTitle(slug, assessment);
   const rules = getApplicableTrafficRules(a);
   const decisions = evaluateTrafficCase(a);
-  const favorable = decisions.filter((d) => d.level === 'favorable');
-  const uncertain = decisions.filter((d) => d.level !== 'favorable');
+  const legalDecisions = decisions.length ? decisions : [];
   const ruleLabels = rules.filter((r) => r.id !== 'soportes').map((r) => r.label).join(', ');
+  const primary = routeLabel(assessment?.primaryRoute);
 
-  const primaryRequest = favorable.length
-    ? `Solicito que se declare o reconozca la procedencia de ${favorable.map((d) => d.id === 'prescripcion' ? 'la prescripción' : d.id === 'caducidad' ? 'la caducidad' : d.label.toLowerCase()).join(' y ')}, previo el análisis integral del expediente.`
-    : `Solicito que se verifique la procedencia de ${ruleLabels || 'la actuación administrativa cuestionada'} y se adopte la decisión jurídicamente correspondiente, sin presumir hechos o presupuestos que deban acreditarse.`;
-
-  const evidenceItems = uncertain.map((d) => cleanSentence(d.nextStep));
-  const evidenceRequest = evidenceItems.length
-    ? evidenceItems.join(' ')
-    : 'se remita copia íntegra del expediente y de los soportes pertinentes.';
-
-  const soportes = 'Solicito copia íntegra de los soportes que sustentan la actuación, incluyendo la orden de comparendo, evidencia disponible, constancias de notificación, mandamiento de pago si existe, actos administrativos, recursos y demás documentos pertinentes.';
-  const legalAnalysis = decisions.length
-    ? decisions.map((d) => `• ${d.label}: ${d.reason} Siguiente actuación: ${d.nextStep} Fundamento orientador: ${d.legalBasis.join('; ')}.`).join('\n')
-    : 'No se identificó una conclusión jurídica automatizada. Se requiere revisión del expediente y de la información aportada.';
+  const legalAnalysis = assessment
+    ? [
+        `Ruta jurídica priorizada: ${primary}.`,
+        ...assessment.reasoning.map(cleanSentence),
+        assessment.missingEvidence.length
+          ? `Información o evidencia pendiente de verificación: ${assessment.missingEvidence.join('; ')}.`
+          : 'No se identificaron elementos probatorios adicionales indispensables con la información disponible.',
+      ].join('\n')
+    : legalDecisions.length
+      ? legalDecisions.map((d) => `• ${d.label}: ${d.reason} Siguiente actuación: ${d.nextStep} Fundamento orientador: ${d.legalBasis.join('; ')}.`).join('\n')
+      : `Se requiere revisión de ${ruleLabels || 'la actuación administrativa'} con base en el expediente y los soportes oficiales.`;
 
   const placa = v(a, 'placa');
-  const solicitud = v(a, 'pretension', primaryRequest);
-  const hechos = v(a, 'hechos');
+  const hechos = v(a, 'hechos', 'No se han incorporado hechos adicionales distintos de los datos identificados en el Estado de Cuenta SIMIT.');
+  const routeRequests = buildRouteRequests(a, assessment);
+  const solicitudFromEngine = v(a, 'solicitudConcreta') || v(a, 'pretension');
+  const solicitud = solicitudFromEngine || [
+    `1. PRIMERO: Se revise integralmente la actuación administrativa asociada al comparendo No. ${v(a, 'numero_comparendo', 'no identificado')} de fecha ${v(a, 'fecha_comparendo', 'no identificada')}.`,
+    `2. SEGUNDO: Se determine la procedencia de ${primary}.`,
+    '3. TERCERO: Si se acredita una causal de terminación, prescripción, caducidad, pérdida de fuerza ejecutoria o irregularidad invalidante, se adopte la decisión administrativa correspondiente y se actualicen los registros.',
+    '4. CUARTO: Se remita respuesta de fondo, clara, congruente y completa.',
+  ].join('\n');
+
   const header = [
     v(a, 'ciudad', 'Ciudad'),
     v(a, 'fecha', new Date().toLocaleDateString('es-CO')),
@@ -64,7 +117,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
   ];
   if (placa) header.push(`Placa: ${placa}`);
 
-  const objeto = `Solicito la revisión integral de la actuación administrativa asociada al comparendo No. ${v(a, 'numero_comparendo', 'no identificado')} de fecha ${v(a, 'fecha_comparendo', 'no identificada')}, con el fin de establecer, con base en el expediente y los soportes oficiales, si existe fundamento para la eliminación, archivo, revocatoria o reconocimiento de la situación jurídica que corresponda.`;
+  const objeto = `Solicito la revisión integral de la actuación administrativa asociada al comparendo No. ${v(a, 'numero_comparendo', 'no identificado')} de fecha ${v(a, 'fecha_comparendo', 'no identificada')}, con especial atención a ${primary}, conforme a las circunstancias y evidencia que obren en el expediente.`;
 
   return [
     ...header,
@@ -80,11 +133,11 @@ export function buildTrafficDocument(slug: string, a: FormAnswers) {
     '',
     'IV. PETICIONES',
     solicitud,
-    `Para resolver lo anterior, solicito especialmente que ${evidenceRequest}`,
+    ...routeRequests.map((item, index) => `${index + 1}. ${item}`),
     'Se remita respuesta de fondo, clara, congruente y completa dentro del término legal aplicable.',
     '',
     'V. INFORMACIÓN Y SOPORTES',
-    soportes,
+    'Solicito copia íntegra de los soportes que sustentan la actuación, incluyendo los documentos y constancias pertinentes para verificar la ruta jurídica identificada por TrámiteYa.',
     '',
     'VI. ANEXOS',
     v(a, 'anexos', 'Estado de Cuenta SIMIT aportado por el solicitante.'),
