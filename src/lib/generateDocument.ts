@@ -17,18 +17,27 @@ function extractPetitions(content: string): string | null {
   return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
 }
 
+function hasDuplicatedTopLevelSections(content: string): boolean {
+  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+/gim) || [];
+  const counts = new Map<string, number>();
+  for (const heading of headings) {
+    const key = heading.trim().toUpperCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.values()].some(count => count > 1);
+}
+
 function preserveDeterministicPetitions(deterministic: string, refined: string): string {
+  if (hasDuplicatedTopLevelSections(refined)) return deterministic;
   const sourcePetitions = extractPetitions(deterministic);
-  if (!sourcePetitions) return refined;
+  if (!sourcePetitions) return deterministic;
   const target = refined.match(/(?:^|\n)(V|IX)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X)\. |$)/i);
   if (!target) return deterministic;
-  const replacement = `\n${sourcePetitions}\n`;
   const start = target.index ?? 0;
   const block = target[0];
   const leading = block.startsWith('\n') ? '\n' : '';
-  const body = block.slice(leading.length);
   const bodyStart = start + leading.length;
-  const bodyEnd = bodyStart + body.length;
+  const bodyEnd = bodyStart + block.slice(leading.length).length;
   return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -40,7 +49,7 @@ async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Pr
   if (!refined || refined.length < 500) return deterministic;
 
   // La IA solo puede mejorar estilo. Las PETICIONES determinísticas son la fuente de verdad
-  // para evitar que una reescritura elimine la pretensión principal o la solicitud de depuración.
+  // y cualquier salida estructuralmente defectuosa se descarta íntegramente.
   return preserveDeterministicPetitions(deterministic, refined);
 }
 
