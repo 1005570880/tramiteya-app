@@ -4,6 +4,35 @@ const MODEL = process.env.TRAMITEYA_AI_MODEL || 'openai/gpt-5.4';
 const MAX_INPUT = 45000;
 function hasGatewayCredentials() { return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN); }
 function cleanOutput(text: string) { return text.replace(/^```(?:text|markdown)?\s*/i, '').replace(/\s*```$/i, '').replace(/^\s+|\s+$/g, '').replace(/\n{3,}/g, '\n\n'); }
+
+function hasRequiredRelief(text: string): boolean {
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const hasPetitions = /(?:^|\n)\s*(?:v|ix|x)\.?\s+peticiones\b/.test(normalized);
+  const hasDeletion = /(elimin|cancel|depur|actualiz).{0,180}(multa|comparendo|registro|simit)|(multa|comparendo|registro|simit).{0,180}(elimin|cancel|depur|actualiz)/s.test(normalized);
+  const hasTermination = /(termin|archive).{0,180}(obligacion|cobro|sancion)|(obligacion|cobro|sancion).{0,180}(termin|archive)/s.test(normalized);
+  return hasPetitions && hasDeletion && hasTermination;
+}
+
+function hasDuplicatedMajorSections(text: string): boolean {
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const headings = [
+    'i. objeto', 'ii. hechos', 'iii. fundamentos de derecho', 'iv. analisis del caso concreto',
+    'v. peticiones', 'vi. anexos', 'vii. notificaciones', 'viii. conclusion juridica', 'ix. peticiones'
+  ];
+  return headings.some((heading) => {
+    const matches = normalized.match(new RegExp(`(?:^|\\n)\\s*${heading.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}(?:\\s|$)`, 'g'));
+    return Boolean(matches && matches.length > 1);
+  });
+}
+
+function structurallySafe(text: string): boolean {
+  const compact = cleanOutput(text);
+  if (compact.length < 500) return false;
+  if (hasDuplicatedMajorSections(compact)) return false;
+  if (!hasRequiredRelief(compact)) return false;
+  return true;
+}
+
 export async function refineLegalDocument(content: string): Promise<string> {
   if (!hasGatewayCredentials() || !content.trim()) return content;
   try {
@@ -30,7 +59,9 @@ REGLAS ABSOLUTAS:
       prompt: `Depura este documento respetando todas las reglas y conserva sus pretensiones favorables:\n\n${content.slice(0, MAX_INPUT)}`,
     });
     const refined = cleanOutput(result.text || '');
-    return refined.length >= 500 ? refined : content;
+    // Fail closed: if the model duplicated sections or weakened the requested relief,
+    // return the deterministic document instead of shipping a damaged legal pleading.
+    return structurallySafe(refined) ? refined : content;
   } catch (error) {
     console.error('AI document refinement unavailable; using deterministic draft:', error);
     return content;
