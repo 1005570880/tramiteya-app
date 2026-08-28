@@ -113,7 +113,7 @@ export function assessLegalSituation(record: SelectedRecordData): LegalAssessmen
   if (ageYears >= 3) evidenceQuestions.push('¿Qué actuaciones con incidencia en el término de prescripción fueron realizadas y notificadas eficazmente?');
 
   const missingEvidence = [...evidenceQuestions];
-  const certainty: LegalCertainty = ageYears >= 3 && !record.fechaNotificacionMandamiento ? 'PENDIENTE_DE_PRUEBA' : 'PENDIENTE_DE_PRUEBA';
+  const certainty: LegalCertainty = 'PENDIENTE_DE_PRUEBA';
   const executiveSummary = date
     ? `La actuación tiene una antigüedad aproximada de ${ageYears.toFixed(2)} años. El vencimiento inicial calculado del término de tres años es ${initialExpiryDate}. Esta referencia temporal no sustituye la reconstrucción documental de la firmeza, notificación y cobro.`
     : 'No fue posible establecer la antigüedad con certeza a partir de la fecha disponible; la cronología debe ser acreditada documentalmente.';
@@ -197,7 +197,7 @@ export function generateUnifiedLegalDocument(record: SelectedRecordData): LegalD
     `**PETICIONARIO:** ${applicant.toUpperCase()} — C.C. No. ${cedula}`,
     `**REFERENCIA:** ACTUACIÓN / COMPARENDO No. ${number}`,
     '',
-    `Yo, **${applicant}**, identificado(a) con cédula de ciudadanía No. **${cedula}**, actuando en nombre propio, presento respetuosamente este derecho de petición, en ejercicio del derecho fundamental consagrado en el **artículo 23 de la Constitución Política de Colombia** y desarrollado por la **Ley 1755 de 2015**, mediante la cual se regula el ejercicio del derecho fundamental de petición.`,
+    `Yo, **${applicant}**, identificado con cédula de ciudadanía No. **${cedula}**, actuando en nombre propio, presento respetuosamente este derecho de petición, en ejercicio del derecho fundamental consagrado en el **artículo 23 de la Constitución Política de Colombia** y desarrollado por la **Ley 1755 de 2015**, mediante la cual se regula el ejercicio del derecho fundamental de petición.`,
     '',
     `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica de la actuación No. **${number}**, con base en los datos acreditados, el expediente administrativo y las actuaciones que la autoridad debe demostrar documentalmente, particularmente aquellas relacionadas con la notificación de las actuaciones administrativas, la eventual imposición de la sanción, su firmeza, las actuaciones de cobro y los demás elementos que resulten determinantes para establecer su situación jurídica actual.`,
     '', '### **I. HECHOS ACREDITADOS**', '', hechos,
@@ -208,7 +208,7 @@ export function generateUnifiedLegalDocument(record: SelectedRecordData): LegalD
     '', '### **IV. FUNDAMENTOS DE DERECHO Y JURISPRUDENCIA**', '', fundamentos,
     '', '### **V. PRETENSIONES**', '', solicitudConcreta,
     '', '### **VI. ANEXOS Y PRUEBAS**', '', '1. Estado de Cuenta / Reporte SIMIT aportado por el solicitante.', '2. Copia del documento de identidad, cuando sea aportada.',
-    '', '### **VII. NOTIFICACIONES**', '', email ? `Agradezco que la respuesta sea remitida al correo electrónico **${email}**.` : 'Agradezco que la respuesta sea remitida por el medio legalmente procedente.',
+    '', '### **VII. NOTIFICACIONES**', '', 'La respuesta deberá ser remitida al medio de notificación que corresponda conforme a la información suministrada por el peticionario.',
     '', 'Atentamente,', '', applicant, cedula ? `C.C. No. ${cedula}` : '', email ? `Correo electrónico: ${email}` : '',
   ].filter((line, index, arr) => !(line === '' && (arr[index - 1] === '' || arr[index + 1] === ''))).join('\n').trim();
 
