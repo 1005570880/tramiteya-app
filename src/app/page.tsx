@@ -29,7 +29,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
       <Header />
 
-      {/* Social proof moved immediately below the header so trust is established before the user reaches the main conversion flow. */}
+      {/* Social proof is intentionally the first content block: it appears before the hero and removes the main trust barrier immediately. */}
       <TestimonialsSlider />
 
       <section className="relative overflow-hidden bg-slate-950 text-white">
@@ -47,52 +47,17 @@ export default function Home() {
               </div>
               <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold text-slate-400"><span>✓ Sin formularios interminables</span><span>✓ Vista previa</span><span>✓ Word + PDF</span></div>
             </div>
-
-            <div className="relative">
-              <div className="rounded-[2rem] border border-white/10 bg-white/[0.07] p-3 shadow-2xl shadow-black/40 backdrop-blur">
-                <div className="rounded-[1.5rem] bg-white p-6 text-slate-950 sm:p-7">
-                  <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-600">Diagnóstico inicial</p><h2 className="mt-2 text-2xl font-black">¿Tienes un comparendo?</h2></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700">GRATIS</span></div>
-                  <div className="mt-6 space-y-3">
-                    <div className="rounded-2xl border border-slate-200 p-4"><p className="text-xs font-bold text-slate-400">PASO 1</p><p className="mt-1 font-extrabold">Sube tu Estado de Cuenta SIMIT</p><p className="mt-1 text-xs leading-5 text-slate-500">También puedes digitar tu cédula.</p></div>
-                    <div className="rounded-2xl bg-indigo-50 p-4"><p className="text-xs font-bold text-indigo-500">ANÁLISIS</p><p className="mt-1 font-extrabold text-indigo-950">TrámiteYa encuentra la vía jurídica</p><p className="mt-1 text-xs leading-5 text-indigo-900/70">Prescripción · caducidad · notificación · cobro</p></div>
-                    <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"><div><p className="font-extrabold">Documento listo</p><p className="text-xs text-slate-500">Vista previa antes de pagar</p></div><span className="text-xl text-emerald-600">✓</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <div className="relative"><div className="rounded-[2rem] border border-white/10 bg-white/[0.07] p-3 shadow-2xl shadow-black/40 backdrop-blur"><div className="rounded-[1.5rem] bg-white p-6 text-slate-950 sm:p-7"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-600">Diagnóstico inicial</p><h2 className="mt-2 text-2xl font-black">¿Tienes un comparendo?</h2></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700">GRATIS</span></div><div className="mt-6 space-y-3"><div className="rounded-2xl border border-slate-200 p-4"><p className="text-xs font-bold text-slate-400">PASO 1</p><p className="mt-1 font-extrabold">Sube tu Estado de Cuenta SIMIT</p><p className="mt-1 text-xs leading-5 text-slate-500">También puedes digitar tu cédula.</p></div><div className="rounded-2xl bg-indigo-50 p-4"><p className="text-xs font-bold text-indigo-500">ANÁLISIS</p><p className="mt-1 font-extrabold text-indigo-950">TrámiteYa encuentra la vía jurídica</p><p className="mt-1 text-xs leading-5 text-indigo-900/70">Prescripción · caducidad · notificación · cobro</p></div><div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"><div><p className="font-extrabold">Documento listo</p><p className="text-xs text-slate-500">Vista previa antes de pagar</p></div><span className="text-xl text-emerald-600">✓</span></div></div></div></div></div>
           </div>
         </div>
       </section>
 
-      <section className="border-y border-slate-200 bg-white py-16 lg:py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Así funciona</p><h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Del comparendo al escrito, sin complicarte.</h2><p className="mt-4 text-base leading-7 text-slate-500">Un flujo diseñado para que la tecnología haga el trabajo pesado y tú mantengas el control.</p></div>
-          <div className="mt-10 grid gap-5 md:grid-cols-3">
-            {steps.map((step) => <article key={step.n} className="rounded-3xl border border-slate-200 bg-white p-7 shadow-md transition hover:-translate-y-1 hover:shadow-lg"><div className="flex items-center justify-between"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700"><Icon type={step.icon} /></div><span className="text-xs font-black tracking-[0.16em] text-slate-300">PASO {step.n}</span></div><h3 className="mt-7 text-xl font-black leading-tight">{step.title}</h3><p className="mt-3 text-sm leading-6 text-slate-500">{step.text}</p></article>)}
-          </div>
-        </div>
-      </section>
+      <section className="border-y border-slate-200 bg-white py-16 lg:py-20"><div className="mx-auto max-w-7xl px-5 lg:px-8"><div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Así funciona</p><h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Del comparendo al escrito, sin complicarte.</h2><p className="mt-4 text-base leading-7 text-slate-500">Un flujo diseñado para que la tecnología haga el trabajo pesado y tú mantengas el control.</p></div><div className="mt-10 grid gap-5 md:grid-cols-3">{steps.map((step) => <article key={step.n} className="rounded-3xl border border-slate-200 bg-white p-7 shadow-md transition hover:-translate-y-1 hover:shadow-lg"><div className="flex items-center justify-between"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700"><Icon type={step.icon} /></div><span className="text-xs font-black tracking-[0.16em] text-slate-300">PASO {step.n}</span></div><h3 className="mt-7 text-xl font-black leading-tight">{step.title}</h3><p className="mt-3 text-sm leading-6 text-slate-500">{step.text}</p></article>)}</div></div></section>
 
       <section className="mx-auto max-w-7xl px-5 py-16 lg:px-8 lg:py-20"><ComparisonTable /></section>
-
-      <section className="bg-slate-950 py-16 lg:py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8"><DocumentBlurPreview /></div>
-      </section>
-
-      <section className="border-t border-slate-200 bg-white py-16 lg:py-20">
-        <div className="mx-auto max-w-7xl px-5 lg:px-8">
-          <div className="rounded-[2rem] border border-indigo-100 bg-indigo-50/60 p-7 sm:p-10">
-            <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center">
-              <div><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Pago seguro</p><h2 className="mt-2 text-3xl font-black tracking-tight">Documento jurídico por $49.900 COP.</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Revisa la vista previa antes de pagar y descarga tu documento en PDF y Word.</p></div>
-              <Link href={trafficHref} className="rounded-2xl bg-indigo-600 px-7 py-4 text-center text-sm font-black text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">Continuar por $49.900 →</Link>
-            </div>
-            <TrustBadges />
-          </div>
-        </div>
-      </section>
-
+      <section className="bg-slate-950 py-16 lg:py-20"><div className="mx-auto max-w-7xl px-5 lg:px-8"><DocumentBlurPreview /></div></section>
+      <section className="border-t border-slate-200 bg-white py-16 lg:py-20"><div className="mx-auto max-w-7xl px-5 lg:px-8"><div className="rounded-[2rem] border border-indigo-100 bg-indigo-50/60 p-7 sm:p-10"><div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Pago seguro</p><h2 className="mt-2 text-3xl font-black tracking-tight">Documento jurídico por $49.900 COP.</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Revisa la vista previa antes de pagar y descarga tu documento en PDF y Word.</p></div><Link href={trafficHref} className="rounded-2xl bg-indigo-600 px-7 py-4 text-center text-sm font-black text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">Continuar por $49.900 →</Link></div><TrustBadges /></div></div></section>
       <section className="mx-auto max-w-7xl px-5 py-16 lg:px-8"><div className="rounded-[2rem] bg-indigo-600 px-7 py-12 text-white sm:px-12 lg:flex lg:items-center lg:justify-between"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-200">TrámiteYa</p><h2 className="mt-3 max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">Empieza tu trámite sin enfrentarte solo a la burocracia.</h2></div><Link href={trafficHref} className="mt-7 inline-block rounded-2xl bg-white px-6 py-4 text-sm font-black text-indigo-700 lg:mt-0">Iniciar ahora →</Link></div></section>
-
       <section className="border-t border-slate-200 bg-[#f7f8fa] py-7"><div className="mx-auto max-w-7xl px-5 text-xs leading-5 text-slate-500 lg:px-8">TrámiteYa es una herramienta tecnológica de automatización documental. La generación de un documento no constituye por sí misma asesoría jurídica personalizada ni garantiza el resultado de un procedimiento. El usuario es responsable de verificar la información suministrada y cumplir los requisitos y términos aplicables.</div></section>
       <Footer />
     </main>
