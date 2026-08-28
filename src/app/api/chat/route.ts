@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { generateText } from 'ai';
+import Groq from 'groq-sdk';
 
 export const runtime = 'nodejs';
 
@@ -78,25 +78,59 @@ function fallbackLegalReply(message: string, context: TrafficContext) {
   return `Estoy analizando el expediente del comparendo **${context.numero || ''}**. No necesitas escoger entre prescripción, caducidad o pérdida de fuerza ejecutoria: **Trámi lo determina con la cronología y tus respuestas**.`;
 }
 
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+function normalizeMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === 'object')
+    .map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof m.content === 'string' ? m.content.slice(0, 4000) : '',
+    }))
+    .filter(m => m.content);
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const message = typeof body?.message === 'string' ? body.message.trim() : '';
-    if (!message) return NextResponse.json({ error: 'El mensaje es requerido.' }, { status: 400 });
-    if (message.length > 4000) return NextResponse.json({ error: 'El mensaje es demasiado largo.' }, { status: 400 });
-    const context = cleanContext(body?.comparendo);
+    const legacyMessages = normalizeMessages(body?.messages);
+    const currentMessage = message || legacyMessages.filter(m => m.role === 'user').at(-1)?.content || '';
+    if (!currentMessage) return NextResponse.json({ error: 'El mensaje es requerido.' }, { status: 400 });
+    if (currentMessage.length > 4000) return NextResponse.json({ error: 'El mensaje es demasiado largo.' }, { status: 400 });
+
+    const context = cleanContext(body?.comparendo || body?.recordContext);
     const answers = body?.answers && typeof body.answers === 'object' ? body.answers as Record<string, unknown> : {};
     const contextText = Object.entries(context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
     const answersText = Object.entries(answers).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 1000)}`).join('\n');
-    const prompt = `CONTEXTO DEL EXPEDIENTE:\n${contextText || 'Sin comparendo seleccionado.'}\n\nRESPUESTAS DEL CIUDADANO:\n${answersText || 'Ninguna.'}\n\nMENSAJE:\n${message}`;
-    const hasAiCredentials = Boolean(process.env.OPENAI_API_KEY || process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
-    if (!hasAiCredentials) return NextResponse.json({ text: fallbackLegalReply(message, context), mode: 'fallback' });
+    const prompt = `CONTEXTO DEL EXPEDIENTE:\n${contextText || 'Sin comparendo seleccionado.'}\n\nRESPUESTAS DEL CIUDADANO:\n${answersText || 'Ninguna.'}`;
+
+    if (!groq) return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
+
+    const conversation: ChatMessage[] = legacyMessages.length
+      ? legacyMessages
+      : [{ role: 'user', content: currentMessage }];
+    const last = conversation[conversation.length - 1];
+    if (!last || last.role !== 'user' || last.content !== currentMessage) conversation.push({ role: 'user', content: currentMessage });
+
     try {
-      const { text } = await generateText({ model: 'openai/gpt-4o-mini', system: TRAMI_SYSTEM_PROMPT, prompt });
+      const completion = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: `${TRAMI_SYSTEM_PROMPT}\n\n${prompt}` },
+          ...conversation,
+        ],
+        temperature: 0.3,
+        max_tokens: 400,
+      });
+      const text = completion.choices[0]?.message?.content?.trim() || fallbackLegalReply(currentMessage, context);
       return NextResponse.json({ text, mode: 'ai' });
     } catch (providerError) {
-      console.error('Trámi provider error; using fallback:', providerError);
-      return NextResponse.json({ text: fallbackLegalReply(message, context), mode: 'fallback' });
+      console.error('Trámi Groq error; using fallback:', providerError);
+      return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
     }
   } catch (error) {
     console.error('Trámi chat error:', error);
