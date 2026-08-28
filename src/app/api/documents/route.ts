@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import type { Procedure } from '../../../types';
 import { getRepositoryFactory } from '../../../lib/repositoryFactory';
 import { getUserFromAccessToken } from '../../../lib/supabaseServerClient';
 import { createDocumentSchema } from '../../../lib/schemas';
@@ -15,6 +16,18 @@ async function getUser(req: NextRequest) {
   return getUserFromAccessToken(token);
 }
 
+function normalizeProcedure(input: { id: string; slug: string; title: string }): Procedure {
+  return {
+    id: input.id,
+    slug: input.slug,
+    title: input.title,
+    description: '',
+    category: 'general',
+    estimatedTime: '5 minutos',
+    available: true,
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -22,7 +35,8 @@ export async function POST(req: NextRequest) {
     const parsed = createDocumentSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: 'Invalid payload', details: parsed.error.errors }, { status: 400 });
 
-    const { procedure, answers, instanceId } = parsed.data;
+    const { procedure: procedureInput, answers, instanceId } = parsed.data;
+    const procedure = normalizeProcedure(procedureInput);
     const instanceRepo = factory.getInstanceRepo();
 
     if (instanceId) {
