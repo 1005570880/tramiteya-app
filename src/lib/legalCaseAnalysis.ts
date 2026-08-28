@@ -38,7 +38,7 @@ export function analyzeTemporalCase(record:TemporalRecordInput):CaseLegalAnalysi
 
   if(hasValue(record.fecha)) {
     facts.push(`El registro aportado identifica como fecha del hecho ${record.fecha}.`);
-    events.push({id:"hecho",label:"Hecho/infracción",date:record.fecha,status:"ACREDITADO",source:"Estado de Cuenta SIMIT / dato aportado",legalEffect:"Punto de partida para los cómputos temporales especiales de caducidad y prescripción."});
+    events.push({id:"hecho",label:"Hecho/infracción",date:record.fecha ?? null,status:"ACREDITADO",source:"Estado de Cuenta SIMIT / dato aportado",legalEffect:"Punto de partida para los cómputos temporales especiales de caducidad y prescripción."});
   } else evidenceQuestions.push("Fecha exacta del hecho o infracción.");
 
   if(caducityExpiryDate) {
@@ -63,7 +63,6 @@ export function analyzeTemporalCase(record:TemporalRecordInput):CaseLegalAnalysi
         scenarios.push({id:"caducidad-oportuna",title:"Decisión dentro del año",condition:`Si la decisión sancionatoria y la audiencia efectiva se produjeron a más tardar el ${caducityExpiryDate}`,conclusion:"la caducidad, en principio, habría sido interrumpida dentro del término; deben revisarse la regularidad de la actuación y las demás garantías."});
       } else {
         caducityStatus="CONFIGURADO";
-        facts.push(`Se reporta una decisión sancionatoria de fecha ${record.fechaResolucion}, posterior al vencimiento anual calculado (${caducityExpiryDate}).`);
         scenarios.push({id:"caducidad-tardia",title:"Decisión posterior al año",condition:`Si la fecha real de decisión/audiencia efectiva es ${record.fechaResolucion} y es posterior al ${caducityExpiryDate}`,conclusion:"existe una hipótesis fuerte de caducidad que debe confrontarse con el expediente y la fecha de audiencia efectiva antes de declararla."});
       }
     } else {
@@ -85,7 +84,7 @@ export function analyzeTemporalCase(record:TemporalRecordInput):CaseLegalAnalysi
 
   if(hasValue(record.fechaMandamientoPago)) {
     facts.push(`Se reporta mandamiento de pago de fecha ${record.fechaMandamientoPago}.`);
-    events.push({id:"mandamiento",label:"Mandamiento de pago",date:record.fechaMandamientoPago,status:"ACREDITADO",source:"Dato del registro",legalEffect:"La fecha de expedición no equivale a su notificación y, por sí sola, no acredita interrupción del término de prescripción."});
+    events.push({id:"mandamiento",label:"Mandamiento de pago",date:record.fechaMandamientoPago ?? null,status:"ACREDITADO",source:"Dato del registro",legalEffect:"La fecha de expedición no equivale a su notificación y, por sí sola, no acredita interrupción del término de prescripción."});
   } else evidenceQuestions.push("Existencia, fecha de expedición y copia íntegra del mandamiento de pago, si existe.");
 
   if(mandamientoNotificationDate) {
