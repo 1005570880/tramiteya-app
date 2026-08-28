@@ -1,5 +1,6 @@
 import './globals.css';
 import React from 'react';
+import TramiWidget from '../components/TramiWidget';
 
 export const metadata = {
   title: 'TrámiteYa — Automatización Jurídica en Colombia',
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body>
+        {children}
+        <TramiWidget />
+      </body>
     </html>
   );
 }
