@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import SimitDownloadGuide from "./SimitDownloadGuide";
 
 type RecordItem = { number?: string; date?: string; authority?: string; plate?: string; status?: string; value?: number; description?: string; documentNumber?: string; ownerName?: string; department?: string; infractionCode?: string; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string; organismId?: string; photoDetection?: boolean };
-type SimitSession = { records: RecordItem[]; documentNumber: string; fileName: string };
+type SimitSession = { records: RecordItem[]; documentNumber: string; fileName: string; selectedRecord?: RecordItem | null };
 const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
 
 function money(value?: number) { if (value == null) return "—"; return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value); }
 function normalizeDocument(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
-function saveSession(records: RecordItem[], documentNumber: string, fileName: string) { try { sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName } satisfies SimitSession)); } catch {} }
+function saveSession(records: RecordItem[], documentNumber: string, fileName: string, selectedRecord: RecordItem | null = null) { try { sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName, selectedRecord } satisfies SimitSession)); } catch {} }
 
 export default function SimitUploadFirst({ slug }: { slug: string }) {
   const router = useRouter(); const [loading, setLoading] = useState(false); const [error, setError] = useState(""); const [records, setRecords] = useState<RecordItem[]>([]); const [documentNumber, setDocumentNumber] = useState("");
@@ -23,12 +23,18 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
       if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el Estado de Cuenta.");
       const found = (payload.records || []) as RecordItem[]; if (!found.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
       const doc = normalizeDocument(payload.documentNumber ?? payload.extraction?.documentNumber ?? payload.data?.documentNumber ?? found[0]?.documentNumber); const hydrated = found.map(record => ({ ...record, ...(doc ? { documentNumber: doc } : {}) }));
-      setDocumentNumber(doc); setRecords(hydrated); saveSession(hydrated, doc, file.name); if (hydrated.length === 1) select(hydrated[0], doc, hydrated, file.name);
+      setDocumentNumber(doc); setRecords(hydrated); saveSession(hydrated, doc, file.name, null); if (hydrated.length === 1) select(hydrated[0], doc, hydrated, file.name);
     } catch (e) { setError(e instanceof Error ? e.message : "No fue posible analizar el PDF."); } finally { setLoading(false); }
   }
   function select(record: RecordItem, doc: string, allRecords: RecordItem[] = records, fileName = "Estado de Cuenta SIMIT") {
     const document = normalizeDocument(doc || record.documentNumber); const hydratedRecords = allRecords.map(item => ({ ...item, ...(document ? { documentNumber: document } : {}) }));
-    try { saveSession(hydratedRecords, document, fileName); const comparendoId = encodeURIComponent(record.number || ""); router.push(`/tramites/${slug}/formulario-simit?comparendoId=${comparendoId}`); } catch { setError("No fue posible preparar los datos del documento."); }
+    try {
+      // La selección es parte del estado del expediente y debe sobrevivir a la navegación.
+      // Antes solo se guardaban los registros, por lo que la pantalla siguiente no sabía cuál había elegido el usuario.
+      saveSession(hydratedRecords, document, fileName, { ...record, ...(document ? { documentNumber: document } : {}) });
+      const comparendoId = encodeURIComponent(record.number || "");
+      router.push(`/tramites/${slug}/formulario-simit?comparendoId=${comparendoId}`);
+    } catch { setError("No fue posible preparar los datos del documento."); }
   }
   return <div className="mt-6">
     <div className="mb-6 rounded-2xl border border-blue-100 bg-blue-50 p-6"><p className="text-sm font-semibold text-blue-700">Paso 1 · Estado de Cuenta SIMIT</p><h2 className="text-xl font-bold mt-1">Sube tu Estado de Cuenta de SIMIT</h2><p className="text-sm text-slate-600 mt-2">Empieza por el PDF. No necesitas escribir la cédula ni copiar datos. TrámiteYa analizará el documento y completará automáticamente todos los campos que pueda identificar de forma fiable.</p></div>
