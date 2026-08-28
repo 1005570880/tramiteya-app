@@ -8,6 +8,10 @@ type ComparendoContext = {
   organismo?: string;
   municipio?: string;
   valor?: string | number;
+  fechaResolucion?: string;
+  fechaEjecutoria?: string;
+  fechaMandamiento?: string;
+  fechaNotificacionMandamiento?: string;
 };
 
 type Message = { id: number; role: 'user' | 'assistant'; text: string };
@@ -17,23 +21,85 @@ const QUICK_REPLIES = [
   '🏛️ ¿A dónde se envía este escrito?',
   '⚖️ ¿Qué pasa si me responden que NO?',
   '📑 ¿Qué significan los hechos de mi escrito?',
+  '⏳ ¿Puedo pedir caducidad?',
+  '⚖️ ¿Puedo alegar pérdida de fuerza ejecutoria?',
 ];
+
+const DRAFT_KEY = 'tramiteya:draft:procedure:derecho-de-peticion-eliminar-multa';
+const SIMIT_SESSION_KEY = 'tramiteya:simit-upload:v1';
+
+function readLiveContext(): ComparendoContext | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const rawDraft = window.localStorage.getItem(DRAFT_KEY);
+    if (rawDraft) {
+      const parsed = JSON.parse(rawDraft) as { data?: Record<string, unknown> };
+      const data = parsed?.data || {};
+      const nested = data.__simitRecord && typeof data.__simitRecord === 'object' ? data.__simitRecord as Record<string, unknown> : {};
+      const value = data.valor ?? data.valor_multa ?? nested.value;
+      const context: ComparendoContext = {
+        numero: String(data.numero_comparendo || data.numero_acto || nested.number || '').trim() || undefined,
+        fecha: String(data.fecha_comparendo || nested.date || '').trim() || undefined,
+        organismo: String(data.autoridad || data.entidad || nested.authority || '').trim() || undefined,
+        municipio: String(data.municipio || data.ciudad || nested.municipality || '').trim() || undefined,
+        valor: value != null && String(value).trim() ? String(value).trim() : undefined,
+        fechaResolucion: String(data.fechaResolucion || nested.resolutionDate || '').trim() || undefined,
+        fechaEjecutoria: String(data.fechaEjecutoria || '').trim() || undefined,
+        fechaMandamiento: String(data.fechaMandamiento || '').trim() || undefined,
+        fechaNotificacionMandamiento: String(data.fechaNotificacionMandamiento || '').trim() || undefined,
+      };
+      if (context.numero || context.fecha || context.organismo) return context;
+    }
+
+    const rawSession = window.sessionStorage.getItem(SIMIT_SESSION_KEY);
+    if (rawSession) {
+      const session = JSON.parse(rawSession) as { records?: Array<Record<string, unknown>>; documentNumber?: string };
+      const record = Array.isArray(session.records) && session.records.length === 1 ? session.records[0] : null;
+      if (record) return {
+        numero: typeof record.number === 'string' ? record.number : undefined,
+        fecha: typeof record.date === 'string' ? record.date : undefined,
+        organismo: typeof record.authority === 'string' ? record.authority : undefined,
+        municipio: typeof record.municipality === 'string' ? record.municipality : undefined,
+        valor: record.value != null ? String(record.value) : undefined,
+        fechaResolucion: typeof record.resolutionDate === 'string' ? record.resolutionDate : undefined,
+        fechaMandamiento: undefined,
+        fechaNotificacionMandamiento: undefined,
+      };
+    }
+  } catch {
+    // Context is optional; never break the wizard because local storage is malformed.
+  }
+  return null;
+}
 
 export default function TramiWidget({ comparendo }: { comparendo?: ComparendoContext | null }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [liveContext, setLiveContext] = useState<ComparendoContext | null>(comparendo || null);
   const [messages, setMessages] = useState<Message[]>([
-    { id: 1, role: 'assistant', text: 'Hola. Soy Trámi, tu copiloto legal. Puedo ayudarte a entender tu comparendo y el escrito que estás preparando.' },
+    { id: 1, role: 'assistant', text: 'Hola. Soy Trámi, tu copiloto legal. Puedo ayudarte a entender tu comparendo, revisar la viabilidad de prescripción, caducidad o pérdida de ejecutoriedad y explicarte el escrito que estás preparando.' },
   ]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const refresh = () => setLiveContext(comparendo || readLiveContext());
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [comparendo]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
-  const contextLabel = comparendo?.numero
-    ? `📍 Contexto: Comparendo ${comparendo.numero}${comparendo.municipio ? ` · ${comparendo.municipio}` : ''}`
+  const context = comparendo || liveContext;
+  const contextLabel = context?.numero
+    ? `📍 Contexto: Comparendo ${context.numero}${context.municipio ? ` · ${context.municipio}` : context.organismo ? ` · ${context.organismo}` : ''}`
     : '📍 Contexto: Sin comparendo seleccionado';
 
   async function sendMessage(text = input) {
@@ -46,7 +112,7 @@ export default function TramiWidget({ comparendo }: { comparendo?: ComparendoCon
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: value, comparendo }),
+        body: JSON.stringify({ message: value, comparendo: context }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'No fue posible obtener una respuesta.');
