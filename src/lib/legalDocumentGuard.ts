@@ -15,6 +15,14 @@ function normalize(text: string): string {
     .toLowerCase();
 }
 
+function removeMarkdownMarkers(text: string): string {
+  return text
+    .replace(/\*\*(.*?)\*\*/gs, '$1')
+    .replace(/__(.*?)__/gs, '$1')
+    .replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '$1')
+    .replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
+}
+
 function removeUnsupportedData(text: string): string {
   const paragraphs = text.split(/\n{2,}/);
   return paragraphs
@@ -58,7 +66,7 @@ function hasRequiredDeletionRelief(text: string): boolean {
 }
 
 export function cleanLegalDocumentOutput(text: string): string {
-  return removeUnsupportedData(text);
+  return removeMarkdownMarkers(removeUnsupportedData(text));
 }
 
 export function isLegallySafeTrafficDocument(text: string): boolean {
