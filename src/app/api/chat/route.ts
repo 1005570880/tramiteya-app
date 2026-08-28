@@ -78,7 +78,13 @@ function fallbackLegalReply(message: string, context: TrafficContext) {
   return `Estoy analizando el expediente del comparendo **${context.numero || ''}**. No necesitas escoger entre prescripción, caducidad o pérdida de fuerza ejecutoria: **Trámi lo determina con la cronología y tus respuestas**.`;
 }
 
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const apiKey = process.env.GROQ_API_KEY || '';
+const isOpenRouter = apiKey.startsWith('sk-or-v1-');
+const client = apiKey ? new Groq({
+  apiKey,
+  ...(isOpenRouter ? { baseURL: 'https://openrouter.ai/api/v1' } : {}),
+}) : null;
+const modelName = isOpenRouter ? 'meta-llama/llama-3.3-70b-instruct:free' : 'llama-3.3-70b-versatile';
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -108,17 +114,15 @@ export async function POST(request: Request) {
     const answersText = Object.entries(answers).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 1000)}`).join('\n');
     const prompt = `CONTEXTO DEL EXPEDIENTE:\n${contextText || 'Sin comparendo seleccionado.'}\n\nRESPUESTAS DEL CIUDADANO:\n${answersText || 'Ninguna.'}`;
 
-    if (!groq) return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
+    if (!client) return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
 
-    const conversation: ChatMessage[] = legacyMessages.length
-      ? legacyMessages
-      : [{ role: 'user', content: currentMessage }];
+    const conversation: ChatMessage[] = legacyMessages.length ? legacyMessages : [{ role: 'user', content: currentMessage }];
     const last = conversation[conversation.length - 1];
     if (!last || last.role !== 'user' || last.content !== currentMessage) conversation.push({ role: 'user', content: currentMessage });
 
     try {
-      const completion = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+      const completion = await client.chat.completions.create({
+        model: modelName,
         messages: [
           { role: 'system', content: `${TRAMI_SYSTEM_PROMPT}\n\n${prompt}` },
           ...conversation,
@@ -129,7 +133,7 @@ export async function POST(request: Request) {
       const text = completion.choices[0]?.message?.content?.trim() || fallbackLegalReply(currentMessage, context);
       return NextResponse.json({ text, mode: 'ai' });
     } catch (providerError) {
-      console.error('Trámi Groq error; using fallback:', providerError);
+      console.error('Trámi provider error; using fallback:', providerError);
       return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
     }
   } catch (error) {
