@@ -4,22 +4,27 @@ import { generateText } from 'ai';
 export const runtime = 'nodejs';
 
 const TRAMI_SYSTEM_PROMPT = `
-Eres Trámi, el copiloto jurídico de TrámiteYa en Colombia.
+Eres Trámi, el abogado virtual y copiloto jurídico de TrámiteYa en Colombia.
 
-NO preguntes al usuario qué figura jurídica quiere usar. Debes determinarla automáticamente a partir de la cronología, el expediente y sus respuestas.
+MISIÓN:
+Con el expediente del comparendo y las respuestas del ciudadano, debes determinar automáticamente la vía jurídica más sólida. El ciudadano NO debe escoger entre caducidad, prescripción, pérdida de fuerza ejecutoria, notificación, debido proceso, revocatoria u otra vía. Esa decisión corresponde a Trámi.
 
-REGLAS:
-1. Máximo 2 o 3 párrafos cortos; usa viñetas y negrillas.
-2. Distingue dato acreditado, manifestación del usuario e información pendiente de prueba.
-3. PRESCRIPCIÓN: artículo 159 de la Ley 769 de 2002. No confundas fecha del comparendo con notificación del mandamiento de pago.
-4. CADUCIDAD: artículo 161 de la Ley 769 de 2002. Analiza la actuación contravencional y su cronología específica.
-5. PÉRDIDA DE EJECUTORIEDAD: artículo 91 del CPACA. Requiere acto en firme y análisis de las actuaciones de ejecución; no se presume por antigüedad.
-6. Si una vía no es viable, descártala. Si varias son posibles, determina una principal y subsidiarias según la evidencia.
-7. Nunca inventes fechas, notificaciones, actos, pagos o actuaciones.
-8. Si faltan pruebas decisivas, identifica exactamente qué documento debe aportar la autoridad.
-9. El Estado de Cuenta SIMIT individualiza registros, pero no sustituye el expediente administrativo.
-10. Si el hecho tiene menos de tres años, NO afirmes que la sanción está prescrita.
-11. Tono empático, claro, profesional y directo.
+REGLAS DE ACTUACIÓN:
+1. BREVEDAD: máximo 2 o 3 párrafos cortos. Usa viñetas y negrillas.
+2. DIAGNÓSTICO PRIMERO: demuestra que entendiste el expediente antes de pedir información. Explica brevemente qué dato jurídico hace relevante el caso.
+3. PREGUNTAS MÍNIMAS: nunca preguntes algo que ya esté en el Estado de Cuenta, el expediente o las respuestas anteriores. Pregunta solo aquello que pueda cambiar la estrategia o sea indispensable para completar el documento.
+4. IDENTIDAD: el documento debe contener nombre completo, cédula, correo electrónico y teléfono cuando el ciudadano los suministre. No dejes campos de identidad vacíos si ya fueron aportados.
+5. PRESCRIPCIÓN: artículo 159 de la Ley 769 de 2002. No confundas fecha del hecho/comparendo con la notificación del mandamiento de pago. Si han transcurrido menos de tres años desde el hecho, NO afirmes que la sanción está prescrita.
+6. CADUCIDAD: artículo 161 de la Ley 769 de 2002. Analiza la actuación contravencional y su cronología específica. No confundas caducidad de la acción con prescripción de la sanción.
+7. PÉRDIDA DE FUERZA EJECUTORIA: artículo 91 del CPACA. Exige acto administrativo en firme y analiza la ejecución efectiva; la antigüedad del comparendo por sí sola no basta.
+8. NOTIFICACIÓN: distingue notificación de la orden de comparendo, acto sancionatorio y mandamiento de pago. La sola afirmación del ciudadano no sustituye la constancia documental.
+9. COBRO: embargo, cobro coactivo o mandamiento de pago son datos jurídicamente relevantes. Pregunta por ellos de forma sencilla, sin jerga innecesaria.
+10. EVIDENCIA: distingue dato acreditado, manifestación del ciudadano e información pendiente de prueba. Nunca inventes fechas, resoluciones, notificaciones, pagos, embargos ni actuaciones.
+11. SIMIT: el Estado de Cuenta individualiza registros, pero no sustituye el expediente administrativo.
+12. ESTRATEGIA: si una vía no es viable, descártala. Si varias son plausibles, determina una principal y subsidiarias según la evidencia.
+13. FUERA DE ÁMBITO: si preguntan algo ajeno al tránsito o derecho administrativo colombiano, redirige brevemente a TrámiteYa.
+14. TONO: empático, seguro, pedagógico, profesional y directo. Habla como un abogado de confianza, no como un formulario.
+15. NO PROMETAS RESULTADOS: puedes hablar de viabilidad, hipótesis o fortaleza jurídica, pero no garantizar una decisión favorable.
 `;
 
 type TrafficContext = {
@@ -50,17 +55,18 @@ function parseDate(value?: string): Date | null {
 function yearsBetween(from: Date, to = new Date()) { return (to.getTime() - from.getTime()) / (365.2425 * 86400000); }
 
 function fallbackLegalReply(message: string, context: TrafficContext) {
-  const fact = parseDate(context.fecha); const resolution = parseDate(context.fechaResolucion); const executory = parseDate(context.fechaEjecutoria); const mandNotice = parseDate(context.fechaNotificacionMandamiento);
+  const fact = parseDate(context.fecha); const executory = parseDate(context.fechaEjecutoria); const mandNotice = parseDate(context.fechaNotificacionMandamiento);
   const normalized = message.toLowerCase();
   if (normalized.includes('caduc')) {
     if (!fact) return 'Necesito la **fecha de los hechos** y la actuación que decidió el caso para cerrar el análisis de caducidad. El documento clave es la resolución y su constancia de notificación.';
+    const resolution = parseDate(context.fechaResolucion);
     if (!resolution || yearsBetween(fact, resolution) > 1) return `La cronología del comparendo **${context.numero || ''}** permite plantear una **revisión de caducidad**, porque ${resolution ? 'la decisión reportada aparece posterior al año contado desde los hechos' : 'no está acreditada la fecha de la decisión sancionatoria'}. Debemos contrastarlo con el expediente.`;
     return 'Con los datos disponibles, la decisión aparece dentro del primer año desde los hechos, así que **no hay base suficiente para afirmar caducidad**. Conviene verificar audiencia, resolución, recursos y notificaciones.';
   }
   if (normalized.includes('ejecut')) {
-    if (!executory) return 'La **pérdida de ejecutoriedad** requiere conocer cuándo quedó en firme el acto y qué actuaciones de ejecución realizó la autoridad. Si falta esa fecha, Trámi la solicitará dentro del expediente.';
+    if (!executory) return 'La **pérdida de fuerza ejecutoria** requiere conocer cuándo quedó en firme el acto y qué actuaciones de ejecución realizó la autoridad. Si falta esa fecha, Trámi la solicitará dentro del expediente.';
     const age = yearsBetween(executory);
-    return age >= 5 ? `Hay una **hipótesis relevante de pérdida de ejecutoriedad**: la firmeza se ubica en ${context.fechaEjecutoria} y han transcurrido aproximadamente ${age.toFixed(1)} años. Falta verificar las actuaciones de ejecución.` : `La resolución quedó en firme el **${context.fechaEjecutoria}**, pero aún no han transcurrido cinco años. Por ahora no es suficiente para afirmar pérdida de ejecutoriedad por ese supuesto.`;
+    return age >= 5 ? `Hay una **hipótesis relevante de pérdida de fuerza ejecutoria**: la firmeza se ubica en ${context.fechaEjecutoria} y han transcurrido aproximadamente ${age.toFixed(1)} años. Falta verificar las actuaciones de ejecución.` : `La resolución quedó en firme el **${context.fechaEjecutoria}**, pero aún no han transcurrido cinco años. Por ahora no es suficiente para afirmar pérdida de fuerza ejecutoria por ese supuesto.`;
   }
   if (normalized.includes('prescrit')) {
     if (!fact) return 'Para analizar **prescripción** necesito la fecha del hecho y, especialmente, la notificación del eventual mandamiento de pago.';
@@ -69,7 +75,7 @@ function fallbackLegalReply(message: string, context: TrafficContext) {
     if (mandNotice && yearsBetween(fact, mandNotice) < 3) return 'Por antigüedad el caso merece revisión, pero aparece una notificación de mandamiento dentro del término. **No sería responsable afirmar prescripción** sin revisar su eficacia y el expediente.';
     return `Por la fecha **${context.fecha}**, ya transcurrieron más de tres años desde el hecho. Existe una **hipótesis relevante de prescripción**, especialmente si no hubo notificación válida de mandamiento de pago dentro del término.`;
   }
-  return `Estoy analizando el expediente del comparendo **${context.numero || ''}**. No necesitas escoger entre prescripción, caducidad o pérdida de ejecutoriedad: **Trámi lo determina con la cronología y tus respuestas**.`;
+  return `Estoy analizando el expediente del comparendo **${context.numero || ''}**. No necesitas escoger entre prescripción, caducidad o pérdida de fuerza ejecutoria: **Trámi lo determina con la cronología y tus respuestas**.`;
 }
 
 export async function POST(request: Request) {
@@ -82,7 +88,7 @@ export async function POST(request: Request) {
     const answers = body?.answers && typeof body.answers === 'object' ? body.answers as Record<string, unknown> : {};
     const contextText = Object.entries(context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n');
     const answersText = Object.entries(answers).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 1000)}`).join('\n');
-    const prompt = `CONTEXTO DEL EXPEDIENTE:\n${contextText || 'Sin comparendo seleccionado.'}\n\nRESPUESTAS:\n${answersText || 'Ninguna.'}\n\nMENSAJE:\n${message}`;
+    const prompt = `CONTEXTO DEL EXPEDIENTE:\n${contextText || 'Sin comparendo seleccionado.'}\n\nRESPUESTAS DEL CIUDADANO:\n${answersText || 'Ninguna.'}\n\nMENSAJE:\n${message}`;
     const hasAiCredentials = Boolean(process.env.OPENAI_API_KEY || process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
     if (!hasAiCredentials) return NextResponse.json({ text: fallbackLegalReply(message, context), mode: 'fallback' });
     try {
