@@ -8,8 +8,77 @@ import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalD
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
+
+/**
+ * Trami stores conversational identity/context using descriptive keys while the
+ * legacy document templates expect the original form-field keys. Normalize both
+ * representations at the document boundary so generated pleadings never lose
+ * identity or SIMIT data merely because the user completed the chat instead of
+ * the old form wizard.
+ */
+function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
+  const a = { ...input } as FormAnswers & Record<string, any>;
+  const trami = a.tramiAnswers && typeof a.tramiAnswers === 'object' ? a.tramiAnswers : {};
+  const simit = a.__simitRecord && typeof a.__simitRecord === 'object' ? { ...a.__simitRecord } : {};
+
+  const first = (...values: unknown[]) => values.find(v => v !== undefined && v !== null && String(v).trim() !== '') as string | undefined;
+
+  const nombre = first(a.nombre, a.nombreCompleto, trami.nombre, simit.name, simit.ownerName);
+  const cedula = first(a.documento, a.documentNumber, a.numeroDocumento, a.cedula, trami.cedula, simit.documentNumber);
+  const correo = first(a.correo, a.email, trami.correo, simit.email);
+  const telefono = first(a.telefono, a.phone, trami.telefono, simit.phone);
+  const numero = first(a.numero_comparendo, a.numero_acto, simit.number);
+  const fecha = first(a.fecha_comparendo, simit.date);
+  const entidad = first(a.entidad, a.autoridad, simit.authority);
+  const municipio = first(a.municipio, a.ciudad, simit.municipality);
+  const valor = first(a.valor, a.valor_multa, a.valorMulta, simit.value);
+  const placa = first(a.placa, simit.plate);
+  const codigo = first(a.codigo_infraccion, a.codigoInfraccion, simit.infractionCode, simit.code);
+
+  if (nombre) {
+    a.nombre = nombre;
+    a.nombreCompleto = nombre;
+  }
+  if (cedula) {
+    a.documento = cedula;
+    a.documentNumber = cedula;
+    a.cedula = cedula;
+  }
+  if (correo) { a.correo = correo; a.email = correo; }
+  if (telefono) { a.telefono = telefono; a.phone = telefono; }
+  if (numero) a.numero_comparendo = numero;
+  if (fecha) a.fecha_comparendo = fecha;
+  if (entidad) { a.entidad = entidad; a.autoridad = entidad; }
+  if (municipio) a.municipio = municipio;
+  if (valor) a.valor = valor;
+  if (placa) a.placa = placa;
+  if (codigo) a.codigo_infraccion = codigo;
+
+  // Rebuild the selected SIMIT record with the conversational data as a
+  // fallback. This prevents the template from treating valid values as empty
+  // when the original upload object is no longer present in localStorage.
+  a.__simitRecord = {
+    ...simit,
+    number: first(simit.number, numero),
+    date: first(simit.date, fecha),
+    authority: first(simit.authority, entidad),
+    municipality: first(simit.municipality, municipio),
+    value: first(simit.value, valor),
+    plate: first(simit.plate, placa),
+    infractionCode: first(simit.infractionCode, codigo),
+    documentNumber: first(simit.documentNumber, cedula),
+    name: first(simit.name, nombre),
+    ownerName: first(simit.ownerName, nombre),
+    email: first(simit.email, correo),
+    phone: first(simit.phone, telefono),
+  };
+
+  return a;
+}
+
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
-  return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, answers) : buildDocumentText(procedure, answers);
+  const normalizedAnswers = trafficSlugs.has(procedure.slug) ? normalizeTrafficAnswers(answers) : answers;
+  return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, normalizedAnswers) : buildDocumentText(procedure, normalizedAnswers);
 }
 
 function extractPetitions(content: string): string | null {
@@ -44,8 +113,6 @@ function preserveDeterministicPetitions(deterministic: string, refined: string):
 
 function finalizeTrafficDocument(content: string): string {
   const cleaned = cleanLegalDocumentOutput(content);
-  // Fail closed: never ship a traffic pleading that contains OCR placeholders,
-  // duplicated major sections, or loses the requested favorable relief.
   if (!isLegallySafeTrafficDocument(cleaned)) {
     throw new Error('TRAFFIC_DOCUMENT_SAFETY_REJECTED: el documento jurídico no superó las validaciones de integridad y no será entregado.');
   }
@@ -68,7 +135,7 @@ export async function generateDocument({ procedure, answers, previousVersion = 0
   const generatedAt = new Date().toISOString();
   const version = Math.max(1, previousVersion + 1);
   const content = await buildFinalContent(procedure, answers);
-  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(answers)), procedureSlug: procedure.slug, generatedAt, content } };
+  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(normalizeTrafficAnswers(answers))), procedureSlug: procedure.slug, generatedAt, content } };
 }
 
 export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(await buildFinalContent(procedure, answers)); }
