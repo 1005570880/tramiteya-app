@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { selectLegalAuthorities } from "../../../../lib/legalLibrary";
-import { assessTrafficRecord, generateLegalDraft, type SelectedRecordData } from "../../../../lib/legalEngine";
+import { generateLegalDraft, type SelectedRecordData } from "../../../../lib/legalEngine";
 
 const RecordSchema = z.object({
   comparendo: z.string().optional().default(""), fecha: z.string().optional().default(""), organismo: z.string().optional().default(""), estado: z.string().optional().default(""), valor: z.string().optional().default(""),
@@ -20,11 +20,11 @@ function deterministic(record: SelectedRecordData) {
       certainty: draft.assessment.certainty,
       confidence: draft.assessment.certainty === "CONFIGURADO" || draft.assessment.certainty === "NO_CONFIGURADO" ? "alta" : "media",
       authorities,
-      timeline: temporal?.events || [],
-      scenarios: temporal?.scenarios || [],
-      facts: temporal?.facts || [],
-      inferences: temporal?.inferences || [],
-      rules: temporal?.rules || [],
+      timeline: [],
+      scenarios: [],
+      facts: [],
+      inferences: [],
+      rules: [],
       evidenceQuestions: temporal?.evidenceQuestions || draft.assessment.missingEvidence,
       application: draft.fundamentos,
       caveat: "Una fecha calculada no equivale a una fecha probada. Las conclusiones condicionadas a actuaciones no acreditadas deben mantenerse expresamente como escenarios jurídicos.",
