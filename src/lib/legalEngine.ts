@@ -12,6 +12,84 @@ export interface LegalDocumentData {
   esFotodetencion?: boolean;
 }
 
+export interface SelectedRecordData {
+  comparendo: string;
+  fecha: string;
+  organismo: string;
+  estado: string;
+  valor: string;
+  placa?: string;
+  cedula?: string;
+  codigo?: string;
+  nombre?: string;
+  correo?: string;
+  telefono?: string;
+  ciudad?: string;
+  direccion?: string;
+  esFotodetencion?: boolean;
+  [key: string]: unknown;
+}
+
+export interface LegalAssessment {
+  routes: string[];
+  primaryRoute: string | null;
+  priority: 'alta' | 'media' | 'baja';
+  missingEvidence: string[];
+  reasoning: string[];
+  certainty?: 'CONFIGURADO' | 'NO_CONFIGURADO' | 'HIPOTESIS_OBJETIVA' | 'INDETERMINADO';
+  temporal?: {
+    initialDate?: string;
+    initialExpiryDate?: string;
+    caducityExpiryDate?: string;
+    evidenceQuestions: string[];
+    executiveSummary?: string;
+    mandamientoNotificationDate?: string;
+  };
+}
+
+export type LegalRoute = 'CADUCIDAD' | 'PRESCRIPCION' | 'PERDIDA_EJECUTORIEDAD' | 'NOTIFICACION' | 'DEBIDO_PROCESO' | 'FOTODETECCION' | 'REVOCATORIA_DIRECTA';
+
+const safeDate = (value: string): Date | null => {
+  const match = value?.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  const iso = match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : value;
+  const date = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const addYears = (value: string, years: number): string | undefined => {
+  const date = safeDate(value);
+  if (!date) return undefined;
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear()}`;
+};
+
+export function sanitizeValue(value: unknown): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim() || 'No identificado en el documento aportado';
+}
+
+export function assessTrafficRecord(record: SelectedRecordData): LegalAssessment {
+  const isPhoto = Boolean(record.esFotodetencion || /fad|c35|fotomulta|fotodeteccion/i.test(`${record.comparendo} ${record.codigo ?? ''}`));
+  const date = safeDate(record.fecha);
+  const age = date ? (Date.now() - date.getTime()) / (365 * 24 * 60 * 60 * 1000) : 0;
+  const primaryRoute: LegalRoute = isPhoto && age < 3 ? 'FOTODETECCION' : age >= 3 ? 'PRESCRIPCION' : 'NOTIFICACION';
+  const reasoning = [age >= 3 ? 'La antigüedad permite evaluar prescripción, sujeta a la verificación del expediente y del mandamiento de pago.' : 'La actuación tiene menos de tres años; no se formula prescripción como pretensión principal.'];
+  return {
+    routes: [primaryRoute, 'NOTIFICACION', 'DEBIDO_PROCESO'],
+    primaryRoute,
+    priority: primaryRoute === 'PRESCRIPCION' ? 'alta' : 'media',
+    missingEvidence: ['Expediente administrativo y constancias de notificación.'],
+    reasoning,
+    certainty: 'INDETERMINADO',
+    temporal: {
+      initialDate: record.fecha,
+      initialExpiryDate: addYears(record.fecha, 3),
+      caducityExpiryDate: addYears(record.fecha, 1),
+      evidenceQuestions: ['Expediente administrativo completo.', 'Constancias de notificación.'],
+      executiveSummary: reasoning.join(' '),
+    },
+  };
+}
+
 export function generateLegalDocument(data: LegalDocumentData): string {
   const {
     nombreUsuario = 'JACOB ELIAS ARRIETA FLOREZ',
@@ -48,9 +126,7 @@ Yo, **${nombreUsuario.toUpperCase()}**, mayor de edad, identificado(a) con la c�
 * **PRIMERO:** En la plataforma SIMIT e historial de su entidad figura a mi nombre el comparendo / orden No. **${numComparendo}**, de fecha de ocurrencia del **${fechaComparendo}**, por un valor reportado de **$${valorComparendo} COP** ${codigoInfraccion ? `(Infracción: ${codigoInfraccion})` : ''}.
 * **SEGUNDO:** Que dicho registro se encuentra en estado activo o pendiente de cobro sin que el suscrito haya sido notificado de forma personal, idónea y oportuna de los actos administrativos que componen el procedimiento contravencional, ni del correspondiente mandamiento de pago dentro de los términos perentorios fijados por la ley.
 * **TERCERO:** Que a la fecha de presentación de este escrito, la administración no ha demostrado documentalmente la existencia de actuaciones interruptivas legalmente surtidas e idóneamente notificadas que desvirtúen la indebida notificación o la pérdida de ejecutoriedad.
-${esReciente 
-  ? '* **CUARTO:** Que al tratarse de una actuación de reciente fecha, han transcurrido los términos del Artículo 161 de la Ley 769 de 2002 para la caducidad de la acción sancionatoria sin que se haya demostrado la celebración de audiencia pública garantizando el pleno derecho a la defensa.' 
-  : '* **CUARTO:** Que han transcurrido más de tres (3) años desde la fecha de ocurrencia de los hechos sin que se haya notificado el mandamiento de pago en debida forma, configurándose la prescripción de la sanción establecida en el Artículo 159 del Código Nacional de Tránsito.'}
+${esReciente ? '* **CUARTO:** Que al tratarse de una actuación de reciente fecha, han transcurrido los términos del Artículo 161 de la Ley 769 de 2002 para la caducidad de la acción sancionatoria sin que se haya demostrado la celebración de audiencia pública garantizando el pleno derecho a la defensa.' : '* **CUARTO:** Que han transcurrido más de tres (3) años desde la fecha de ocurrencia de los hechos sin que se haya notificado el mandamiento de pago en debida forma, configurándose la prescripción de la sanción establecida en el Artículo 159 del Código Nacional de Tránsito.'}
 
 ### **II. FUNDAMENTOS DE DERECHO Y JURISPRUDENCIA**
 
@@ -89,4 +165,44 @@ Atentamente,
 ___________________________________________
 **${nombreUsuario.toUpperCase()}**
 C.C. No. ${cedulaUsuario}`;
+}
+
+export function generateUnifiedLegalDocument(record: SelectedRecordData, answers: Record<string, unknown> = {}): string {
+  return generateLegalDocument({
+    nombreUsuario: String(answers.nombre ?? record.nombre ?? ''),
+    cedulaUsuario: String(answers.cedula ?? record.cedula ?? ''),
+    emailUsuario: String(answers.correo ?? record.correo ?? ''),
+    telefonoUsuario: String(answers.telefono ?? record.telefono ?? ''),
+    direccionUsuario: String(answers.direccion ?? record.direccion ?? ''),
+    numComparendo: record.comparendo,
+    fechaComparendo: record.fecha,
+    organismoTransito: record.organismo,
+    valorComparendo: record.valor,
+    codigoInfraccion: record.codigo,
+    esFotodetencion: record.esFotodetencion,
+  });
+}
+
+export function generateLegalDraft(record: SelectedRecordData) {
+  const assessment = assessTrafficRecord(record);
+  return {
+    hechos: `PRIMERO. En SIMIT figura la actuación No. ${sanitizeValue(record.comparendo)} de fecha ${sanitizeValue(record.fecha)}.`,
+    solicitudConcreta: 'Revisión integral, determinación de la situación jurídica y adopción de la consecuencia legal que corresponda.',
+    fundamentos: generateLegalDocument({
+      numComparendo: record.comparendo,
+      fechaComparendo: record.fecha,
+      organismoTransito: record.organismo,
+      valorComparendo: record.valor,
+      codigoInfraccion: record.codigo,
+      nombreUsuario: record.nombre,
+      cedulaUsuario: record.cedula,
+      emailUsuario: record.correo,
+      telefonoUsuario: record.telefono,
+      direccionUsuario: record.direccion,
+      esFotodetencion: record.esFotodetencion,
+    }),
+    assessment,
+    authorities: [],
+    document: generateUnifiedLegalDocument(record),
+  };
 }
