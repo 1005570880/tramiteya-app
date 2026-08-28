@@ -7,6 +7,12 @@ import { getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guest
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type PaymentDocument = {
+  id: string;
+  procedure_id: string | null;
+  meta: Record<string, unknown> | null;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
@@ -23,7 +29,12 @@ export async function POST(request: NextRequest) {
     const pricing = getProcedurePrice(procedureId);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
-    const { data: document, error: documentError } = await supabase.from('documents').select('id,procedure_id,meta').eq('id', documentVersionId).maybeSingle();
+    const { data: rawDocument, error: documentError } = await supabase
+      .from('documents')
+      .select('id,procedure_id,meta')
+      .eq('id', documentVersionId)
+      .maybeSingle();
+    const document = rawDocument as PaymentDocument | null;
     if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
