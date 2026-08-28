@@ -73,7 +73,7 @@ function fallbackLegalReply(message: string, context: TrafficContext) {
     const age = yearsBetween(fact);
     if (age < 3) return `El hecho es del **${context.fecha}** y todavía no han transcurrido tres años. **No puedo afirmar prescripción**. Debemos revisar la actuación sancionatoria y el eventual mandamiento de pago.`;
     if (mandNotice && yearsBetween(fact, mandNotice) < 3) return 'Por antigüedad el caso merece revisión, pero aparece una notificación de mandamiento dentro del término. **No sería responsable afirmar prescripción** sin revisar su eficacia y el expediente.';
-    return `Por la fecha **${context.fecha}**, ya transcurrieron más de tres años desde el hecho. Existe una **hipótesis relevante de prescripción**, especialmente si no hubo notificación válida de mandamiento de pago dentro del término.`;
+    return `Por la fecha **${context.fecha}**, ya transcurrieron más de tres años desde el hecho. Existe una **hipótesis relevante de prescripción**, especialmente si no hubo notificación válida de mandamiento de pago.`;
   }
   return `Estoy analizando el expediente del comparendo **${context.numero || ''}**. No necesitas escoger entre prescripción, caducidad o pérdida de fuerza ejecutoria: **Trámi lo determina con la cronología y tus respuestas**.`;
 }
