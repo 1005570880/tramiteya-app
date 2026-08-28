@@ -80,7 +80,7 @@ export function analyzeTemporalCase(record:TemporalRecordInput):CaseLegalAnalysi
 
   if(hasValue(record.fechaNotificacion)) {
     facts.push(`Se reporta una fecha de notificación general: ${record.fechaNotificacion}.`);
-    events.push({id:"notificacion",label:"Notificación reportada",date:record.fechaNotificacion,status:"ACREDITADO",source:"Dato del registro",legalEffect:"Debe verificarse qué acto fue notificado y si la constancia satisface las exigencias legales."});
+    events.push({id:"notificacion",label:"Notificación reportada",date:record.fechaNotificacion ?? null,status:"ACREDITADO",source:"Dato del registro",legalEffect:"Debe verificarse qué acto fue notificado y si la constancia satisface las exigencias legales."});
   } else evidenceQuestions.push("Constancias de notificación de la orden de comparendo, acto sancionatorio y demás actuaciones relevantes.");
 
   if(hasValue(record.fechaMandamientoPago)) {
@@ -115,9 +115,7 @@ export function analyzeTemporalCase(record:TemporalRecordInput):CaseLegalAnalysi
           scenarios.push({id:"ejecutoriedad-con-actuaciones",title:"Existen actuaciones de ejecución",condition:`Si el expediente acredita actos de ejecución dentro de los cinco años siguientes a ${ejecutoriaDate}`,conclusion:"la pérdida de ejecutoriedad del numeral 3 del artículo 91 no puede darse por configurada solo por el transcurso del tiempo; debe identificarse cada actuación y su efecto jurídico."});
         }
       } else {
-        escenarios: {
-          scenarios.push({id:"ejecutoriedad-en-curso",title:"Cinco años aún no cumplidos",condition:`Si aún no han transcurrido cinco años desde ${ejecutoriaDate}`,conclusion:"no procede afirmar actualmente la causal temporal del numeral 3 del artículo 91; sí procede conservar la cuestión para revisión si aparecen otras causales de pérdida de ejecutoriedad."});
-        }
+        scenarios.push({id:"ejecutoriedad-en-curso",title:"Cinco años aún no cumplidos",condition:`Si aún no han transcurrido cinco años desde ${ejecutoriaDate}`,conclusion:"no procede afirmar actualmente la causal temporal del numeral 3 del artículo 91; sí procede conservar la cuestión para revisión si aparecen otras causales de pérdida de ejecutoriedad."});
       }
     }
   } else evidenceQuestions.push("Fecha exacta de ejecutoria o firmeza del acto sancionatorio; es indispensable para evaluar la causal de cinco años del artículo 91 del CPACA.");
