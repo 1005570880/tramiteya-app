@@ -15,7 +15,7 @@ import type { FormAnswers } from "../../../../types/form";
 type SimitRecord = { kind?: string; number?: string; date?: string; authority?: string; department?: string; municipality?: string; plate?: string; ownerName?: string; documentNumber?: string; infractionCode?: string; description?: string; status?: string; value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string };
 type SimitSession = { records: SimitRecord[]; documentNumber: string; fileName: string; selectedRecord?: SimitRecord | null };
 const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
-const TRAMI_ANSWERS_KEY = "tramiteya:trami-questionnaire:v1";
+const TRAMI_ANSWERS_KEY = "tramiteya:trami-questionnaire:v2";
 
 function splitOwnerName(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
@@ -58,34 +58,26 @@ function splitFullName(value: string) {
 
 function readQuestionnaire(): Record<string, string> {
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(TRAMI_ANSWERS_KEY) || "{}");
+    const parsed = JSON.parse(sessionStorage.getItem(TRAMI_ANSWERS_KEY) || sessionStorage.getItem("tramiteya:trami-questionnaire:v1") || "{}");
     return parsed?.answers && typeof parsed.answers === "object" ? parsed.answers : {};
   } catch { return {}; }
 }
 
 function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<string, string>): FormAnswers {
   const base = fromSimit({ ...record, documentNumber });
-  const name = splitFullName(q.nombresCompletos || "");
-  // Identity is now collected inside Trámi. Normalize the cédula once and
-  // mirror it to every legacy field used by the traffic document templates.
+  const fullName = String(q.nombre || q.nombresCompletos || "").trim();
+  const name = splitFullName(fullName);
   const cedula = String(q.cedula || documentNumber || record.documentNumber || "").replace(/\D/g, "");
   const correo = q.correo || "";
   const telefono = q.telefono === "omitir" ? "" : (q.telefono || "");
-  const direccion = q.direccion === "omitir" ? "" : (q.direccion || "");
   return {
     ...base,
-    documentNumber: cedula,
-    cedula,
-    numeroDocumento: cedula,
-    documento: cedula,
-    nombres: name.nombres || base.nombres,
-    apellidos: name.apellidos || base.apellidos,
-    correo,
-    correo_dest: correo,
-    telefono,
-    direccion,
-    hechos: `${base.hechos}\n\nInformación suministrada directamente por el solicitante durante el cuestionario de Trámi:\n- Notificación del comparendo: ${q.notificacionComparendo || "No informado"}.\n- Notificación de la resolución: ${q.notificacionResolucion || "No informado"}.\n- Mandamiento de pago o cobro: ${q.mandamientoPago || "No informado"}.\n- Fecha de ejecutoria conocida: ${q.ejecutoria || "No informada"}.\n- Pago o acuerdo de pago: ${q.pagoAcuerdo || "No informado"}.`,
-    causal: `${base.causal}\n\nTrámi analizará de manera autónoma la procedencia de caducidad, prescripción, pérdida de fuerza ejecutoria, notificación, debido proceso u otra vía jurídicamente pertinente, sin trasladar esa decisión al usuario.`,
+    documentNumber: cedula, cedula, numeroDocumento: cedula, documento: cedula,
+    nombres: name.nombres || base.nombres, apellidos: name.apellidos || base.apellidos,
+    nombre: fullName || `${name.nombres} ${name.apellidos}`.trim(), nombreCompleto: fullName,
+    correo, correo_dest: correo, telefono,
+    hechos: `${base.hechos}\n\nInformación suministrada directamente por el solicitante durante la entrevista de Trámi:\n- Notificación dentro de los 5 días siguientes al hecho: ${q.notificacion || q.notificacionComparendo || "No informado"}.\n- Notificación de resolución: ${q.decision || q.notificacionResolucion || "No informado"}.\n- Cobro coactivo, embargo o mandamiento de pago: ${q.cobro || q.mandamientoPago || "No informado"}.`,
+    causal: `${base.causal}\n\nTrámi analiza de manera autónoma la procedencia de caducidad, prescripción, pérdida de fuerza ejecutoria, notificación, debido proceso u otra vía jurídicamente pertinente, sin trasladar esa decisión al usuario.`,
     __tramiQuestionnaire: q,
   } as unknown as FormAnswers;
 }
@@ -148,6 +140,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
     setSelected(index); setTramiDone(false); setError("");
     try {
       sessionStorage.removeItem(TRAMI_ANSWERS_KEY);
+      sessionStorage.removeItem("tramiteya:trami-questionnaire:v1");
       sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records: source, documentNumber, fileName, selectedRecord: record } satisfies SimitSession));
     } catch {}
     window.dispatchEvent(new CustomEvent("trami:restart"));
@@ -186,20 +179,10 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const effectiveDocumentNumber = String(documentNumber || selectedRecord?.documentNumber || "").replace(/\D/g, "");
 
   return <main className="min-h-screen bg-slate-50 text-slate-900"><Header /><section className="mx-auto max-w-5xl px-4 py-8 md:py-12">
-    <div className="mb-8"><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">⚡ TrámiteYa · Automatización jurídica</div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">{definition.title}</h1><p className="mt-3 max-w-3xl text-slate-600">Sube tu Estado de Cuenta oficial de SIMIT. Después de seleccionar el comparendo, <strong>no tendrás que llenar más formularios</strong>: Trámi te hará las preguntas necesarias directamente en el chat y construirá el escrito contigo.</p></div>
+    <div className="mb-8"><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">⚡ TrámiteYa · Automatización jurídica</div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">{definition.title}</h1><p className="mt-3 max-w-3xl text-slate-600">Sube tu Estado de Cuenta SIMIT, selecciona el comparendo y deja que Trámi conduzca el resto del trámite.</p></div>
     <SimitDownloadGuide />
-    {!records.length && <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-8"><div className="mb-6 flex items-start gap-4"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-600 text-xl text-white">PDF</div><div><h2 className="text-xl font-bold">1. Sube el Estado de Cuenta de SIMIT</h2><p className="mt-1 text-sm text-slate-500">PDF descargado directamente del portal oficial. No necesitas copiar ni transcribir datos.</p></div></div><label className="group flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-blue-400 hover:bg-blue-50"><input type="file" accept="application/pdf,.pdf" className="hidden" onChange={e => handleUpload(e.target.files?.[0])} /><div className="mb-3 text-4xl">{uploading ? "⏳" : "📄"}</div><div className="text-lg font-semibold">{uploading ? "Analizando documento…" : "Seleccionar Estado de Cuenta PDF"}</div><div className="mt-2 text-sm text-slate-500">Máximo 10 MB · PDF oficial de SIMIT</div></label></div>}
-    {records.length > 0 && <div className="space-y-6">
-      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-sm font-semibold text-emerald-700">✓ Documento analizado</div><div className="mt-1 font-bold text-emerald-950">{fileName}</div><div className="mt-1 text-sm text-emerald-800">{records.length} registro(s) detectado(s){effectiveDocumentNumber ? ` · CC ${effectiveDocumentNumber}` : ""}</div></div><button type="button" onClick={() => { setRecords([]); setSelected(null); setDocumentNumber(""); setFileName(""); try { sessionStorage.removeItem(SIMIT_SESSION_KEY); sessionStorage.removeItem(TRAMI_ANSWERS_KEY); } catch {} }} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">Cambiar PDF</button></div></div>
-      {!effectiveDocumentNumber && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><label className="block text-sm font-semibold text-amber-950">Cédula del titular</label><p className="mt-1 text-sm text-amber-800">No fue posible leerla del PDF. La solicitamos una sola vez.</p><input value={documentNumber} onChange={e => setDocumentNumber(e.target.value.replace(/\D/g, ""))} className="mt-3 w-full rounded-xl border border-amber-300 bg-white p-3 outline-none focus:ring-2 focus:ring-amber-400" placeholder="Número de cédula" /></div>}
-      {records.length > 1 && selected === null && <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-bold">2. Elige el comparendo que vas a revisar</h2><p className="mt-1 text-sm text-slate-500">Selecciona solo el registro sobre el que quieres presentar la petición.</p><div className="mt-5 grid gap-3 md:grid-cols-2">{records.map((r, i) => <button key={`${r.number}-${i}`} type="button" onClick={() => selectRecord(i)} className="rounded-2xl border border-slate-200 bg-white p-5 text-left transition hover:border-blue-300 hover:bg-blue-50"><div className="flex items-center justify-between"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase">{r.kind || "comparendo"}</span><span className="text-lg">→</span></div><div className="mt-4 text-lg font-bold">{r.number || "Sin número"}</div><div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-600"><span>📅 {r.date || "Fecha no leída"}</span>{r.plate && <span>🚗 {r.plate}</span>}<span>🏛️ {r.authority || "Autoridad no leída"}</span><span>💰 {r.value != null ? `$${r.value.toLocaleString("es-CO")}` : "Valor no leído"}</span></div></button>)}</div></div>}
-      {selectedRecord && <>
-        <div className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-white">✓</div><div><h2 className="font-bold">2. Comparendo seleccionado</h2><p className="text-sm text-slate-500">Trámi ya tiene el expediente base y continuará contigo en el chat.</p></div></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{[["Cédula", effectiveDocumentNumber], ["Comparendo", selectedRecord.number], ["Fecha", selectedRecord.date], ...(selectedRecord.plate ? [["Placa", selectedRecord.plate]] : []), ["Entidad", selectedRecord.authority]].map(([label,value]) => <div key={label} className="rounded-2xl bg-slate-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 font-semibold">{value || "No identificada"}</div></div>)}</div></div>
-        <div className="rounded-3xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50 p-7 shadow-sm"><div className="flex items-start gap-4"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-indigo-600 text-xl text-white">🤖</div><div><div className="text-sm font-black uppercase tracking-[0.14em] text-indigo-600">Trámi · Copiloto Legal</div><h2 className="mt-1 text-2xl font-black">Ahora él te hace las preguntas.</h2><p className="mt-2 max-w-2xl leading-7 text-slate-600">No busques campos ni redactes hechos. Responde en el chat y Trámi organizará tus respuestas, verificará qué vía tiene sentido —<strong>prescripción, caducidad o pérdida de ejecutoriedad</strong>— y preparará el documento.</p></div></div><div className="mt-6 flex flex-wrap gap-2 text-xs font-semibold text-indigo-700"><span className="rounded-full bg-white px-3 py-2 shadow-sm">✓ Sin formularios</span><span className="rounded-full bg-white px-3 py-2 shadow-sm">✓ Preguntas una por una</span><span className="rounded-full bg-white px-3 py-2 shadow-sm">✓ Análisis jurídico guiado</span><span className="rounded-full bg-white px-3 py-2 shadow-sm">✓ Documento automático</span></div></div>
-        {generating && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">Trámi terminó el cuestionario. Cruzando respuestas, cronología y reglas jurídicas y generando el documento…</div>}
-        {tramiDone && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">✓ Documento preparado. Redirigiendo a la revisión final…</div>}
-      </>}
-    </div>}
-    {error && <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 p-8 text-center hover:border-indigo-400"><span className="text-3xl">📄</span><span className="mt-2 font-bold">{uploading ? "Analizando Estado de Cuenta…" : "Sube el Estado de Cuenta oficial de SIMIT"}</span><span className="mt-1 text-sm text-slate-500">La guía es opcional. Trámi usará el expediente detectado.</span><input type="file" accept="application/pdf,.pdf" className="hidden" disabled={uploading} onChange={(e) => void handleUpload(e.target.files?.[0])} /></label>{error && <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</div>}</div>
+    {records.length > 0 && <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6"><h2 className="font-bold">Selecciona el comparendo objeto de la petición</h2><div className="mt-4 space-y-2">{records.map((record, i) => <button key={`${record.number}-${i}`} onClick={() => selectRecord(i)} className={`w-full rounded-xl border p-4 text-left ${selected === i ? "border-indigo-500 bg-indigo-50" : "border-slate-200 bg-white"}`}><div className="font-bold">{record.number || "Registro sin número"}</div><div className="text-sm text-slate-600">{record.date || "Fecha no identificada"} · {record.authority || "Autoridad no identificada"} · {record.municipality || "Municipio no identificado"}</div></button>)}</div></div>}
+    {selectedRecord && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-6"><div className="font-black text-emerald-800">✓ Comparendo seleccionado</div><p className="mt-1 text-sm text-emerald-900">Trámi ya está guiando el expediente. **No necesitas diligenciar formularios adicionales.**</p>{generating && <p className="mt-2 text-sm font-semibold text-emerald-800">Trámi está redactando tu documento…</p>}{tramiDone && <p className="mt-2 text-sm font-semibold text-emerald-800">Documento generado. Redirigiendo…</p>}</div>}
   </section><Footer /></main>;
 }
