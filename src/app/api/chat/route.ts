@@ -80,10 +80,7 @@ function fallbackLegalReply(message: string, context: TrafficContext) {
 
 const apiKey = process.env.GROQ_API_KEY || '';
 const isOpenRouter = apiKey.startsWith('sk-or-v1-');
-const client = apiKey ? new Groq({
-  apiKey,
-  ...(isOpenRouter ? { baseURL: 'https://openrouter.ai/api/v1' } : {}),
-}) : null;
+const client = apiKey ? new Groq({ apiKey, ...(isOpenRouter ? { baseURL: 'https://openrouter.ai/api/v1' } : {}) }) : null;
 const modelName = isOpenRouter ? 'meta-llama/llama-3.3-70b-instruct:free' : 'llama-3.3-70b-versatile';
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -92,10 +89,7 @@ function normalizeMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === 'object')
-    .map(m => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: typeof m.content === 'string' ? m.content.slice(0, 4000) : '',
-    }))
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: typeof m.content === 'string' ? m.content.slice(0, 4000) : '' }))
     .filter(m => m.content);
 }
 
@@ -123,10 +117,7 @@ export async function POST(request: Request) {
     try {
       const completion = await client.chat.completions.create({
         model: modelName,
-        messages: [
-          { role: 'system', content: `${TRAMI_SYSTEM_PROMPT}\n\n${prompt}` },
-          ...conversation,
-        ],
+        messages: [{ role: 'system', content: `${TRAMI_SYSTEM_PROMPT}\n\n${prompt}` }, ...conversation],
         temperature: 0.3,
         max_tokens: 400,
       });
