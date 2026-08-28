@@ -118,9 +118,35 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       if (!records.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
       setSimitRecords(records);
       setStatementUploaded(true);
+      try {
+        sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName: file.name, selectedRecord: null }));
+      } catch {}
     } catch (error) {
       setSimitError(error instanceof Error ? error.message : "No fue posible analizar el estado de cuenta.");
     } finally { setStatementLoading(false); }
+  }
+
+  function selectSimitRecord(record: SimitRecord) {
+    setSelectedSimit(record);
+    try {
+      const raw = sessionStorage.getItem(SIMIT_SESSION_KEY);
+      const current = raw ? JSON.parse(raw) : {};
+      sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({
+        ...current,
+        documentNumber: simitDocument.replace(/\D/g, "") || current.documentNumber || record.documentNumber || "",
+        selectedRecord: record,
+      }));
+    } catch {}
+    const selected = fromSimit(simitDocument, record);
+    localDraftStorage.save(draftKey, {
+      data: {
+        ...(localDraftStorage.load(draftKey) as any)?.data,
+        ...selected,
+        __simitRecord: record,
+        __simitSelected: true,
+      },
+      savedAt: new Date().toISOString(),
+    });
   }
 
   async function ensureInstance(a: FormAnswers) {
@@ -157,6 +183,7 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   function clearDraft() {
     localDraftStorage.remove(draftKey); setInstanceId(undefined); setRemoteAnswers(undefined); setAnalysis([]); setPreview(null); setResetSignal(x => x + 1);
     setSimitDocument(""); setSimitRecords([]); setSelectedSimit(null); setSimitError(""); setStatementUploaded(false);
+    try { sessionStorage.removeItem(SIMIT_SESSION_KEY); } catch {}
   }
 
   const selectedAnswers = selectedSimit ? fromSimit(simitDocument, selectedSimit) : undefined;
@@ -170,7 +197,9 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
       <div><label className="block text-sm font-semibold mb-2">Cédula del titular</label><input value={simitDocument} onChange={e => setSimitDocument(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej. 73201464" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg outline-none focus:border-blue-600" /><p className="text-xs text-slate-500 mt-2">Tipo de documento: CC. Esta cédula se utilizará para asociar el Estado de Cuenta al trámite.</p></div>
       <div className="rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-6"><div className="flex items-start gap-3"><div className="text-2xl">📄</div><div><h3 className="font-bold">Sube el Estado de Cuenta de SIMIT</h3><p className="text-sm text-slate-600 mt-1">Ten preparado el PDF que descargaste del portal oficial. TrámiteYa hará la extracción automáticamente.</p></div></div><label className={`mt-5 flex cursor-pointer items-center justify-center rounded-xl px-5 py-4 text-center font-semibold text-white ${statementLoading || !simitDocument ? "bg-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}><input type="file" accept="application/pdf,.pdf" className="hidden" disabled={statementLoading || !simitDocument} onChange={e => { const file = e.target.files?.[0]; if (file) void uploadStatement(file); e.currentTarget.value = ""; }} />{statementLoading ? "Analizando PDF automáticamente..." : "Seleccionar Estado de Cuenta PDF"}</label><p className="text-xs text-slate-500 mt-3">PDF · máximo 10 MB. No se requiere copiar ni pegar información.</p></div>
       {simitError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{simitError}</div>}
-      {statementUploaded && simitRecords.length > 0 && <div className="space-y-3"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><p className="font-semibold text-emerald-800">Análisis completado</p><p className="text-sm text-emerald-700 mt-1">TrámiteYa identificó {simitRecords.length} registro(s). Selecciona uno. El documento jurídico solo se generará para el comparendo seleccionado.</p></div><h3 className="font-bold text-lg">Selecciona el comparendo que quieres revisar</h3>{simitRecords.map((record, index) => <button key={`${record.number}-${index}`} type="button" onClick={() => setSelectedSimit(record)} className="w-full text-left rounded-xl border p-4 hover:border-blue-500 hover:bg-blue-50"><div className="flex justify-between gap-3"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm text-slate-600"><span>Fecha: {record.date || "—"}</span><span>Placa: {record.plate || "—"}</span><span>Organismo: {record.authority || "—"}</span><span>Estado: {record.status || "—"}</span></div>{record.description && <p className="text-sm text-slate-700 mt-2">{record.description}</p>}<p className="text-xs text-blue-700 mt-3 font-semibold">Usar este comparendo →</p></button>)}</div>}
+      {statementUploaded && simitRecords.length > 0 && <div className="space-y-3"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><p className="font-semibold text-emerald-800">Análisis completado</p><p className="text-sm text-emerald-700 mt-1">TrámiteYa identificó {simitRecords.length} registro(s). Selecciona uno. El documento jurídico solo se generará para el comparendo seleccionado.</p></div><h3 className="font-bold text-lg">Selecciona el comparendo que quieres revisar</h3>{simitRecords.map((record, index) => <button key={`${record.number}-${index}`} type="button" onClick={() => selectSimitRecord(record)} className="w-full text-left rounded-xl border p-4 hover:border-blue-500 hover:bg-blue-50"><div className="flex justify-between gap-3"><strong>{record.number || `Registro ${index + 1}`}</strong><span className="font-semibold">{money(record.value)}</span></div><div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm text-slate-600"><span>Fecha: {record.date || "—"}</span><span>Placa: {record.plate || "—"}</span><span>Organismo: {record.authority || "—"}</span><span>Estado: {record.status || "—"}</span></div>{record.description && <p className="text-sm text-slate-700 mt-2">{record.description}</p>}<p className="text-xs text-blue-700 mt-3 font-semibold">Usar este comparendo →</p></button>)}</div>}
     </div> : !preview ? <StepForm steps={definition.steps} onComplete={(a) => { analyze(a); setPreview(a); }} draftKey={draftKey} resetSignal={resetSignal} instanceId={instanceId} onInstanceReady={setInstanceId} initialAnswers={formInitialAnswers} /> : <div className="space-y-6"><div><h2 className="text-xl font-bold">Revisión del trámite</h2><p className="text-sm text-slate-500 mt-1">La información extraída del Estado de Cuenta ya fue incorporada. Verifica antes de generar el documento.</p></div><pre className="max-h-96 overflow-auto rounded-xl bg-slate-50 p-4 text-xs">{JSON.stringify(preview, null, 2)}</pre>{analysis.length > 0 && <div className="rounded-xl border p-4"><h3 className="font-semibold mb-2">Análisis jurídico preliminar</h3>{analysis.map((d, i) => <div key={i} className="text-sm py-1">{d.label || d.id || "Regla aplicable"}</div>)}</div>}<div className="flex gap-3"><button type="button" onClick={() => setPreview(null)} className="rounded-xl border px-5 py-3 font-semibold">Volver a editar</button><button type="button" onClick={() => generate(preview)} disabled={loading} className="rounded-xl bg-blue-600 px-5 py-3 text-white font-semibold disabled:opacity-60">{loading ? "Generando..." : "Generar documento"}</button></div></div>}
   </div></section><Footer /></main>;
 }
+
+const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
