@@ -2,297 +2,59 @@
 
 import React, { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 
-type ComparendoContext = {
-  numero?: string;
-  fecha?: string;
-  organismo?: string;
-  municipio?: string;
-  valor?: string | number;
-  fechaResolucion?: string;
-  fechaEjecutoria?: string;
-  fechaMandamiento?: string;
-  fechaNotificacionMandamiento?: string;
-  placa?: string;
-  codigoInfraccion?: string;
-  estado?: string;
-};
-
+type ComparendoContext = { numero?: string; fecha?: string; organismo?: string; municipio?: string; valor?: string | number; fechaResolucion?: string; fechaEjecutoria?: string; fechaMandamiento?: string; fechaNotificacionMandamiento?: string; placa?: string; codigoInfraccion?: string; estado?: string; documentNumber?: string };
 type Message = { id: number; role: 'user' | 'assistant'; text: string };
-type GuidedAnswers = Record<string, string>;
+type Answers = Record<string, string>;
+type Question = { key: string; text: string; when?: (c: ComparendoContext, a: Answers) => boolean };
 
-type GuidedQuestion = {
-  key: string;
-  text: string;
-  required?: boolean;
-  skipLabel?: string;
-};
-
-const QUICK_REPLIES = [
-  '💡 ¿Mi multa está prescrita?',
-  '🏛️ ¿A dónde se envía este escrito?',
-  '⚖️ ¿Qué pasa si me responden que NO?',
-  '📑 ¿Qué significan los hechos de mi escrito?',
-  '⏳ ¿Puedo pedir caducidad?',
-  '⚖️ ¿Puedo alegar pérdida de fuerza ejecutoria?',
-];
-
+const QUICK_REPLIES = ['💡 ¿Mi multa está prescrita?', '🏛️ ¿A dónde se envía este escrito?', '⚖️ ¿Qué pasa si me responden que NO?', '📑 ¿Qué significan los hechos de mi escrito?', '⏳ ¿Puedo pedir caducidad?', '⚖️ ¿Puedo alegar pérdida de fuerza ejecutoria?'];
 const DRAFT_KEY = 'tramiteya:draft:procedure:derecho-de-peticion-eliminar-multa';
 const SIMIT_SESSION_KEY = 'tramiteya:simit-upload:v1';
 const TRAMI_ANSWERS_KEY = 'tramiteya:trami-questionnaire:v1';
-
-const GUIDED_QUESTIONS: GuidedQuestion[] = [
-  { key: 'nombresCompletos', text: 'Empecemos. ¿Cuál es tu nombre y apellido completos?' },
-  { key: 'correo', text: '¿A qué correo quieres que quede asociado el trámite?' },
-  { key: 'telefono', text: '¿Cuál es tu número de teléfono? Si prefieres no suministrarlo, escribe “omitir”.', skipLabel: 'Omitir teléfono' },
-  { key: 'notificacionComparendo', text: 'Sobre este comparendo: ¿recibiste alguna notificación de la actuación? Puedes responder “sí”, “no” o “no sé”. Si recuerdas la fecha, inclúyela.' },
-  { key: 'notificacionResolucion', text: '¿Recibiste o conoces una resolución que te impusiera la multa? Responde “sí”, “no” o “no sé” y, si la conoces, indica la fecha.' },
-  { key: 'mandamientoPago', text: '¿Alguna vez recibiste un mandamiento de pago o comunicación de cobro por esta multa? Responde “sí”, “no” o “no sé” y, si recuerdas la fecha, indícala.' },
-  { key: 'ejecutoria', text: '¿Sabes cuándo quedó en firme la resolución que impuso la multa? Si no lo sabes, responde “no sé”.', skipLabel: 'No sé' },
-  { key: 'pagoAcuerdo', text: '¿Has pagado esta multa o celebrado un acuerdo de pago? Responde “sí”, “no” o “no sé”.' },
-  { key: 'objetivo', text: 'Última pregunta: ¿qué quieres que revisemos principalmente: prescripción, caducidad, pérdida de ejecutoriedad o una revisión integral?' },
+const QUESTIONS: Question[] = [
+  { key: 'nombresCompletos', text: 'Primero necesito tu nombre completo para identificarte correctamente en el escrito.', when: (_c, a) => !a.nombresCompletos },
+  { key: 'correo', text: '¿Cuál es el correo donde quieres recibir la respuesta de la autoridad?', when: (_c, a) => !a.correo },
+  { key: 'notificacionComparendo', text: '¿Recibiste alguna notificación relacionada con este comparendo? Puedes decirme sí, no o no sé. Si recuerdas una fecha, inclúyela.' },
+  { key: 'notificacionResolucion', text: '¿Recibiste o conoces una resolución que impusiera la multa? Si conoces la fecha, dímela.', when: c => !c.fechaResolucion },
+  { key: 'mandamientoPago', text: '¿Alguna vez recibiste un mandamiento de pago o una comunicación formal de cobro? Si recuerdas cuándo, dímelo.', when: c => !c.fechaMandamiento && !c.fechaNotificacionMandamiento },
+  { key: 'ejecutoria', text: '¿Sabes cuándo quedó en firme la resolución que impuso la multa? Si no lo sabes, dime “no sé”.', when: c => !c.fechaEjecutoria },
+  { key: 'pagoAcuerdo', text: '¿Has pagado esta multa o celebrado un acuerdo de pago? Responde sí, no o no sé.' },
 ];
 
-function normalizeValue(value: unknown): string | undefined {
-  if (value == null) return undefined;
-  const text = String(value).trim();
-  return text || undefined;
-}
-
-function readLiveContext(): ComparendoContext | null {
+const clean = (v: unknown) => v == null ? undefined : String(v).trim() || undefined;
+function readContext(): ComparendoContext | null {
   if (typeof window === 'undefined') return null;
   try {
-    const rawDraft = window.localStorage.getItem(DRAFT_KEY);
-    if (rawDraft) {
-      const parsed = JSON.parse(rawDraft) as { data?: Record<string, unknown> };
-      const data = parsed?.data || {};
-      const nested = data.__simitRecord && typeof data.__simitRecord === 'object' ? data.__simitRecord as Record<string, unknown> : {};
-      const value = data.valor ?? data.valor_multa ?? nested.value;
-      const context: ComparendoContext = {
-        numero: normalizeValue(data.numero_comparendo || data.numero_acto || nested.number),
-        fecha: normalizeValue(data.fecha_comparendo || nested.date),
-        organismo: normalizeValue(data.autoridad || data.entidad || nested.authority),
-        municipio: normalizeValue(data.municipio || data.ciudad || nested.municipality),
-        valor: normalizeValue(value),
-        fechaResolucion: normalizeValue(data.fechaResolucion || nested.resolutionDate),
-        fechaEjecutoria: normalizeValue(data.fechaEjecutoria),
-        fechaMandamiento: normalizeValue(data.fechaMandamiento),
-        fechaNotificacionMandamiento: normalizeValue(data.fechaNotificacionMandamiento),
-        placa: normalizeValue(data.placa || nested.plate),
-        codigoInfraccion: normalizeValue(data.codigoInfraccion || nested.infractionCode),
-        estado: normalizeValue(data.estadoComparendo || nested.status),
-      };
-      if (context.numero || context.fecha || context.organismo) return context;
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (raw) {
+      const data = (JSON.parse(raw)?.data || {}) as Record<string, any>;
+      const nested = data.__simitRecord && typeof data.__simitRecord === 'object' ? data.__simitRecord : {};
+      const c: ComparendoContext = { numero: clean(data.numero_comparendo || data.numero_acto || nested.number), fecha: clean(data.fecha_comparendo || nested.date), organismo: clean(data.autoridad || data.entidad || nested.authority), municipio: clean(data.municipio || data.ciudad || nested.municipality), valor: clean(data.valor ?? data.valor_multa ?? nested.value), fechaResolucion: clean(data.fechaResolucion || nested.resolutionDate), fechaEjecutoria: clean(data.fechaEjecutoria || nested.executedDate), fechaMandamiento: clean(data.fechaMandamiento || nested.mandamientoDate), fechaNotificacionMandamiento: clean(data.fechaNotificacionMandamiento || nested.paymentOrderNotificationDate), placa: clean(data.placa || nested.plate), codigoInfraccion: clean(data.codigoInfraccion || nested.infractionCode), estado: clean(data.estadoComparendo || nested.status), documentNumber: clean(data.documentNumber || data.numeroDocumento || data.documento || data.cedula || nested.documentNumber) };
+      if (c.numero || c.fecha) return c;
     }
-
-    const rawSession = window.sessionStorage.getItem(SIMIT_SESSION_KEY);
-    if (rawSession) {
-      const session = JSON.parse(rawSession) as { records?: Array<Record<string, unknown>>; documentNumber?: string; selectedRecord?: Record<string, unknown> | null };
-      const record = session.selectedRecord || (Array.isArray(session.records) && session.records.length === 1 ? session.records[0] : null);
-      if (record) return {
-        numero: normalizeValue(record.number),
-        fecha: normalizeValue(record.date),
-        organismo: normalizeValue(record.authority),
-        municipio: normalizeValue(record.municipality),
-        valor: normalizeValue(record.value),
-        fechaResolucion: normalizeValue(record.resolutionDate),
-        fechaEjecutoria: undefined,
-        fechaMandamiento: undefined,
-        fechaNotificacionMandamiento: undefined,
-        placa: normalizeValue(record.plate),
-        codigoInfraccion: normalizeValue(record.infractionCode),
-        estado: normalizeValue(record.status),
-      };
-    }
-  } catch {
-    // Context is optional; malformed browser storage must never break the wizard.
-  }
-  return null;
+    const session = JSON.parse(sessionStorage.getItem(SIMIT_SESSION_KEY) || '{}') as { records?: any[]; documentNumber?: string; selectedRecord?: any };
+    const r = session.selectedRecord || (session.records?.length === 1 ? session.records[0] : null); if (!r) return null;
+    return { numero: clean(r.number), fecha: clean(r.date), organismo: clean(r.authority), municipio: clean(r.municipality), valor: clean(r.value), fechaResolucion: clean(r.resolutionDate), fechaEjecutoria: clean(r.executedDate), fechaMandamiento: clean(r.mandamientoDate || r.paymentOrderDate), fechaNotificacionMandamiento: clean(r.paymentOrderNotificationDate), placa: clean(r.plate), codigoInfraccion: clean(r.infractionCode), estado: clean(r.status), documentNumber: clean(session.documentNumber || r.documentNumber) };
+  } catch { return null; }
 }
-
-function readGuidedAnswers(): GuidedAnswers {
-  if (typeof window === 'undefined') return {};
-  try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(TRAMI_ANSWERS_KEY) || '{}');
-    return parsed?.answers && typeof parsed.answers === 'object' ? parsed.answers : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeGuidedAnswers(answers: GuidedAnswers, complete = false) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 1, answers, complete, updatedAt: new Date().toISOString() }));
-  } catch {}
-}
+function readAnswers(): Answers { try { const p = JSON.parse(sessionStorage.getItem(TRAMI_ANSWERS_KEY) || '{}'); return p?.answers && typeof p.answers === 'object' ? p.answers : {}; } catch { return {}; } }
+function saveAnswers(a: Answers, complete = false) { try { sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 3, answers: a, complete, updatedAt: new Date().toISOString() })); } catch {} }
+function renderText(text: string) { return text.split(/(\*\*[^*]+\*\*)/g).map((p, i) => p.startsWith('**') && p.endsWith('**') ? <strong key={i}>{p.slice(2, -2)}</strong> : <React.Fragment key={i}>{p}</React.Fragment>); }
 
 export default function TramiWidget() {
-  const [open, setOpen] = useState(false);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [liveContext, setLiveContext] = useState<ComparendoContext | null>(null);
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, role: 'assistant', text: 'Hola. Soy Trámi, tu copiloto legal. Puedo ayudarte a entender tu comparendo, revisar prescripción, caducidad o pérdida de ejecutoriedad y preparar contigo el escrito.' },
-  ]);
-  const [guidedIndex, setGuidedIndex] = useState<number | null>(null);
-  const [guidedAnswers, setGuidedAnswers] = useState<GuidedAnswers>({});
-  const [guidedComplete, setGuidedComplete] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const initializedGuided = useRef(false);
+  const [open, setOpen] = useState(false); const [input, setInput] = useState(''); const [loading, setLoading] = useState(false); const [context, setContext] = useState<ComparendoContext | null>(null); const [answers, setAnswers] = useState<Answers>({}); const [index, setIndex] = useState<number | null>(null); const [complete, setComplete] = useState(false); const [messages, setMessages] = useState<Message[]>([{ id: 1, role: 'assistant', text: 'Hola. Soy **Trámi**, tu copiloto legal. Ya tienes el comparendo seleccionado. Desde aquí me encargo del proceso: te haré solo las preguntas necesarias y yo determinaré qué vía jurídica corresponde.' }]);
+  const scrollRef = useRef<HTMLDivElement>(null); const initialized = useRef(false); const isTraffic = typeof window !== 'undefined' && window.location.pathname.includes('/formulario-simit');
+  const questions = useMemo(() => QUESTIONS.filter(q => !q.when || q.when(context || {}, answers)), [context, answers]); const current = index != null ? questions[index] : null;
 
-  const isTrafficWizard = typeof window !== 'undefined' && window.location.pathname.includes('/formulario-simit');
+  useEffect(() => { const refresh = () => { const c = readContext(); setContext(c); if (!isTraffic || !c?.numero || initialized.current) return; initialized.current = true; setOpen(true); const saved = readAnswers(); setAnswers(saved); let meta: any = {}; try { meta = JSON.parse(sessionStorage.getItem(TRAMI_ANSWERS_KEY) || '{}'); } catch {} if (meta.complete) { setComplete(true); setIndex(null); return; } setIndex(0); if (!Object.keys(saved).length) setMessages([{ id: Date.now(), role: 'assistant', text: `Perfecto. Ya seleccionaste el comparendo **${c.numero}**. No tendrás más formularios. Yo conduciré el proceso y determinaré automáticamente si corresponde revisar caducidad, prescripción, pérdida de ejecutoriedad u otra vía.` }]); }; refresh(); const t = window.setInterval(refresh, 700); return () => window.clearInterval(t); }, [isTraffic]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages, loading]);
+  function add(text: string) { setMessages(m => [...m, { id: Date.now() + Math.random(), role: 'assistant', text }]); }
+  function finish(finalAnswers: Answers) { setComplete(true); setIndex(null); saveAnswers(finalAnswers, true); add('Listo. **Ya tengo la información necesaria.** Voy a cruzar tus respuestas con el Estado de Cuenta SIMIT y la cronología. No tienes que escoger ninguna figura jurídica: **Trámi hará esa determinación automáticamente** y preparará el escrito.'); window.dispatchEvent(new CustomEvent('trami:questionnaire-complete', { detail: { answers: finalAnswers, comparendo: context } })); }
+  function answer(text: string) { if (!current || loading) return; const value = text.trim(); if (!value) return; const next = { ...answers, [current.key]: value }; setInput(''); setAnswers(next); saveAnswers(next); setMessages(m => [...m, { id: Date.now(), role: 'user', text: value }]); const ni = (index ?? 0) + 1; if (ni >= questions.length) { finish(next); return; } setIndex(ni); window.setTimeout(() => add(questions[ni].text), 150); }
+  async function send(text = input) { const value = text.trim(); if (!value || loading) return; if (index != null && !complete) { answer(value); return; } setInput(''); setMessages(m => [...m, { id: Date.now(), role: 'user', text: value }]); setLoading(true); try { const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: value, comparendo: context, answers }) }); const p = await r.json(); if (!r.ok) throw new Error(p.error || 'No fue posible responder.'); setMessages(m => [...m, { id: Date.now() + 1, role: 'assistant', text: p.text }]); } catch (e) { setMessages(m => [...m, { id: Date.now() + 1, role: 'assistant', text: e instanceof Error ? e.message : 'No fue posible responder.' }]); } finally { setLoading(false); } }
+  function submit(e: FormEvent) { e.preventDefault(); void send(); } function key(e: KeyboardEvent<HTMLInputElement>) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }
 
-  useEffect(() => {
-    const refresh = () => {
-      const next = readLiveContext();
-      setLiveContext(next);
-      if (isTrafficWizard && next?.numero && !initializedGuided.current) {
-        const saved = readGuidedAnswers();
-        setGuidedAnswers(saved);
-        const savedComplete = (() => { try { return Boolean(JSON.parse(window.sessionStorage.getItem(TRAMI_ANSWERS_KEY) || '{}').complete); } catch { return false; } })();
-        setGuidedComplete(savedComplete);
-        if (!savedComplete) {
-          initializedGuided.current = true;
-          setOpen(true);
-          setGuidedIndex(Math.min(Object.keys(saved).length, GUIDED_QUESTIONS.length - 1));
-          if (Object.keys(saved).length === 0) {
-            setMessages([{ id: Date.now(), role: 'assistant', text: `Perfecto. Ya seleccionaste el comparendo ${next.numero}. Ahora no tendrás que llenar más formularios: yo te haré unas preguntas breves, una por una, y con tus respuestas prepararé el escrito.\n\nPregunta 1 de ${GUIDED_QUESTIONS.length}: ${GUIDED_QUESTIONS[0].text}` }]);
-          }
-        }
-      }
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 700);
-    window.addEventListener('storage', refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener('storage', refresh); };
-  }, [isTrafficWizard]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, loading]);
-
-  const context = liveContext;
-  const contextLabel = context?.numero
-    ? `📍 Contexto: Comparendo ${context.numero}${context.municipio ? ` · ${context.municipio}` : context.organismo ? ` · ${context.organismo}` : ''}`
-    : '📍 Contexto: Sin comparendo seleccionado';
-
-  const currentQuestion = guidedIndex != null ? GUIDED_QUESTIONS[guidedIndex] : null;
-  const guidedProgress = useMemo(() => guidedIndex == null ? 0 : guidedIndex + 1, [guidedIndex]);
-
-  function appendAssistant(text: string) {
-    setMessages((current) => [...current, { id: Date.now() + Math.random(), role: 'assistant', text }]);
-  }
-
-  function completeGuided(nextAnswers: GuidedAnswers) {
-    setGuidedAnswers(nextAnswers);
-    setGuidedComplete(true);
-    setGuidedIndex(null);
-    writeGuidedAnswers(nextAnswers, true);
-    appendAssistant('Listo. Ya tengo lo necesario. Voy a cruzar tus respuestas con los datos del SIMIT y revisar **prescripción, caducidad y pérdida de ejecutoriedad** para determinar qué vías son viables.\n\nNo necesitas llenar otro formulario. Estoy preparando el documento con la información que acabas de suministrar.');
-    window.dispatchEvent(new CustomEvent('trami:questionnaire-complete', { detail: { answers: nextAnswers, comparendo: context } }));
-  }
-
-  function answerGuided(text: string) {
-    if (!currentQuestion || loading) return;
-    const value = text.trim();
-    if (!value) return;
-    const nextAnswers = { ...guidedAnswers, [currentQuestion.key]: value };
-    setInput('');
-    setGuidedAnswers(nextAnswers);
-    writeGuidedAnswers(nextAnswers, false);
-    setMessages((current) => [...current, { id: Date.now(), role: 'user', text: value }]);
-    const nextIndex = (guidedIndex ?? 0) + 1;
-    if (nextIndex >= GUIDED_QUESTIONS.length) {
-      completeGuided(nextAnswers);
-      return;
-    }
-    setGuidedIndex(nextIndex);
-    window.setTimeout(() => appendAssistant(`Pregunta ${nextIndex + 1} de ${GUIDED_QUESTIONS.length}: ${GUIDED_QUESTIONS[nextIndex].text}`), 120);
-  }
-
-  async function sendMessage(text = input) {
-    const value = text.trim();
-    if (!value || loading) return;
-    if (guidedIndex != null && !guidedComplete) {
-      answerGuided(value);
-      return;
-    }
-    setInput('');
-    setMessages((current) => [...current, { id: Date.now(), role: 'user', text: value }]);
-    setLoading(true);
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: value, comparendo: context }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'No fue posible obtener una respuesta.');
-      setMessages((current) => [...current, { id: Date.now() + 1, role: 'assistant', text: payload.text }]);
-    } catch (error) {
-      setMessages((current) => [...current, { id: Date.now() + 1, role: 'assistant', text: error instanceof Error ? error.message : 'No fue posible responder en este momento.' }]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
-  }
-
-  function submit(event: FormEvent) { event.preventDefault(); void sendMessage(); }
-
-  if (!open) {
-    return (
-      <div className="fixed bottom-5 right-5 z-[100] flex items-center gap-3">
-        <button type="button" onClick={() => setOpen(true)} className="group relative flex items-center gap-2 rounded-full border border-white/20 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-bold text-white shadow-2xl shadow-indigo-900/30 transition hover:-translate-y-0.5" aria-label="Hablar con Trámi">
-          <span className="absolute -inset-1 -z-10 animate-pulse rounded-full bg-indigo-500/30 blur-md" />
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-xl">🤖</span>
-          <span>{isTrafficWizard && context?.numero && !guidedComplete ? 'Continuar con Trámi 🤖' : 'Hablar con Trámi 🤖'}</span>
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <section className="fixed bottom-5 right-5 z-[100] flex h-[min(700px,calc(100vh-40px))] w-[min(440px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl" aria-label="Trámi · Copiloto Legal">
-      <header className="flex items-center justify-between bg-gradient-to-r from-indigo-700 to-violet-700 px-4 py-3 text-white">
-        <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 text-xl">🤖</div>
-          <div><div className="font-bold">Trámi · Copiloto Legal</div><div className="flex items-center gap-1.5 text-xs text-emerald-200"><span className="h-2 w-2 rounded-full bg-emerald-300" />En línea</div></div>
-        </div>
-        <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-3 py-1 text-xl hover:bg-white/10" aria-label="Minimizar">─</button>
-      </header>
-      <div className="border-b border-indigo-100 bg-indigo-50 px-4 py-2 text-xs font-medium text-indigo-800">{contextLabel}</div>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
-        {guidedIndex != null && !guidedComplete && <div className="sticky top-0 z-10 rounded-xl border border-indigo-100 bg-white/95 p-2.5 text-xs font-semibold text-indigo-700 shadow-sm backdrop-blur">Cuestionario Trámi · Pregunta {guidedProgress} de {GUIDED_QUESTIONS.length}</div>}
-        {messages.map((message) => (
-          <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-5 ${message.role === 'user' ? 'rounded-br-md bg-indigo-600 text-white' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700 shadow-sm'}`}>
-              {message.text}
-            </div>
-          </div>
-        ))}
-        {loading && <div className="flex justify-start"><div className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">Trámi está analizando…</div></div>}
-      </div>
-
-      <div className="border-t border-slate-200 bg-white p-3">
-        {guidedIndex != null && !guidedComplete ? (
-          <div className="mb-2 flex justify-end">
-            <button type="button" onClick={() => answerGuided(currentQuestion?.skipLabel || 'omitir')} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:bg-indigo-50">{currentQuestion?.skipLabel || 'No lo sé / omitir'}</button>
-          </div>
-        ) : (
-          <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-            {QUICK_REPLIES.map((reply) => <button key={reply} type="button" disabled={loading} onClick={() => void sendMessage(reply.replace(/^\S+\s/, ''))} className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50">{reply}</button>)}
-          </div>
-        )}
-        <form onSubmit={submit} className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-2 py-2 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
-          <input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} disabled={loading} placeholder={guidedIndex != null && !guidedComplete ? 'Responde aquí…' : 'Escribe tu pregunta…'} className="min-w-0 flex-1 bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400" aria-label="Mensaje para Trámi" autoFocus={guidedIndex != null && !guidedComplete} />
-          <button type="submit" disabled={!input.trim() || loading} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:opacity-40" aria-label="Enviar">➤</button>
-        </form>
-        <p className="mt-2 text-center text-[10px] text-slate-400">Trámi orienta y organiza la información; la autoridad competente decide.</p>
-      </div>
-    </section>
-  );
+  if (isTraffic && open) return <div className="fixed inset-0 z-[200] flex flex-col bg-slate-50"><header className="flex shrink-0 items-center justify-between bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-700 px-5 py-4 text-white shadow-lg"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/15 text-2xl">🤖</div><div><div className="text-lg font-black">Trámi · Copiloto Legal</div><div className="flex items-center gap-1.5 text-xs text-emerald-200"><span className="h-2 w-2 rounded-full bg-emerald-300"/> En línea · guiando tu trámite</div></div></div><button onClick={() => setOpen(false)} className="rounded-xl px-4 py-2 text-xl hover:bg-white/10" aria-label="Minimizar">─</button></header><div className="border-b border-indigo-100 bg-white px-5 py-2.5 text-sm font-semibold text-indigo-800">📍 {context?.numero ? `Expediente: Comparendo ${context.numero}${context.municipio ? ` · ${context.municipio}` : ''}` : 'Preparando expediente…'}</div><div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8"><div className="mx-auto max-w-3xl space-y-4">{context?.numero && <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm"><div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Tu expediente</div><div className="mt-2 grid gap-2 text-sm sm:grid-cols-3"><span><b>Comparendo:</b> {context.numero}</span><span><b>Fecha:</b> {context.fecha || 'pendiente'}</span><span><b>Cédula:</b> {context.documentNumber || 'detectada al generar'}</span></div></div>}{messages.map(m => <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-[15px] leading-6 shadow-sm ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'border border-slate-200 bg-white text-slate-800'}`}>{renderText(m.text)}</div></div>)}{loading && <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">Trámi está analizando…</div>}</div></div><div className="shrink-0 border-t border-slate-200 bg-white p-3 md:p-4"><div className="mx-auto max-w-3xl">{current && !complete && <div className="mb-3 flex justify-between text-xs font-semibold text-indigo-600"><span>Pregunta {index! + 1} · Trámi está guiando el expediente</span><span>No necesitas saber de derecho</span></div>}{(!current || complete) && <div className="mb-3 flex gap-2 overflow-x-auto pb-1">{QUICK_REPLIES.map(q => <button key={q} type="button" onClick={() => void send(q)} className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50">{q}</button>)}</div>}<form onSubmit={submit} className="flex gap-2"><input value={input} onChange={e => setInput(e.target.value)} onKeyDown={key} placeholder={current ? 'Escribe tu respuesta aquí…' : 'Pregúntale a Trámi…'} className="min-w-0 flex-1 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"/><button type="submit" disabled={!input.trim() || loading} className="rounded-2xl bg-indigo-600 px-5 py-3 font-bold text-white disabled:opacity-40">Enviar</button></form></div></div></div>;
+  if (!open) return <button type="button" onClick={() => setOpen(true)} className="fixed bottom-5 right-5 z-[100] flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-4 py-3 font-bold text-white shadow-2xl"><span className="animate-pulse text-xl">🤖</span>{isTraffic && context?.numero && !complete ? 'Continuar con Trámi' : 'Hablar con Trámi 🤖'}</button>;
+  return <div className="fixed bottom-5 right-5 z-[100] flex h-[min(700px,calc(100vh-40px))] w-[min(440px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"><header className="flex items-center justify-between bg-indigo-700 px-4 py-3 text-white"><div className="font-bold">🤖 Trámi · Copiloto Legal<div className="text-xs font-normal text-emerald-200">● En línea</div></div><button onClick={() => setOpen(false)} className="px-3 text-xl">─</button></header><div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">{messages.map(m => <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-800 shadow-sm'}`}>{renderText(m.text)}</div></div>)}</div><form onSubmit={submit} className="flex gap-2 border-t p-3"><input value={input} onChange={e => setInput(e.target.value)} onKeyDown={key} className="min-w-0 flex-1 rounded-xl border p-3" placeholder="Pregúntale a Trámi…"/><button className="rounded-xl bg-indigo-600 px-4 font-bold text-white">→</button></form></div>;
 }
