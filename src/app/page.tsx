@@ -29,6 +29,9 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
       <Header />
 
+      {/* Social proof moved immediately below the header so trust is established before the user reaches the main conversion flow. */}
+      <TestimonialsSlider />
+
       <section className="relative overflow-hidden bg-slate-950 text-white">
         <div className="absolute -right-40 -top-48 h-[34rem] w-[34rem] rounded-full bg-indigo-500/25 blur-3xl" />
         <div className="absolute -bottom-56 left-1/4 h-[28rem] w-[28rem] rounded-full bg-blue-500/10 blur-3xl" />
@@ -61,8 +64,6 @@ export default function Home() {
         </div>
       </section>
 
-      <TestimonialsSlider />
-
       <section className="border-y border-slate-200 bg-white py-16 lg:py-20">
         <div className="mx-auto max-w-7xl px-5 lg:px-8">
           <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Así funciona</p><h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Del comparendo al escrito, sin complicarte.</h2><p className="mt-4 text-base leading-7 text-slate-500">Un flujo diseñado para que la tecnología haga el trabajo pesado y tú mantengas el control.</p></div>
@@ -90,7 +91,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-5 py-16 lg:px-8"><div className="rounded-[2rem] bg-indigo-600 px-7 py-12 text-white sm:px-12 lg:flex lg:items-center lg:justify-between"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-200">TrámiteYa</p><h2 className="mt-3 max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">Empieza gratis. Decide después.</h2><p className="mt-3 max-w-xl text-sm leading-6 text-indigo-100">Analiza tu situación y revisa el documento antes de tomar la decisión de pago.</p></div><Link href={trafficHref} className="mt-7 inline-block rounded-2xl bg-white px-6 py-4 text-sm font-black text-indigo-700 lg:mt-0">Analizar mi caso →</Link></div></section>
+      <section className="mx-auto max-w-7xl px-5 py-16 lg:px-8"><div className="rounded-[2rem] bg-indigo-600 px-7 py-12 text-white sm:px-12 lg:flex lg:items-center lg:justify-between"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-200">TrámiteYa</p><h2 className="mt-3 max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">Empieza tu trámite sin enfrentarte solo a la burocracia.</h2></div><Link href={trafficHref} className="mt-7 inline-block rounded-2xl bg-white px-6 py-4 text-sm font-black text-indigo-700 lg:mt-0">Iniciar ahora →</Link></div></section>
 
       <section className="border-t border-slate-200 bg-[#f7f8fa] py-7"><div className="mx-auto max-w-7xl px-5 text-xs leading-5 text-slate-500 lg:px-8">TrámiteYa es una herramienta tecnológica de automatización documental. La generación de un documento no constituye por sí misma asesoría jurídica personalizada ni garantiza el resultado de un procedimiento. El usuario es responsable de verificar la información suministrada y cumplir los requisitos y términos aplicables.</div></section>
       <Footer />
