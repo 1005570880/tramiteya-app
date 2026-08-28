@@ -89,8 +89,11 @@ function normalizeMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === 'object')
-    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: typeof m.content === 'string' ? m.content.slice(0, 4000) : '' }))
-    .filter(m => m.content);
+    .map((m): ChatMessage => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof m.content === 'string' ? m.content.slice(0, 4000) : '',
+    }))
+    .filter((m): m is ChatMessage => Boolean(m.content));
 }
 
 export async function POST(request: Request) {
@@ -128,7 +131,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ text: fallbackLegalReply(currentMessage, context), mode: 'fallback' });
     }
   } catch (error) {
-    console.error('Trámi chat error:', error);
-    return NextResponse.json({ error: 'No fue posible responder en este momento.' }, { status: 500 });
+    console.error('Trámi API error:', error);
+    return NextResponse.json({ text: 'En este momento tengo un inconveniente de conexión. Puedes continuar y Trámi retomará el expediente.', mode: 'fallback' }, { status: 200 });
   }
 }
