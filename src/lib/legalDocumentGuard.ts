@@ -23,6 +23,18 @@ function removeMarkdownMarkers(text: string): string {
     .replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
 }
 
+function normalizeTemporalLanguage(text: string): string {
+  return text.replace(/La actuación tiene una antigüedad aproximada de (\d+(?:\.\d+)?) años\./gi, (_match, rawYears: string) => {
+    const years = Number(rawYears);
+    if (!Number.isFinite(years)) return _match;
+    if (years < 1) return 'La actuación tiene menos de un año de antigüedad.';
+    if (years < 2) return 'La actuación tiene más de un año de antigüedad.';
+    if (years < 3) return 'Han transcurrido más de dos años desde la fecha del hecho y aún no se completan tres años.';
+    if (years < 4) return 'Han transcurrido más de tres años desde la fecha del hecho.';
+    return `Han transcurrido aproximadamente ${Math.floor(years)} años desde la fecha del hecho.`;
+  });
+}
+
 function removeUnsupportedData(text: string): string {
   const paragraphs = text.split(/\n{2,}/);
   return paragraphs
@@ -66,7 +78,7 @@ function hasRequiredDeletionRelief(text: string): boolean {
 }
 
 export function cleanLegalDocumentOutput(text: string): string {
-  return removeMarkdownMarkers(removeUnsupportedData(text));
+  return normalizeTemporalLanguage(removeMarkdownMarkers(removeUnsupportedData(text)));
 }
 
 export function isLegallySafeTrafficDocument(text: string): boolean {
