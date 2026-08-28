@@ -16,7 +16,7 @@ function deterministic(record: SelectedRecordData) {
   return {
     ...draft,
     legalAnalysis: {
-      conclusion: temporal?.temporalConclusion || `Ruta principal: ${draft.assessment.primaryRoute || "REVISIÓN INTEGRAL"}.`,
+      conclusion: temporal?.executiveSummary || `Ruta principal: ${draft.assessment.primaryRoute || "REVISIÓN INTEGRAL"}.`,
       certainty: draft.assessment.certainty,
       confidence: draft.assessment.certainty === "CONFIGURADO" || draft.assessment.certainty === "NO_CONFIGURADO" ? "alta" : "media",
       authorities,
@@ -56,9 +56,9 @@ export async function POST(request: Request) {
 
 REGLA ABSOLUTA DE EVIDENCIA: trabaja exclusivamente con los datos del caso y la biblioteca jurídica suministrada. No inventes fechas, resoluciones, ejecutorias, audiencias, notificaciones, pagos, embargos, acuerdos ni actuaciones de cobro. Distingue siempre entre HECHO ACREDITADO, INFERENCIA/CÁLCULO y HECHO PENDIENTE DE PRUEBA.
 
-REGLA DE CÓMPUTO: si existe fecha del hecho, calcula expresamente el término de tres años previsto por el artículo 159 de la Ley 769 de 2002 y muestra la fecha de vencimiento. Ejemplo de lógica: hecho 17/07/2012 → vencimiento inicial calculado 17/07/2015. Si no existe fecha de notificación del mandamiento, no supongas que ocurrió; explica que su existencia y fecha son determinantes.
+REGLA DE CÓMPUTO: si existe fecha del hecho, calcula expresamente el término de tres años previsto por el artículo 159 de la Ley 769 de 2002 y muestra la fecha de vencimiento. Si no existe fecha de notificación del mandamiento, no supongas que ocurrió; explica que su existencia y fecha son determinantes.
 
-REGLA DE ESCENARIOS: cuando falte la notificación del mandamiento, analiza al menos estos escenarios: (1) no hubo actuación interruptiva acreditada antes del vencimiento; (2) hubo mandamiento notificado válidamente antes del vencimiento; (3) la primera notificación eficaz ocurrió después del vencimiento. Explica la consecuencia jurídica de cada escenario sin convertir una hipótesis en hecho probado.
+REGLA DE ESCENARIOS: cuando falte la notificación del mandamiento, analiza escenarios alternativos sin convertir una hipótesis en hecho probado.
 
 REGLA DE CADUCIDAD: si el registro evidencia multa/sanción, resolución, audiencia, estado de cobro o identificador sancionatorio, no presentes el artículo 161 como si el comparendo siguiera pendiente de decisión. En ese supuesto analiza acto sancionatorio, firmeza, notificación, exigibilidad, prescripción, cobro y fuerza ejecutoria. Si no hay sanción acreditada, analiza la caducidad confrontando la fecha del hecho con la fecha de decisión.
 
@@ -66,11 +66,9 @@ REGLA DE NOTIFICACIÓN: la ausencia de una fecha en SIMIT no demuestra que jamá
 
 REGLA DE JURISPRUDENCIA: no hagas una lista de sentencias. Para cada precedente pertinente explica qué problema resolvió, qué criterio fijó y por qué ese criterio es aplicable a este caso. Usa únicamente precedentes presentes en la biblioteca.
 
-REGLA DE PETICIONES: cada petición debe derivarse de una cuestión jurídica o probatoria identificada. Si falta una prueba crítica, solicita esa prueba y formula la consecuencia para el escenario en que la autoridad no pueda acreditarla. No solicites una declaración definitiva si los datos solo permiten una hipótesis objetiva.
+REGLA DE PETICIONES: cada petición debe derivarse de una cuestión jurídica o probatoria identificada. Si falta una prueba crítica, solicita esa prueba y formula la consecuencia para el escenario en que la autoridad no pueda acreditarla.
 
-ESTILO: prosa forense natural, firme y profesional. No menciones IA, motor, algoritmo, automatización ni biblioteca. No uses fórmulas vacías como “consulte el expediente” sin explicar qué actuación debe verificarse y qué efecto tendría. El escrito debe demostrar que el abogado hizo la cuenta y entendió el problema.
-
-ESTRUCTURA: III. PROBLEMA JURÍDICO; IV. FUNDAMENTOS DE DERECHO; 4.1 Norma aplicable; 4.2 Cómputo del término en el caso concreto; 4.3 Actuaciones interruptivas y efectos de la notificación; 4.4 Hechos acreditados, inferencias y prueba pendiente; 4.5 Jurisprudencia aplicada al caso; 4.6 Escenarios jurídicos posibles; V. ANÁLISIS DEL CASO CONCRETO; VI. CONCLUSIÓN JURÍDICA; VII. DOCUMENTOS NECESARIOS PARA VERIFICAR LA ACTUACIÓN.
+ESTILO: prosa forense natural, firme y profesional. No menciones IA, motor, algoritmo, automatización ni biblioteca.
 
 DATOS DEL CASO:
 ${JSON.stringify(record)}
