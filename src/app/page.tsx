@@ -29,9 +29,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
       <Header />
 
-      {/* Social proof is intentionally the first content block: it appears before the hero and removes the main trust barrier immediately. */}
-      <TestimonialsSlider />
-
+      {/* HERO: principal value proposition and primary conversion action. */}
       <section className="relative overflow-hidden bg-slate-950 text-white">
         <div className="absolute -right-40 -top-48 h-[34rem] w-[34rem] rounded-full bg-indigo-500/25 blur-3xl" />
         <div className="absolute -bottom-56 left-1/4 h-[28rem] w-[28rem] rounded-full bg-blue-500/10 blur-3xl" />
@@ -41,16 +39,20 @@ export default function Home() {
               <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Automatización jurídica para Colombia</div>
               <h1 className="max-w-4xl text-4xl font-black leading-[1.03] tracking-[-0.045em] sm:text-5xl lg:text-6xl">Elimina tus multas de tránsito sin pagarle cientos de miles a un tramitador.</h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300 sm:text-xl">Analizamos tu caso en SIMIT, aplicamos la ley colombiana y redactamos tu escrito legal listo en 2 minutos.</p>
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Link href={trafficHref} className="rounded-2xl bg-white px-6 py-4 text-center text-sm font-black text-slate-950 shadow-2xl shadow-black/30 transition hover:-translate-y-0.5">Analizar mi comparendo gratis →</Link>
+
+              <div className="mt-8 flex flex-col gap-3">
+                <Link href={trafficHref} className="group flex min-h-[88px] w-full items-center justify-center rounded-3xl bg-white px-7 py-5 text-center text-xl font-black text-slate-950 shadow-[0_20px_60px_rgba(0,0,0,0.35)] ring-4 ring-white/10 transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(0,0,0,0.45)] hover:ring-white/20 sm:min-h-[104px] sm:text-2xl lg:max-w-2xl lg:text-3xl">Analizar mi comparendo gratis <span className="ml-2 transition-transform group-hover:translate-x-1">→</span></Link>
                 <Link href="/tramites" className="rounded-2xl border border-white/15 bg-white/5 px-6 py-4 text-center text-sm font-bold text-white transition hover:bg-white/10">Ver otros trámites</Link>
               </div>
-              <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold text-slate-400"><span>✓ Sin formularios interminables</span><span>✓ Vista previa</span><span>✓ Word + PDF</span></div>
+              <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold text-slate-300"><span>✓ Sin formularios interminables</span><span>✓ Vista previa</span><span>✓ Word + PDF</span></div>
             </div>
             <div className="relative"><div className="rounded-[2rem] border border-white/10 bg-white/[0.07] p-3 shadow-2xl shadow-black/40 backdrop-blur"><div className="rounded-[1.5rem] bg-white p-6 text-slate-950 sm:p-7"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-600">Diagnóstico inicial</p><h2 className="mt-2 text-2xl font-black">¿Tienes un comparendo?</h2></div><span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700">GRATIS</span></div><div className="mt-6 space-y-3"><div className="rounded-2xl border border-slate-200 p-4"><p className="text-xs font-bold text-slate-400">PASO 1</p><p className="mt-1 font-extrabold">Sube tu Estado de Cuenta SIMIT</p><p className="mt-1 text-xs leading-5 text-slate-500">También puedes digitar tu cédula.</p></div><div className="rounded-2xl bg-indigo-50 p-4"><p className="text-xs font-bold text-indigo-500">ANÁLISIS</p><p className="mt-1 font-extrabold text-indigo-950">TrámiteYa encuentra la vía jurídica</p><p className="mt-1 text-xs leading-5 text-indigo-900/70">Prescripción · caducidad · notificación · cobro</p></div><div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"><div><p className="font-extrabold">Documento listo</p><p className="text-xs text-slate-500">Vista previa antes de pagar</p></div><span className="text-xl text-emerald-600">✓</span></div></div></div></div></div>
           </div>
         </div>
       </section>
+
+      {/* Social proof now follows the dominant hero CTA. */}
+      <TestimonialsSlider />
 
       <section className="border-y border-slate-200 bg-white py-16 lg:py-20"><div className="mx-auto max-w-7xl px-5 lg:px-8"><div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Así funciona</p><h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Del comparendo al escrito, sin complicarte.</h2><p className="mt-4 text-base leading-7 text-slate-500">Un flujo diseñado para que la tecnología haga el trabajo pesado y tú mantengas el control.</p></div><div className="mt-10 grid gap-5 md:grid-cols-3">{steps.map((step) => <article key={step.n} className="rounded-3xl border border-slate-200 bg-white p-7 shadow-md transition hover:-translate-y-1 hover:shadow-lg"><div className="flex items-center justify-between"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700"><Icon type={step.icon} /></div><span className="text-xs font-black tracking-[0.16em] text-slate-300">PASO {step.n}</span></div><h3 className="mt-7 text-xl font-black leading-tight">{step.title}</h3><p className="mt-3 text-sm leading-6 text-slate-500">{step.text}</p></article>)}</div></div></section>
 
