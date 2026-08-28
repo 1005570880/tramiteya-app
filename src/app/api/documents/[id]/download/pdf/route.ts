@@ -56,8 +56,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const { data: payment, error: paymentError } = await paymentQuery.maybeSingle();
     if (paymentError || !payment) return NextResponse.json({ error: 'Payment required', code: 'PAYMENT_REQUIRED' }, { status: 402 });
 
-    const content = document.meta?.snapshot?.content || document.content;
+    const content: string | null =
+      typeof document.meta?.snapshot?.content === 'string'
+        ? document.meta.snapshot.content
+        : typeof document.content === 'string'
+          ? document.content
+          : null;
     if (!content) return NextResponse.json({ error: 'Document content not available' }, { status: 409 });
+
     const buffer = await generatePdfFromContent(content);
     return new NextResponse(buffer as unknown as BodyInit, {
       status: 200,
