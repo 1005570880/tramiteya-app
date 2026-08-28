@@ -89,23 +89,35 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const procedure = procedures.find((p) => p.slug === params.slug);
   const definition = getDynamicFormDefinition(params.slug);
   const [selectedRecord, setSelectedRecord] = useState<SimitRecord | null>(null);
+  const [hydratingSelection, setHydratingSelection] = useState(true);
   const [documentNumber, setDocumentNumber] = useState("");
   const [fileName, setFileName] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
     try {
       const saved = sessionStorage.getItem(SIMIT_SESSION_KEY);
-      if (!saved) return;
+      if (!saved) {
+        if (!cancelled) setHydratingSelection(false);
+        return;
+      }
       const state = JSON.parse(saved) as SimitSession;
       const selected = state.selectedRecord || null;
-      setSelectedRecord(selected);
-      setDocumentNumber(String(state.documentNumber || selected?.documentNumber || "").replace(/\D/g, ""));
-      setFileName(state.fileName || "Estado de Cuenta SIMIT");
+      if (!cancelled) {
+        setSelectedRecord(selected);
+        setDocumentNumber(String(state.documentNumber || selected?.documentNumber || "").replace(/\D/g, ""));
+        setFileName(state.fileName || "Estado de Cuenta SIMIT");
+        setHydratingSelection(false);
+      }
     } catch {
-      setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente.");
+      if (!cancelled) {
+        setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente.");
+        setHydratingSelection(false);
+      }
     }
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -178,7 +190,17 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <Header />
-      {selectedRecord ? (
+      {hydratingSelection ? (
+        <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
+          <div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm">
+            <div className="animate-pulse space-y-3">
+              <div className="h-3 w-40 rounded bg-slate-200" />
+              <div className="h-5 w-72 rounded bg-slate-200" />
+              <div className="h-4 w-full rounded bg-slate-100" />
+            </div>
+          </div>
+        </section>
+      ) : selectedRecord ? (
         <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
           <div className="mb-4 rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
             <div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Expediente recuperado</div>
