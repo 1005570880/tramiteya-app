@@ -66,15 +66,26 @@ function readQuestionnaire(): Record<string, string> {
 function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<string, string>): FormAnswers {
   const base = fromSimit({ ...record, documentNumber });
   const name = splitFullName(q.nombresCompletos || "");
+  // Identity is now collected inside Trámi. Normalize the cédula once and
+  // mirror it to every legacy field used by the traffic document templates.
+  const cedula = String(q.cedula || documentNumber || record.documentNumber || "").replace(/\D/g, "");
+  const correo = q.correo || "";
+  const telefono = q.telefono === "omitir" ? "" : (q.telefono || "");
+  const direccion = q.direccion === "omitir" ? "" : (q.direccion || "");
   return {
     ...base,
+    documentNumber: cedula,
+    cedula,
+    numeroDocumento: cedula,
+    documento: cedula,
     nombres: name.nombres || base.nombres,
     apellidos: name.apellidos || base.apellidos,
-    correo: q.correo || "",
-    telefono: q.telefono === "omitir" ? "" : (q.telefono || ""),
-    direccion: q.direccion || "",
-    hechos: `${base.hechos}\n\nInformación suministrada directamente por el solicitante durante el cuestionario de Trámi:\n- Notificación del comparendo: ${q.notificacionComparendo || "No informado"}.\n- Notificación de la resolución: ${q.notificacionResolucion || "No informado"}.\n- Mandamiento de pago o cobro: ${q.mandamientoPago || "No informado"}.\n- Fecha de ejecutoria conocida: ${q.ejecutoria || "No informada"}.\n- Pago o acuerdo de pago: ${q.pagoAcuerdo || "No informado"}.\n- Objetivo principal manifestado: ${q.objetivo || "Revisión integral"}.`,
-    causal: `${base.causal}\n\nVías que Trámi debe contrastar: prescripción, caducidad y pérdida de ejecutoriedad. El análisis se realizará diferenciando hechos acreditados, manifestaciones del solicitante y documentos que aún deben solicitarse a la autoridad.`,
+    correo,
+    correo_dest: correo,
+    telefono,
+    direccion,
+    hechos: `${base.hechos}\n\nInformación suministrada directamente por el solicitante durante el cuestionario de Trámi:\n- Notificación del comparendo: ${q.notificacionComparendo || "No informado"}.\n- Notificación de la resolución: ${q.notificacionResolucion || "No informado"}.\n- Mandamiento de pago o cobro: ${q.mandamientoPago || "No informado"}.\n- Fecha de ejecutoria conocida: ${q.ejecutoria || "No informada"}.\n- Pago o acuerdo de pago: ${q.pagoAcuerdo || "No informado"}.`,
+    causal: `${base.causal}\n\nTrámi analizará de manera autónoma la procedencia de caducidad, prescripción, pérdida de fuerza ejecutoria, notificación, debido proceso u otra vía jurídicamente pertinente, sin trasladar esa decisión al usuario.`,
     __tramiQuestionnaire: q,
   } as unknown as FormAnswers;
 }
@@ -165,7 +176,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       procedureStorage.update(instance.id, { answers: enriched, status: "document_ready", document, completedAt: new Date().toISOString() });
       localDraftStorage.save(`procedure:${procedure!.slug}`, { data: enriched, savedAt: new Date().toISOString() });
       setTramiDone(true);
-      try { sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 1, answers: questionnaire, complete: true, generated: true, updatedAt: new Date().toISOString() })); } catch {}
+      try { sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 5, answers: questionnaire, complete: true, generated: true, updatedAt: new Date().toISOString() })); } catch {}
       window.location.href = `/tramites/${procedure!.slug}/resultado/${instance.id}`;
     } catch (e) { console.error(e); setError(e instanceof Error ? e.message : "No fue posible generar el documento."); }
     finally { setGenerating(false); }
@@ -175,7 +186,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const effectiveDocumentNumber = String(documentNumber || selectedRecord?.documentNumber || "").replace(/\D/g, "");
 
   return <main className="min-h-screen bg-slate-50 text-slate-900"><Header /><section className="mx-auto max-w-5xl px-4 py-8 md:py-12">
-    <div className="mb-8"><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">⚡ TrámiteYa · Automatización jurídica</div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">{definition.title}</h1><p className="mt-3 max-w-3xl text-slate-600">Sube tu Estado de Cuenta oficial de SIMIT. Después de seleccionar el comparendo, **no tendrás que llenar más formularios**: Trámi te hará las preguntas necesarias directamente en el chat y construirá el escrito contigo.</p></div>
+    <div className="mb-8"><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">⚡ TrámiteYa · Automatización jurídica</div><h1 className="text-3xl font-bold tracking-tight md:text-4xl">{definition.title}</h1><p className="mt-3 max-w-3xl text-slate-600">Sube tu Estado de Cuenta oficial de SIMIT. Después de seleccionar el comparendo, <strong>no tendrás que llenar más formularios</strong>: Trámi te hará las preguntas necesarias directamente en el chat y construirá el escrito contigo.</p></div>
     <SimitDownloadGuide />
     {!records.length && <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-8"><div className="mb-6 flex items-start gap-4"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-600 text-xl text-white">PDF</div><div><h2 className="text-xl font-bold">1. Sube el Estado de Cuenta de SIMIT</h2><p className="mt-1 text-sm text-slate-500">PDF descargado directamente del portal oficial. No necesitas copiar ni transcribir datos.</p></div></div><label className="group flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center transition hover:border-blue-400 hover:bg-blue-50"><input type="file" accept="application/pdf,.pdf" className="hidden" onChange={e => handleUpload(e.target.files?.[0])} /><div className="mb-3 text-4xl">{uploading ? "⏳" : "📄"}</div><div className="text-lg font-semibold">{uploading ? "Analizando documento…" : "Seleccionar Estado de Cuenta PDF"}</div><div className="mt-2 text-sm text-slate-500">Máximo 10 MB · PDF oficial de SIMIT</div></label></div>}
     {records.length > 0 && <div className="space-y-6">
