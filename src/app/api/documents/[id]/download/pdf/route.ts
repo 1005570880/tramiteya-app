@@ -7,6 +7,20 @@ import { getGuestAccessToken, hashGuestAccessToken } from '../../../../../../lib
 
 const factory = getRepositoryFactory();
 
+type DocumentRow = {
+  id: string;
+  instance_id: string | null;
+  procedure_id: string;
+  content?: unknown;
+  meta?: {
+    guestAccessTokenHash?: string;
+    snapshot?: { content?: unknown };
+    version?: number;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+};
+
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const authToken = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
@@ -14,10 +28,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const guestToken = user ? '' : getGuestAccessToken(req);
     const supabase = getSupabaseServer();
 
-    const { data: document, error: documentError } = await supabase.from('documents').select('*').eq('id', params.id).maybeSingle();
+    const { data: rawDocument, error: documentError } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', params.id)
+      .maybeSingle();
+    const document = rawDocument as DocumentRow | null;
+
     if (documentError || !document) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
 
-    const instanceId = document.instance_id as string | null;
+    const instanceId = document.instance_id;
     if (user && instanceId) {
       const instance = await factory.getInstanceRepo().get(instanceId);
       if (!instance) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
@@ -39,7 +59,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const content = document.meta?.snapshot?.content || document.content;
     if (!content) return NextResponse.json({ error: 'Document content not available' }, { status: 409 });
     const buffer = await generatePdfFromContent(content);
-    return new NextResponse(buffer as unknown as BodyInit, { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="tramiteya-${procedure.slug}-v${document.meta?.version || 1}.pdf"`, 'Cache-Control': 'no-store' } });
+    return new NextResponse(buffer as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="tramiteya-${procedure.slug}-v${document.meta?.version || 1}.pdf"`,
+        'Cache-Control': 'no-store',
+      },
+    });
   } catch (error) {
     console.error('Unable to generate PDF download', error);
     return NextResponse.json({ error: 'Unable to generate PDF' }, { status: 500 });
