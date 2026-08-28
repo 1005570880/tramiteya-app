@@ -2,6 +2,8 @@ import React from 'react';
 import Link from 'next/link';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import TestimonialsSlider from '../components/TestimonialsSlider';
+import TrustBadges from '../components/TrustBadges';
 import { procedures } from '../data/procedures';
 
 const features = [
@@ -79,6 +81,20 @@ export default function Home() {
           <div className="mt-10 grid gap-5 md:grid-cols-3">{available.slice(0, 3).map((p, i) => <Link key={p.id} href={`/tramites/${p.slug}`} className="group rounded-3xl border border-slate-200 bg-[#f8f9fb] p-7 transition hover:-translate-y-1 hover:border-indigo-200 hover:bg-white hover:shadow-xl"><div className="flex items-center justify-between"><span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 shadow-sm">{p.category}</span><span className="text-slate-300 transition group-hover:text-indigo-600">0{i + 1}</span></div><h3 className="mt-12 text-xl font-black leading-tight">{p.title}</h3><p className="mt-3 text-sm leading-6 text-slate-500">{p.description}</p><div className="mt-7 text-sm font-extrabold text-slate-950 group-hover:text-indigo-600">Iniciar trámite →</div></Link>)}</div>
         </div>
       </section>
+
+      <section className="border-t border-slate-200 bg-white py-12">
+        <div className="mx-auto max-w-7xl px-5 lg:px-8">
+          <div className="rounded-[2rem] border border-indigo-100 bg-indigo-50/60 p-7 sm:p-9">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div><p className="text-sm font-black uppercase tracking-[0.16em] text-indigo-600">Precio claro</p><h2 className="mt-2 text-3xl font-black text-slate-950">Tu documento jurídico por $49.900 COP.</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Revisa el contenido antes de descargar y conoce con claridad qué incluye el servicio.</p></div>
+              <Link href="/tramites" className="shrink-0 rounded-2xl bg-slate-950 px-5 py-3 text-center text-sm font-extrabold text-white transition hover:bg-slate-800">Empezar ahora →</Link>
+            </div>
+            <TrustBadges />
+          </div>
+        </div>
+      </section>
+
+      <TestimonialsSlider />
 
       <section className="mx-auto max-w-7xl px-5 py-20 lg:px-8"><div className="rounded-[2rem] bg-indigo-600 px-7 py-12 text-white sm:px-12 lg:flex lg:items-center lg:justify-between lg:py-14"><div><p className="text-sm font-bold uppercase tracking-[0.16em] text-indigo-200">TrámiteYa</p><h2 className="mt-3 max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">Empieza tu trámite sin enfrentarte solo a la burocracia.</h2></div><Link href="/tramites" className="mt-7 inline-block rounded-2xl bg-white px-6 py-3.5 text-sm font-extrabold text-indigo-700 lg:mt-0">Iniciar ahora →</Link></div></section>
 
