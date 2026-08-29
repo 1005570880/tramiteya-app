@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Header from "../../../../components/Header";
 import Footer from "../../../../components/Footer";
 import TramiWidget from "../../../../components/TramiWidget";
@@ -27,7 +27,7 @@ type SimitSession = {
 };
 
 const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
-const TRAMI_ANSWERS_KEY = "tramiteya:trami-questionnaire:v2";
+const TRAMI_ANSWERS_KEY = "tramiteya:trami-questionnaire:v3";
 
 function splitFullName(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
@@ -41,7 +41,7 @@ function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<str
   const fullName = String(q.nombre || q.nombresCompletos || record.ownerName || "").trim();
   const name = splitFullName(fullName);
   const correo = q.correo || "";
-  const telefono = q.telefono === "omitir" ? "" : (q.telefono || "");
+  const telefono = q.telefono || "";
 
   return {
     documentType: "CC",
@@ -75,7 +75,7 @@ function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<str
     fechaResolucion: record.resolutionDate || "",
     fechaNotificacion: record.notificationDate || "",
     fechaPago: record.paymentDate || "",
-    hechos: `Información suministrada durante la entrevista de Trámi:\n- Notificación dentro de los 5 días siguientes al hecho: ${q.notificacion || q.notificacionComparendo || "No informado"}.\n- Notificación de resolución: ${q.decision || q.notificacionResolucion || "No informado"}.\n- Cobro coactivo, embargo o mandamiento de pago: ${q.cobro || q.mandamientoPago || "No informado"}.`,
+    hechos: `Información suministrada durante la entrevista de Trámi:\n- Conocimiento inicial del comparendo: ${q.conocimiento || "No informado"}.\n- Comunicación oficial: ${q.notificacion || "No informado"}.\n- Citación a descargos: ${q.audiencia || "No informado"}.\n- Resolución sancionatoria: ${q.resolucion || "No informado"}.\n- Gestión de cobro: ${q.cobro || "No informado"}.\n- Pagos o acuerdos: ${q.pagos || "No informado"}.\n- Evidencia adicional: ${q.evidencia || "No informado"}.`,
     causal: "Trámi determinará autónomamente la vía jurídica aplicable a partir del expediente, la cronología y las respuestas del ciudadano. No se presume una causal que no esté acreditada.",
     pretension: "Solicitar la revisión integral del expediente y la aplicación de la consecuencia jurídica que corresponda según los hechos y pruebas acreditadas.",
     anexos: "Estado de Cuenta SIMIT aportado por el solicitante.",
@@ -94,6 +94,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const [fileName, setFileName] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const generationStarted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,17 +122,45 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   }, []);
 
   useEffect(() => {
+    const tryGenerate = (questionnaire?: Record<string, string>) => {
+      if (!questionnaire || generationStarted.current || !selectedRecord) return;
+      const complete = questionnaire.nombre && questionnaire.correo && questionnaire.telefono;
+      if (!complete) return;
+      generationStarted.current = true;
+      void generateWithTrami(questionnaire);
+    };
+
     const onComplete = (event: Event) => {
       const custom = event as CustomEvent<{ answers?: Record<string, string> }>;
-      if (!selectedRecord || !custom.detail?.answers) return;
-      void generateWithTrami(custom.detail.answers);
+      tryGenerate(custom.detail?.answers);
     };
+
     window.addEventListener("trami:questionnaire-complete", onComplete);
-    return () => window.removeEventListener("trami:questionnaire-complete", onComplete);
+
+    // Robustez frente a una carrera de efectos React: Trámi puede completar
+    // el cuestionario antes de que este listener quede registrado.
+    const recoverCompletion = () => {
+      try {
+        const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
+        if (!raw) return;
+        const state = JSON.parse(raw) as { answers?: Record<string, string>; complete?: boolean };
+        if (state.complete && state.answers) tryGenerate(state.answers);
+      } catch {
+        // El estado corrupto no debe bloquear el flujo principal.
+      }
+    };
+
+    recoverCompletion();
+    const timer = window.setInterval(recoverCompletion, 400);
+
+    return () => {
+      window.removeEventListener("trami:questionnaire-complete", onComplete);
+      window.clearInterval(timer);
+    };
   }, [selectedRecord, documentNumber, fileName]);
 
   async function generateWithTrami(questionnaire: Record<string, string>) {
-    if (!selectedRecord || generating) return;
+    if (!selectedRecord) return;
     setGenerating(true);
     setError("");
     try {
@@ -177,6 +206,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       window.location.href = `/tramites/${procedure!.slug}/resultado/${instance.id}`;
     } catch (e) {
       console.error(e);
+      generationStarted.current = false;
       setError(e instanceof Error ? e.message : "No fue posible generar el documento.");
     } finally {
       setGenerating(false);
