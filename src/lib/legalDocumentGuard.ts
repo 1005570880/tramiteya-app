@@ -9,18 +9,11 @@ const UNSUPPORTED_VALUE_PATTERNS = [
 ];
 
 function normalize(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 function removeMarkdownMarkers(text: string): string {
-  return text
-    .replace(/\*\*(.*?)\*\*/gs, '$1')
-    .replace(/__(.*?)__/gs, '$1')
-    .replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '$1')
-    .replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
+  return text.replace(/\*\*(.*?)\*\*/gs, '$1').replace(/__(.*?)__/gs, '$1').replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '$1').replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
 }
 
 function normalizeTemporalLanguage(text: string): string {
@@ -37,24 +30,13 @@ function normalizeTemporalLanguage(text: string): string {
 
 function removeUnsupportedData(text: string): string {
   const paragraphs = text.split(/\n{2,}/);
-  return paragraphs
-    .map((paragraph) => {
-      let value = paragraph;
-      for (const pattern of UNSUPPORTED_VALUE_PATTERNS) value = value.replace(pattern, '');
-      value = value
-        .replace(/\s{2,}/g, ' ')
-        .replace(/\s+([,.;:])/g, '$1')
-        .replace(/([:;,])\s*\./g, '$1')
-        .replace(/\s+([)])/g, '$1')
-        .replace(/([(])\s+/g, '$1')
-        .trim();
-      if (!value || /^(?:[-•]\s*)?(?:placa|valor|documento de identidad|cedula|c[eé]dula|titular|fecha|autoridad|entidad)\s*:?\s*[.\-]*$/i.test(value)) return '';
-      return value;
-    })
-    .filter(Boolean)
-    .join('\n\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return paragraphs.map((paragraph) => {
+    let value = paragraph;
+    for (const pattern of UNSUPPORTED_VALUE_PATTERNS) value = value.replace(pattern, '');
+    value = value.replace(/\s{2,}/g, ' ').replace(/\s+([,.;:])/g, '$1').replace(/([:;,])\s*\./g, '$1').replace(/\s+([)])/g, '$1').replace(/([(])\s+/g, '$1').trim();
+    if (!value || /^(?:[-•]\s*)?(?:placa|valor|documento de identidad|cedula|c[eé]dula|titular|fecha|autoridad|entidad)\s*:?\s*[.\-]*$/i.test(value)) return '';
+    return value;
+  }).filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function hasDuplicatedMajorSections(text: string): boolean {
@@ -67,14 +49,13 @@ function hasDuplicatedMajorSections(text: string): boolean {
   return [...counts.values()].some((count) => count > 1);
 }
 
-function hasRequiredDeletionRelief(text: string): boolean {
+function hasRequiredPetitionRelief(text: string): boolean {
   const n = normalize(text);
-  const petitionIndex = n.search(/(?:^|\n)\s*(?:v|ix|x|xi|xii)\.?\s+peticiones\b/);
-  if (petitionIndex < 0) return false;
-  const petitionText = n.slice(petitionIndex);
-  const deletion = /(elimin|cancel|depur|actualiz).{0,500}(multa|comparendo|registro|simit)|(multa|comparendo|registro|simit).{0,500}(elimin|cancel|depur|actualiz)/s.test(petitionText);
-  const termination = /(termin|archiv|finaliz).{0,500}(obligacion|cobro|sancion)|(obligacion|cobro|sancion).{0,500}(termin|archiv|finaliz)/s.test(petitionText);
-  return deletion && termination;
+  const match = n.match(/(?:^|\n)\s*(?:i{1,3}|iv|v|vi|vii|viii|ix|x|xi|xii)\.?\s+peticiones\b/);
+  if (!match) return false;
+  const petitionText = n.slice(match.index ?? 0);
+  if (petitionText.length < 80) return false;
+  return /(solicit|entreg|inform|determin|verific|declar|revis|remit|aportar|cancel|elimin|depur|actualiz|termin|archiv|dejar sin efectos|notific)/i.test(petitionText);
 }
 
 export function cleanLegalDocumentOutput(text: string): string {
@@ -86,6 +67,6 @@ export function isLegallySafeTrafficDocument(text: string): boolean {
   if (cleaned.length < 500) return false;
   if (UNSUPPORTED_VALUE_PATTERNS.some((pattern) => pattern.test(cleaned))) return false;
   if (hasDuplicatedMajorSections(cleaned)) return false;
-  if (!hasRequiredDeletionRelief(cleaned)) return false;
+  if (!hasRequiredPetitionRelief(cleaned)) return false;
   return true;
 }
