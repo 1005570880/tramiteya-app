@@ -69,11 +69,71 @@ function findRecordIdentifiers(text: string): Array<{ number: string; index: num
   const found: Array<{ number: string; index: number }> = []; const seen = new Set<string>();
   for (const match of text.matchAll(CONTIGUOUS_ID_RE)) { const number = match[0]; const index = match.index ?? 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
   for (const match of text.matchAll(SPECIAL_ID_RE)) { const number = normalizeIdentifier(match[0]); const index = match.index ?? 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
-  // pdf-parse can split one 20-digit identifier with spaces/newlines. Only accept
-  // exactly 20 digits and require a date nearby, preventing accidental field joins.
   const splitIdRe = /(?:^|[^0-9])((?:\d[\s|]*){20})(?!\d)/g;
-  for (const match of text.matchAll(splitIdRe)) { const number = compactDigits(match[1]); const index = (match.index ?? 0) + (match[0].length - match[1].length); const localWindow = text.slice(index, index + 180); DATE_RE.lastIndex = 0; if (!/^\d{20}$/.test(number) || !DATE_RE.test(localWindow)) continue; DATE_RE.lastIndex = 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
+  for (const match of text.matchAll(splitIdRe)) { const number = compactDigits(match[1]); const index = (match.index ?? 0) + (match[0].length - match[1].length); const localWindow = text.slice(index, index + 220); DATE_RE.lastIndex = 0; if (!/^\d{20}$/.test(number) || !DATE_RE.test(localWindow)) continue; DATE_RE.lastIndex = 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
   return found.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * Robust fallback for SIMIT's tabular text layer. pdf-parse may reorder or
+ * split cells across lines, so parsing by a visual row is unreliable. Instead
+ * we tokenize the extracted text and treat each 20-digit official record
+ * number as an anchor, then search the following tokens for date, code, status
+ * and monetary value. This never invents a record: an anchor is accepted only
+ * when all three decisive fields (date, infraction code and value) are present.
+ */
+function parseTokenAnchoredRows(text: string): ParsedSimitRecord[] {
+  const tokens = normalizeWhitespace(text).split(/\s+/).filter(Boolean);
+  const records: ParsedSimitRecord[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const number = compactDigits(tokens[i]);
+    if (!/^\d{20}$/.test(number)) continue;
+    const windowTokens = tokens.slice(i, Math.min(tokens.length, i + 35));
+    const window = windowTokens.join(' ');
+    const date = extractDate(window);
+    const code = extractCode(window);
+    const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/);
+    if (!date || !code || !valueMatch) continue;
+    const status = extractStatus(window) || 'Pendiente';
+    const municipality = extractMunicipality(window, date, code);
+    records.push({
+      kind: 'comparendo',
+      number,
+      date,
+      time: extractTime(window),
+      municipality,
+      authority: authorityFromMunicipality(municipality, window),
+      infractionCode: code,
+      status,
+      value: moneyToNumber(valueMatch[1]),
+    });
+  }
+  return records;
+}
+
+/**
+ * Secondary fallback for PDFs where the identifier itself is split by spaces
+ * or line breaks. It reconstructs only exact 20-digit sequences and still
+ * requires a date, code and monetary amount nearby.
+ */
+function parseSplitTokenAnchoredRows(text: string): ParsedSimitRecord[] {
+  const normalized = normalizeWhitespace(text);
+  const records: ParsedSimitRecord[] = [];
+  const re = /(?:^|[^0-9])((?:\d[\s|]*){20})(?!\d)/g;
+  for (const match of normalized.matchAll(re)) {
+    const number = compactDigits(match[1]);
+    if (!/^\d{20}$/.test(number)) continue;
+    const start = (match.index ?? 0) + match[0].length - match[1].length;
+    const window = normalized.slice(start, start + 320);
+    const date = extractDate(window);
+    const code = extractCode(window);
+    const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/);
+    if (!date || !code || !valueMatch) continue;
+    const status = extractStatus(window) || 'Pendiente';
+    const municipality = extractMunicipality(window, date, code);
+    records.push({ kind: 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) });
+  }
+  return records;
 }
 
 function parseTabularRows(text: string): ParsedSimitRecord[] {
@@ -86,5 +146,5 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
   const identifiers = findRecordIdentifiers(text); const records: ParsedSimitRecord[] = [];
   for (let index = 0; index < identifiers.length; index++) { const current = identifiers[index]; const end = identifiers[index + 1]?.index ?? text.length; let chunk = text.slice(current.index, end); const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex); const record = parseRecord(current.number, chunk); if (record) records.push(record); }
-  return dedupe([...records, ...parseTabularRows(text)]);
+  return dedupe([...records, ...parseTabularRows(text), ...parseTokenAnchoredRows(text), ...parseSplitTokenAnchoredRows(text)]);
 }
