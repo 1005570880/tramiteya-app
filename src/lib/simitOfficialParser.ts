@@ -5,10 +5,10 @@ export type ParsedSimitRecord = {
 };
 
 // Official SIMIT layouts include 20-digit records, 10-digit records, FAD/TC
-// identifiers and legacy 9-10 digit identifiers ending in S. Do not broaden
-// this to arbitrary 8-10 digit numbers because the PDF header contains the
-// citizen's cédula and must never become a false comparendo.
-const IDENTIFIER_RE = /(?:\d{20}|\d{9,10}S|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/gi;
+// identifiers and legacy identifiers ending in S. OCR/PDF table extraction can
+// insert spaces or line breaks inside long identifiers, so parsing deliberately
+// tolerates whitespace inside the identifier and normalizes it before use.
+const IDENTIFIER_RE = /(?:\d[\s\n]*){20}(?!\d)|(?:\d[\s\n]*){9,10}S\b|(?:\d[\s\n]*){10}(?!\d)|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA/gi;
 const DATE_RE = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/g;
 const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
@@ -52,7 +52,6 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
   return undefined;
 }
 
-/** Extract a Colombian plate from the actual plate field or nearby OCR/text. */
 export function extractSimitPlate(input: string): string | undefined {
   const text = normalizeWhitespace(input);
   if (!text) return undefined;
@@ -92,6 +91,6 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
   const identifiers = [...text.matchAll(IDENTIFIER_RE)]; if (!identifiers.length) return [];
   const records: ParsedSimitRecord[] = [];
-  for (let index = 0; index < identifiers.length; index++) { const match = identifiers[index]; const number = match[0].replace(/\s+/g, ''); const start = match.index ?? 0; const end = identifiers[index + 1]?.index ?? text.length; let chunk = text.slice(start, end); const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex); const record = parseRecord(number, chunk); if (record) records.push(record); }
+  for (let index = 0; index < identifiers.length; index++) { const match = identifiers[index]; const number = compactDigits(match[0]); const start = match.index ?? 0; const end = identifiers[index + 1]?.index ?? text.length; let chunk = text.slice(start, end); const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex); const record = parseRecord(number, chunk); if (record) records.push(record); }
   return dedupe(records);
 }
