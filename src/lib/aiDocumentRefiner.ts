@@ -2,7 +2,9 @@ import { generateText } from 'ai';
 
 const MODEL = process.env.TRAMITEYA_AI_MODEL || 'openai/gpt-5.4';
 const MAX_INPUT = 45000;
+const REFINEMENT_TIMEOUT_MS = 7000;
 function hasGatewayCredentials() { return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN); }
+function refinementEnabled() { return process.env.TRÁMITEYA_AI_DOCUMENT_REFINEMENT === 'true' || process.env.TRAMITEYA_AI_DOCUMENT_REFINEMENT === 'true'; }
 function cleanOutput(text: string) { return text.replace(/^```(?:text|markdown)?\s*/i, '').replace(/\s*```$/i, '').replace(/^\s+|\s+$/g, '').replace(/\n{3,}/g, '\n\n'); }
 
 function hasRequiredRelief(text: string): boolean {
@@ -34,12 +36,17 @@ function structurallySafe(text: string): boolean {
 }
 
 export async function refineLegalDocument(content: string): Promise<string> {
-  if (!hasGatewayCredentials() || !content.trim()) return content;
+  // Document generation must never depend on an external LLM. The deterministic
+  // legal engine is the source of truth; AI refinement is an optional enhancement.
+  // This prevents the user from being left indefinitely on "Trámi está redactando".
+  if (!refinementEnabled() || !hasGatewayCredentials() || !content.trim()) return content;
+
   try {
-    const result = await generateText({
-      model: MODEL,
-      temperature: 0,
-      system: `Eres editor jurídico colombiano. Convierte el derecho de petición recibido en un escrito que parezca redactado directamente por la persona que lo firma.
+    const result = await Promise.race([
+      generateText({
+        model: MODEL,
+        temperature: 0,
+        system: `Eres editor jurídico colombiano. Convierte el derecho de petición recibido en un escrito que parezca redactado directamente por la persona que lo firma.
 REGLAS ABSOLUTAS:
 1. Usa primera persona del ciudadano: "solicito", "aporté", "mi documento", "no tengo acreditado", "considero".
 2. Nunca uses "solicitante", "interesado", "usuario", "cliente", "sistema", "motor", "plataforma", "IA" ni expresiones que revelen automatización.
@@ -56,14 +63,15 @@ REGLAS ABSOLUTAS:
 13. Si la causal todavía es hipotética porque falta prueba, formula la pretensión de forma condicional: "si se verifica que... solicito que se declare...". No conviertas una hipótesis en hecho probado.
 14. Redacta con estructura jurídica profesional, compacta y natural. Debe sonar a una persona que presenta personalmente una petición bien fundamentada, no a una plantilla ni a un informe de auditoría.
 15. Devuelve únicamente el documento final.`,
-      prompt: `Depura este documento respetando todas las reglas y conserva sus pretensiones favorables:\n\n${content.slice(0, MAX_INPUT)}`,
-    });
+        prompt: `Depura este documento respetando todas las reglas y conserva sus pretensiones favorables:\n\n${content.slice(0, MAX_INPUT)}`,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('AI refinement timeout')), REFINEMENT_TIMEOUT_MS)),
+    ]);
+
     const refined = cleanOutput(result.text || '');
-    // Fail closed: if the model duplicated sections or weakened the requested relief,
-    // return the deterministic document instead of shipping a damaged legal pleading.
     return structurallySafe(refined) ? refined : content;
   } catch (error) {
-    console.error('AI document refinement unavailable; using deterministic draft:', error);
+    console.warn('AI document refinement unavailable; using deterministic draft:', error);
     return content;
   }
 }
