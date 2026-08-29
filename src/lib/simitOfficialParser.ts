@@ -10,25 +10,17 @@ const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancela
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 
-/*
- * SIMIT PDFs are table extractions, not guaranteed to preserve visual rows.
- * We therefore identify a record by its official number and use the next
- * identifier as the hard boundary. Numeric identifiers may be split by PDF
- * extraction, but a 10-digit identifier must remain contiguous: otherwise a
- * document number followed by a date (e.g. 64553194 + 05/08/2025) can be
- * incorrectly interpreted as a 10-digit record number.
- */
-const IDENTIFIER_RE = /(?:\d[\s\n]*){20}(?!\d)|\d{9,10}S\b|\d{10}(?![\d/-])|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA/gi;
+// Official SIMIT statement identifiers are normally 20 digits. Some PDF
+// extractors insert spaces/newlines inside the same identifier, so both forms
+// are supported. Special identifiers used by some organisms are also kept.
+const CONTIGUOUS_ID_RE = /(?<!\d)\d{20}(?!\d)/g;
+const SPECIAL_ID_RE = /\b(?:\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
 
 function normalizeWhitespace(value: string): string {
   return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim();
 }
 
-function normalizeIdentifier(value: string): string {
-  const raw = String(value || '').replace(/\s+/g, '').trim();
-  return raw;
-}
-
+function normalizeIdentifier(value: string): string { return String(value || '').replace(/\s+/g, '').trim(); }
 function compactDigits(value: string): string { return String(value || '').replace(/[^0-9]/g, ''); }
 function clean(value: string): string { return String(value || '').replace(/\s+/g, ' ').replace(/^\|+|\|+$/g, '').trim(); }
 function moneyToNumber(value: string): number | undefined { const digits = String(value || '').replace(/[^0-9]/g, ''); return digits ? Number(digits) : undefined; }
@@ -44,13 +36,11 @@ function extractCode(value: string): string | undefined { return String(value ||
 export function extractSimitDocumentNumber(input: string): string | undefined {
   const text = normalizeWhitespace(input);
   if (!text) return undefined;
-
   const header = text.match(/estado\s+de\s+cuenta([\s\S]{0,300}?)(?:fecha\s+de\s+expedici[oó]n|c[eé]dula\s*:)/i)?.[1];
   if (header) {
     const candidate = header.match(/(?:^|\n|\|)\s*(\d{6,10})\s*(?=\n|\||$)/)?.[1] || header.match(/\b\d{6,10}\b/)?.[0];
     if (candidate) return candidate;
   }
-
   const headingIndex = text.search(/estado\s+de\s+cuenta/i);
   if (headingIndex >= 0) {
     const window = text.slice(headingIndex, headingIndex + 500);
@@ -58,7 +48,6 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
     const candidate = candidates.find(value => !/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(value));
     if (candidate) return candidate;
   }
-
   const labelledPatterns = [
     /(?:c[eé]dula|cedula)\s*(?:de\s+)?(?:n[uú]mero|no\.?|nro\.?|n[º°])?\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /(?:documento\s+de\s+identidad|n[uú]mero\s+de\s+identificaci[oó]n|identificaci[oó]n)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
@@ -110,10 +99,7 @@ function extractMunicipality(body: string, date: string, code?: string): string 
     const codeIndex = after.search(new RegExp(`\\b${escapedCode}\\b`, 'i'));
     if (codeIndex >= 0) after = after.slice(0, codeIndex);
   }
-  const value = clean(after)
-    .replace(/^(?:\|\s*)+/, '')
-    .replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '')
-    .trim();
+  const value = clean(after).replace(/^(?:\|\s*)+/, '').replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '').trim();
   if (!value || /^(?:\$|[0-9.,\s]+)$/.test(value)) return undefined;
   return value;
 }
@@ -127,18 +113,7 @@ function parseRecord(number: string, chunk: string): ParsedSimitRecord | undefin
   const municipality = extractMunicipality(body, date, code);
   const authority = authorityFromMunicipality(municipality, body);
   const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '');
-  return {
-    kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo',
-    number,
-    date,
-    time: extractTime(body),
-    municipality,
-    authority,
-    plate: extractSimitPlate(body),
-    infractionCode: code,
-    status,
-    value: extractMoney(withoutNumber),
-  };
+  return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority, plate: extractSimitPlate(body), infractionCode: code, status, value: extractMoney(withoutNumber) };
 }
 
 function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
@@ -147,51 +122,73 @@ function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
     const key = `${record.number || ''}|${record.date || ''}`;
     const previous = map.get(key);
     if (!previous) map.set(key, record);
-    else map.set(key, {
-      ...previous,
-      ...record,
-      authority: record.authority || previous.authority,
-      municipality: record.municipality || previous.municipality,
-      plate: record.plate || previous.plate,
-      value: record.value ?? previous.value,
-    });
+    else map.set(key, { ...previous, ...record, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value });
   }
   return [...map.values()];
 }
 
-function isFalseNumericIdentifier(match: RegExpMatchArray, text: string): boolean {
-  const raw = match[0];
-  if (!/^\d{10}$/.test(raw)) return false;
-  const end = (match.index ?? 0) + raw.length;
-  // Prevent the cédula + first two date digits from becoming a fake record ID.
-  const tail = text.slice(end, end + 12);
-  return /^[/-]\d{2}[/-]\d{4}/.test(tail);
+/**
+ * Finds record IDs without assuming a single PDF text layout.
+ * Strategy:
+ * 1) exact 20-digit identifiers anywhere in the text;
+ * 2) identifiers split by whitespace/newlines, but only when a local token
+ *    contains exactly 20 digits (prevents cédula/date combinations);
+ * 3) official special formats.
+ */
+function findRecordIdentifiers(text: string): Array<{ number: string; index: number }> {
+  const found: Array<{ number: string; index: number }> = [];
+  const seen = new Set<string>();
+
+  for (const match of text.matchAll(CONTIGUOUS_ID_RE)) {
+    const number = match[0];
+    const index = match.index ?? 0;
+    const key = `${number}|${index}`;
+    if (!seen.has(key)) { seen.add(key); found.push({ number, index }); }
+  }
+
+  // PDF extraction can split a 20-digit SIMIT number over spaces/newlines.
+  // Scan line-by-line and accept only a token whose whitespace-stripped form
+  // is exactly 20 digits. Never concatenate adjacent semantic fields.
+  const lines = text.split('\n');
+  let offset = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const stripped = trimmed.replace(/[\s|]+/g, '');
+    if (/^\d{20}$/.test(stripped)) {
+      const local = text.indexOf(trimmed, offset);
+      const index = local >= 0 ? local : offset;
+      const key = `${stripped}|${index}`;
+      if (!seen.has(key)) { seen.add(key); found.push({ number: stripped, index }); }
+    }
+    offset += line.length + 1;
+  }
+
+  for (const match of text.matchAll(SPECIAL_ID_RE)) {
+    const number = normalizeIdentifier(match[0]);
+    const index = match.index ?? 0;
+    const key = `${number}|${index}`;
+    if (!seen.has(key)) { seen.add(key); found.push({ number, index }); }
+  }
+
+  return found.sort((a, b) => a.index - b.index);
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input);
   if (!text) return [];
-
-  const identifiers = [...text.matchAll(IDENTIFIER_RE)].filter(match => !isFalseNumericIdentifier(match, text));
+  const identifiers = findRecordIdentifiers(text);
   if (!identifiers.length) return [];
 
   const records: ParsedSimitRecord[] = [];
   for (let index = 0; index < identifiers.length; index++) {
-    const match = identifiers[index];
-    const number = normalizeIdentifier(match[0]);
-    const start = match.index ?? 0;
+    const current = identifiers[index];
     const end = identifiers[index + 1]?.index ?? text.length;
-    let chunk = text.slice(start, end);
+    let chunk = text.slice(current.index, end);
     const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i);
     if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex);
-
-    // A real record must have its date after its identifier. This prevents
-    // header metadata from being interpreted as a comparison record.
-    const date = extractDate(chunk);
-    if (!date) continue;
-    const record = parseRecord(number, chunk);
+    if (!extractDate(chunk)) continue;
+    const record = parseRecord(current.number, chunk);
     if (record) records.push(record);
   }
-
   return dedupe(records);
 }
