@@ -28,11 +28,10 @@ function selectedRecord(a: FormAnswers): SelectedRecordData {
   const comparendo = pick('numero_comparendo', source.number);
   const fecha = pick('fecha_comparendo', source.date);
   const organismo = pick('entidad', source.authority, rawValue(a, 'autoridad'));
-  const municipio = pick('ciudad', source.municipality);
   const valor = pick('valor', source.value, rawValue(a, 'valor_multa'));
   const codigo = pick('codigo_infraccion', source.infractionCode, source.code);
   return {
-    comparendo, fecha, organismo, municipio, estado: pick('estadoComparendo', source.status), valor,
+    comparendo, fecha, organismo, estado: pick('estadoComparendo', source.status), valor,
     placa: pick('placa', source.plate), cedula, codigo, nombre, correo, telefono,
     fechaResolucion: pick('fechaResolucion', source.resolutionDate),
     fechaNotificacion: pick('fechaNotificacion', source.notificationDate),
@@ -83,19 +82,14 @@ export function buildTrafficDocument(slug: string, a: FormAnswers): string {
   const phone = valueOrEmpty(rawValue(a, 'telefono')) || record.telefono;
   const number = valueOrEmpty(rawValue(a, 'numero_comparendo')) || record.comparendo;
   const date = valueOrEmpty(rawValue(a, 'fecha_comparendo')) || record.fecha;
-  const city = valueOrEmpty(rawValue(a, 'ciudad')) || valueOrEmpty(record.municipio) || 'Colombia';
   const dateDocument = valueOrEmpty(rawValue(a, 'fecha')) || new Date().toLocaleDateString('es-CO');
 
-  // generateUnifiedLegalDocument is the authoritative legal builder. The
-  // wrapper below preserves the richer legacy heading while guaranteeing that
-  // conversational identity, including phone, reaches the legal engine.
-  const deterministic = draft.document;
-  if (deterministic && deterministic.length > 500) {
-    return deterministic;
-  }
+  // generateUnifiedLegalDocument is the authoritative legal builder. It now
+  // receives the full conversational identity and questionnaire, including
+  // phone, so the document guard cannot reject a valid Trami session.
+  if (draft.document && draft.document.length > 500) return draft.document;
 
   return [
-    city,
     dateDocument,
     '',
     authority.toUpperCase(),
@@ -109,20 +103,16 @@ export function buildTrafficDocument(slug: string, a: FormAnswers): string {
     '',
     'Respetados señores:',
     '',
-    'Solicito que se revise integralmente la situación jurídica de la actuación indicada, con base en el expediente administrativo y las pruebas que deben reposar en él.',
+    `Solicito que se revise integralmente la situación jurídica de la actuación No. ${sanitizeValue(number)}, con base en el expediente administrativo y las pruebas que deben reposar en él.`,
     '',
-    'I. OBJETO',
-    '',
-    `Solicito que se determine la situación jurídica del comparendo No. ${sanitizeValue(number)} y se adopte la consecuencia legal que corresponda según las actuaciones y pruebas acreditadas.`,
-    '',
-    'II. IDENTIFICACIÓN Y CONTACTO',
+    'I. IDENTIFICACIÓN Y CONTACTO',
     '',
     `Nombre: ${sanitizeValue(applicant)}`,
     `Cédula: ${sanitizeValue(cedula)}`,
     `Correo electrónico: ${sanitizeValue(email)}`,
     `Teléfono: ${sanitizeValue(phone)}`,
     '',
-    'III. PETICIONES',
+    'II. PETICIONES',
     '',
     'Que se entregue copia íntegra del expediente administrativo y de las constancias de notificación, sanción, ejecutoria y cobro que correspondan.',
     '',
