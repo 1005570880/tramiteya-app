@@ -2,255 +2,61 @@ import { ADDITIONAL_TRAFFIC_LEGAL_LIBRARY } from './legalLibraryAdditional';
 
 export interface LegalDocumentData {
   nombreUsuario?: string; cedulaUsuario?: string; emailUsuario?: string; telefonoUsuario?: string; direccionUsuario?: string;
-  numComparendo: string; fechaComparendo: string; organismoTransito: string; valorComparendo?: string | number;
-  codigoInfraccion?: string; esFotodetencion?: boolean;
+  numComparendo: string; fechaComparendo: string; organismoTransito: string; valorComparendo?: string | number; codigoInfraccion?: string; esFotodetencion?: boolean;
 }
-
 export interface SelectedRecordData {
-  comparendo?: string; fecha?: string; organismo?: string; estado?: string; valor?: string; placa?: string;
-  cedula?: string; codigo?: string; nombre?: string; correo?: string; fechaResolucion?: string;
-  fechaNotificacion?: string; fechaMandamientoPago?: string; fechaNotificacionMandamiento?: string;
-  fechaEjecutoria?: string; huboAudiencia?: boolean | string; existeResolucion?: boolean | string; actuacionesCobro?: string;
-  esFotodetencion?: boolean;
+  comparendo?: string; fecha?: string; organismo?: string; estado?: string; valor?: string; placa?: string; cedula?: string; codigo?: string; nombre?: string; correo?: string; telefono?: string;
+  fechaResolucion?: string; fechaNotificacion?: string; fechaMandamientoPago?: string; fechaNotificacionMandamiento?: string; fechaEjecutoria?: string;
+  huboAudiencia?: boolean|string; existeResolucion?: boolean|string; actuacionesCobro?: string; esFotodetencion?: boolean;
+}
+export type LegalRoute = 'PRESCRIPCION'|'CADUCIDAD'|'PERDIDA_EJECUTORIEDAD'|'NOTIFICACION'|'FOTODETECCION'|'DEBIDO_PROCESO'|'REVOCATORIA_DIRECTA';
+export type LegalCertainty = 'CONFIGURADO'|'NO_CONFIGURADO'|'PENDIENTE_DE_PRUEBA';
+export interface LegalTemporalAssessment { initialDate:string; initialExpiryDate?:string; ageYears:number; mandamientoNotificationDate?:string; executiveSummary?:string; evidenceQuestions?:string[]; }
+export interface LegalAssessment { primaryRoute:LegalRoute|null; routes:LegalRoute[]; temporal:LegalTemporalAssessment; photoDetection:boolean; evidenceQuestions:string[]; missingEvidence:string[]; certainty:LegalCertainty; executiveSummary:string; }
+export interface LegalDraft { document:string; assessment:LegalAssessment; authorities:typeof ADDITIONAL_TRAFFIC_LEGAL_LIBRARY; evidenceModel:{question:string;reason:string}[]; hechos:string; solicitudConcreta:string; fundamentos:string; }
+export interface DynamicLegalQuestion { id:string; label:string; type:'text'|'textarea'|'date'|'select'|'radio'|'email'|'phone'; required?:boolean; options?:{value:string;label:string}[]; }
+
+export function sanitizeValue(value:unknown):string { return value==null?'':String(value).replace(/[<>]/g,'').replace(/\s+/g,' ').trim(); }
+function parseDate(value?:string|null):Date|null { if(!value)return null; const raw=String(value).trim(); const m=raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/); const iso=m?`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`:raw; const d=new Date(`${iso.slice(0,10)}T00:00:00Z`); return Number.isNaN(d.getTime())?null:d; }
+function formatDate(d:Date):string{return new Intl.DateTimeFormat('es-CO',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(d);}
+function addYears(value?:string|null,years=0):string|null{const d=parseDate(value);if(!d)return null;d.setUTCFullYear(d.getUTCFullYear()+years);return formatDate(d);}
+function yearsBetween(a:Date,b=new Date()):number{return Math.max(0,(b.getTime()-a.getTime())/(365.2425*86400000));}
+function truthy(v:unknown):boolean{return v===true||/^(si|sí|yes|true|1|tengo|tuve)$/i.test(String(v??'').trim());}
+function photo(record:SelectedRecordData):boolean{return Boolean(record.esFotodetencion||/fotomulta|fotodeteccion|fad/i.test(`${record.comparendo??''} ${record.codigo??''}`)||String(record.codigo??'').toUpperCase()==='C35');}
+
+export function assessLegalSituation(record:SelectedRecordData):LegalAssessment {
+  const date=parseDate(record.fecha); const age=date?yearsBetween(date):0; const isPhoto=photo(record);
+  const routes:LegalRoute[]=['NOTIFICACION'];
+  if(isPhoto)routes.push('FOTODETECCION');
+  const resolution=parseDate(record.fechaResolucion); const executory=parseDate(record.fechaEjecutoria); const mandNotice=parseDate(record.fechaNotificacionMandamiento);
+  const cadExpiry=addYears(record.fecha,1); const presExpiry=addYears(record.fecha,3); const execExpiry=addYears(record.fechaEjecutoria,5);
+  if(resolution&&cadExpiry&&resolution.getTime()>parseDate(cadExpiry)!.getTime())routes.push('CADUCIDAD');
+  else if(!resolution&&!truthy(record.huboAudiencia))routes.push('CADUCIDAD');
+  if(age>=3||mandNotice)routes.push('PRESCRIPCION');
+  if(age>=5||record.fechaMandamientoPago||record.actuacionesCobro)routes.push('PERDIDA_EJECUTORIEDAD');
+  if(routes.includes('PRESCRIPCION'))routes.push('REVOCATORIA_DIRECTA');
+  const primaryRoute:LegalRoute = resolution&&cadExpiry&&resolution.getTime()>parseDate(cadExpiry)!.getTime()?'CADUCIDAD':
+    age>=3&&!mandNotice?'PRESCRIPCION':
+    execExpiry&&parseDate(execExpiry)&&parseDate(execExpiry)!.getTime()<=Date.now()&&!record.actuacionesCobro?'PERDIDA_EJECUTORIEDAD':
+    isPhoto?'FOTODETECCION':'NOTIFICACION';
+  const evidence:string[]=[];
+  if(!resolution)evidence.push('Fecha y copia íntegra del acto sancionatorio y constancia de ejecutoria.');
+  if(!record.fechaNotificacion)evidence.push('Constancia de notificación del acto sancionatorio, indicando acto, medio, fecha y soporte.');
+  if(!record.fechaMandamientoPago)evidence.push('Existencia y copia íntegra del mandamiento de pago, si existe.');
+  if(!mandNotice)evidence.push('Fecha y constancia de notificación del mandamiento de pago, si existe.');
+  if(routes.includes('CADUCIDAD'))evidence.push('Fecha de audiencia o actuación decisoria efectiva para establecer si la acción se ejerció dentro del término del artículo 161 de la Ley 769 de 2002.');
+  if(routes.includes('PERDIDA_EJECUTORIEDAD'))evidence.push('Fecha de firmeza/ejecutoria y actuaciones de ejecución posteriores.');
+  if(isPhoto)evidence.push('Evidencia de fotodetección, individualización y responsabilidad personal.');
+  const summary=date?`La fecha del hecho es ${record.fecha}. El cómputo inicial de tres años para prescripción proyecta ${presExpiry||'un vencimiento no determinable'}, pero esa referencia NO implica que la prescripción esté configurada. La vía principal se define con las fechas procesales y las notificaciones acreditadas.`:'La fecha del hecho no está acreditada; la estrategia depende de reconstruir documentalmente el expediente.';
+  return {primaryRoute,routes:Array.from(new Set(routes)),temporal:{initialDate:record.fecha||'',initialExpiryDate:presExpiry||undefined,ageYears:age,mandamientoNotificationDate:record.fechaNotificacionMandamiento,executiveSummary:summary,evidenceQuestions:evidence},photoDetection:isPhoto,evidenceQuestions:evidence,missingEvidence:evidence,certainty:'PENDIENTE_DE_PRUEBA',executiveSummary:summary};
 }
 
-export type LegalRoute = 'PRESCRIPCION' | 'CADUCIDAD' | 'PERDIDA_EJECUTORIEDAD' | 'NOTIFICACION' | 'FOTODETECCION' | 'DEBIDO_PROCESO' | 'REVOCATORIA_DIRECTA';
-export type LegalCertainty = 'CONFIGURADO' | 'NO_CONFIGURADO' | 'PENDIENTE_DE_PRUEBA';
+function authorities(routes:LegalRoute[]){const terms=new Set(['derecho de petición','expediente','documentos','notificación']); if(routes.includes('PRESCRIPCION'))terms.add('prescripción'); if(routes.includes('CADUCIDAD'))terms.add('caducidad'); if(routes.includes('PERDIDA_EJECUTORIEDAD'))terms.add('ejecutoriedad'); if(routes.includes('FOTODETECCION'))terms.add('fotodetección'); if(routes.includes('REVOCATORIA_DIRECTA'))terms.add('revocatoria directa'); return ADDITIONAL_TRAFFIC_LEGAL_LIBRARY.filter(a=>a.useWhen.some(t=>terms.has(t.toLowerCase())));}
+function buildFacts(record:SelectedRecordData,a:LegalAssessment):string{const f:string[]=[];if(record.comparendo||record.fecha||record.organismo)f.push(`En el Estado de Cuenta SIMIT aportado figura la actuación${record.comparendo?` No. ${sanitizeValue(record.comparendo)}`:''}${record.organismo?`, asociada a ${sanitizeValue(record.organismo)}`:''}${record.fecha?`, con fecha del hecho ${sanitizeValue(record.fecha)}`:''}.`);if(record.cedula)f.push(`La actuación aparece asociada al documento de identidad No. ${sanitizeValue(record.cedula)}.`);if(record.nombre)f.push(`El solicitante identificado para el trámite es ${sanitizeValue(record.nombre)}.`);if(record.valor)f.push(`El valor reportado para la obligación es ${sanitizeValue(record.valor)}.`);if(record.codigo)f.push(`El registro identifica la infracción con el código ${sanitizeValue(record.codigo)}.`);if(record.fechaResolucion)f.push(`Se reporta acto o resolución sancionatoria de fecha ${sanitizeValue(record.fechaResolucion)}; deben verificarse su contenido, notificación y ejecutoria.`);else f.push('El Estado de Cuenta SIMIT no permite identificar por sí solo el acto sancionatorio, su fecha de expedición ni su ejecutoria.');if(record.fechaNotificacion)f.push(`Se reporta una notificación con fecha ${sanitizeValue(record.fechaNotificacion)}; debe establecerse documentalmente qué actuación fue notificada.`);else f.push('No se encuentra acreditada en la información aportada la fecha ni el medio de notificación del acto sancionatorio.');if(record.fechaMandamientoPago)f.push(`Se reporta mandamiento de pago de fecha ${sanitizeValue(record.fechaMandamientoPago)}; su expedición no equivale a su notificación.`);else f.push('No se encuentra acreditada la existencia o fecha de un mandamiento de pago.');if(record.fechaNotificacionMandamiento)f.push(`Se reporta notificación del mandamiento de pago el ${sanitizeValue(record.fechaNotificacionMandamiento)}; debe verificarse su eficacia.`);else f.push('No se encuentra acreditada la fecha de notificación del mandamiento de pago.');if(a.primaryRoute==='PRESCRIPCION'&&a.temporal.initialExpiryDate)f.push(`El término inicial de tres años proyecta su vencimiento al ${a.temporal.initialExpiryDate}; su configuración depende de las actuaciones y notificaciones jurídicamente eficaces acreditadas.`);if(a.primaryRoute==='CADUCIDAD')f.push('La caducidad se encuentra como hipótesis de revisión porque la cronología decisoria debe confrontarse con el término del artículo 161 de la Ley 769 de 2002; no se presenta como hecho probado sin el expediente.');return f.map((x,i)=>`${i+1}. ${x}`).join('\n\n');}
+function grounds(a:LegalAssessment):string{const p=['El artículo 23 de la Constitución Política garantiza el derecho fundamental de petición y el derecho a obtener respuesta de fondo, clara, congruente y oportuna.','El artículo 29 de la Constitución Política garantiza el debido proceso en las actuaciones administrativas y sancionatorias.','La Ley 1755 de 2015 regula el ejercicio del derecho fundamental de petición.'];if(a.routes.includes('CADUCIDAD'))p.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravenciones de tránsito; su configuración debe determinarse con las fechas procesales efectivamente acreditadas.');if(a.routes.includes('PRESCRIPCION'))p.push('El artículo 159 de la Ley 769 de 2002 regula la prescripción de las sanciones de tránsito. La expedición del mandamiento no se confunde con su notificación, y la cronología debe reconstruirse con soporte documental.');if(a.routes.includes('PERDIDA_EJECUTORIEDAD'))p.push('El artículo 91 del CPACA debe confrontarse con la firmeza, ejecutoria y actuaciones posteriores de ejecución.');if(a.routes.includes('NOTIFICACION'))p.push('La regularidad de las notificaciones debe acreditarse mediante los soportes que permitan establecer acto, destinatario, medio, fecha y constancia de entrega, devolución o publicación, según corresponda.');if(a.routes.includes('FOTODETECCION'))p.push('En actuaciones de fotodetección debe verificarse la evidencia, la comunicación y la individualización de responsabilidad personal conforme al régimen aplicable.');if(a.routes.includes('REVOCATORIA_DIRECTA'))p.push('Los artículos 93 y siguientes del CPACA regulan la revocatoria directa y sus presupuestos propios.');return p.join('\n\n');}
+function requests(record:SelectedRecordData,a:LegalAssessment):string{const id=sanitizeValue(record.comparendo)||'que figura registrado';const r=[`Que se determine expresamente la situación jurídica actual de la actuación No. ${id}, indicando por qué continúa vigente, exigible o registrada, si así ocurre.`,`Que se entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${id}.`,'Que se identifique el acto mediante el cual se impuso la sanción, indicando número, fecha, autoridad que lo expidió y constancia de ejecutoria, y se entregue copia íntegra.','Que se entreguen las constancias de notificación de las actuaciones relevantes, indicando acto, destinatario, medio, fecha y soporte de entrega, devolución, publicación o recepción.','Que se informe si existe o existió proceso de cobro coactivo y, en caso afirmativo, se remita copia del mandamiento de pago, su fecha y forma de notificación, medidas cautelares y demás actuaciones posteriores.'];if(a.primaryRoute==='CADUCIDAD')r.push('Que se determine, con base en el expediente, si la acción contravencional fue ejercida dentro del término legal y, de acreditarse la caducidad, se declare y adopten las consecuencias jurídicas correspondientes.');else if(a.primaryRoute==='PRESCRIPCION')r.push('Que, si del expediente se acredita la configuración de la prescripción de la sanción o de la acción de cobro, se declare y se adopten las consecuencias jurídicas correspondientes.');else if(a.primaryRoute==='PERDIDA_EJECUTORIEDAD')r.push('Que se determine si se configuró la pérdida de fuerza ejecutoria y, de acreditarse, se adopten las consecuencias jurídicas correspondientes.');else if(a.primaryRoute==='FOTODETECCION')r.push('Que se aporte la evidencia completa de la fotodetección y de la individualización y responsabilidad personal.');else r.push('Que, si se acredita una irregularidad que afecte la validez, eficacia o exigibilidad de la actuación, se adopte la consecuencia jurídica procedente.');r.push('Que, si jurídicamente corresponde, se ordene la actualización, depuración o cancelación del registro en el SIMIT y demás sistemas competentes.','Que se emita respuesta de fondo, clara, precisa, congruente, completa y debidamente motivada frente a cada solicitud.');return r.map((x,i)=>`${i+1}. ${x}`).join('\n\n');}
 
-export interface LegalTemporalAssessment {
-  initialDate: string;
-  initialExpiryDate?: string;
-  ageYears: number;
-  mandamientoNotificationDate?: string;
-  executiveSummary?: string;
-  evidenceQuestions?: string[];
-}
-
-export interface LegalAssessment {
-  primaryRoute: LegalRoute | null;
-  routes: LegalRoute[];
-  temporal: LegalTemporalAssessment;
-  photoDetection: boolean;
-  evidenceQuestions: string[];
-  missingEvidence: string[];
-  certainty: LegalCertainty;
-  executiveSummary: string;
-}
-
-export interface LegalDraft {
-  document: string;
-  assessment: LegalAssessment;
-  authorities: typeof ADDITIONAL_TRAFFIC_LEGAL_LIBRARY;
-  evidenceModel: { question: string; reason: string }[];
-  hechos: string;
-  solicitudConcreta: string;
-  fundamentos: string;
-}
-
-export interface DynamicLegalQuestion {
-  id: string;
-  label: string;
-  type: 'text' | 'textarea' | 'date' | 'select' | 'radio' | 'email' | 'phone';
-  required?: boolean;
-  options?: { value: string; label: string }[];
-}
-
-export function sanitizeValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  return String(value).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function parseDate(value?: string): Date | null {
-  if (!value) return null;
-  const raw = String(value).trim();
-  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
-  const normalized = match ? `${match[3]}-${match[2]}-${match[1]}` : raw;
-  const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function formatDate(date: Date): string { return date.toLocaleDateString('es-CO'); }
-function addYears(date: Date, years: number): Date { const result = new Date(date.getTime()); result.setFullYear(result.getFullYear() + years); return result; }
-function yearsBetween(from: Date, to: Date): number { return Math.max(0, (to.getTime() - from.getTime()) / (365.2425 * 24 * 60 * 60 * 1000)); }
-function isTruthy(value: unknown): boolean { return value === true || /^(si|sí|yes|true|1|tengo|tuve)$/i.test(String(value ?? '').trim()); }
-
-function isPhotoRecord(record: SelectedRecordData): boolean {
-  return Boolean(record.esFotodetencion || /fad|fotomulta|fotodeteccion/i.test(`${record.comparendo ?? ''} ${record.codigo ?? ''}`) || String(record.codigo ?? '').toUpperCase() === 'C35');
-}
-
-function selectAuthorities(routes: LegalRoute[]) {
-  const terms = new Set<string>(['derecho de petición', 'expediente', 'documentos', 'notificación']);
-  if (routes.includes('FOTODETECCION')) terms.add('fotodetección');
-  if (routes.includes('PRESCRIPCION')) terms.add('prescripción');
-  if (routes.includes('CADUCIDAD')) terms.add('caducidad');
-  if (routes.includes('PERDIDA_EJECUTORIEDAD')) terms.add('ejecutoriedad');
-  if (routes.includes('REVOCATORIA_DIRECTA')) terms.add('revocatoria directa');
-  return ADDITIONAL_TRAFFIC_LEGAL_LIBRARY.filter((authority) => authority.useWhen.some((term) => terms.has(term.toLowerCase())));
-}
-
-export function assessLegalSituation(record: SelectedRecordData): LegalAssessment {
-  const date = parseDate(record.fecha);
-  const ageYears = date ? yearsBetween(date, new Date()) : 0;
-  const photoDetection = isPhotoRecord(record);
-  const routes: LegalRoute[] = ['NOTIFICACION'];
-  if (photoDetection) routes.push('FOTODETECCION');
-
-  const hasHearing = isTruthy(record.huboAudiencia);
-  if (!hasHearing && ageYears < 3) routes.push('CADUCIDAD');
-  if (ageYears >= 3) routes.push('PRESCRIPCION');
-  if (Boolean(record.actuacionesCobro) || ageYears >= 5 || Boolean(record.fechaMandamientoPago)) routes.push('PERDIDA_EJECUTORIEDAD');
-  if (routes.includes('PRESCRIPCION')) routes.push('REVOCATORIA_DIRECTA');
-
-  const priority: LegalRoute[] = ['PRESCRIPCION', 'PERDIDA_EJECUTORIEDAD', 'CADUCIDAD', 'FOTODETECCION', 'NOTIFICACION', 'REVOCATORIA_DIRECTA'];
-  const primaryRoute = priority.find((route) => routes.includes(route)) ?? 'DEBIDO_PROCESO';
-  const initialExpiryDate = date ? formatDate(addYears(date, 3)) : undefined;
-  const evidenceQuestions = [
-    '¿Cuál es el acto administrativo sancionatorio y cuál es su fecha de ejecutoria?',
-    '¿Qué constancia acredita la notificación del comparendo y del acto sancionatorio?',
-    '¿Existe mandamiento de pago y cuál es la fecha exacta de su notificación?',
-  ];
-  if (photoDetection) evidenceQuestions.push('¿Qué evidencia acredita la individualización y responsabilidad personal del presunto infractor en la fotodetección?');
-  if (ageYears >= 3) evidenceQuestions.push('¿Qué actuaciones con incidencia en el término de prescripción fueron realizadas y notificadas eficazmente?');
-
-  const missingEvidence = [...evidenceQuestions];
-  const certainty: LegalCertainty = 'PENDIENTE_DE_PRUEBA';
-  const executiveSummary = date
-    ? `La actuación tiene una antigüedad aproximada de ${ageYears.toFixed(2)} años. El vencimiento inicial calculado del término de tres años es ${initialExpiryDate}. Esta referencia temporal no sustituye la reconstrucción documental de la firmeza, notificación y cobro.`
-    : 'No fue posible establecer la antigüedad con certeza a partir de la fecha disponible; la cronología debe ser acreditada documentalmente.';
-
-  return {
-    primaryRoute,
-    routes: Array.from(new Set(routes)),
-    temporal: { initialDate: record.fecha || '', initialExpiryDate, ageYears, mandamientoNotificationDate: record.fechaNotificacionMandamiento, executiveSummary, evidenceQuestions },
-    photoDetection,
-    evidenceQuestions,
-    missingEvidence,
-    certainty,
-    executiveSummary,
-  };
-}
-
-function buildFacts(record: SelectedRecordData, assessment: LegalAssessment): string {
-  const facts: string[] = [];
-  if (record.comparendo || record.fecha || record.organismo) facts.push(`En el Estado de Cuenta SIMIT aportado figura la actuación${record.comparendo ? ` No. ${sanitizeValue(record.comparendo)}` : ''}${record.organismo ? `, asociada a ${sanitizeValue(record.organismo)}` : ''}${record.fecha ? `, con fecha del hecho ${sanitizeValue(record.fecha)}` : ''}.`);
-  if (record.cedula) facts.push(`La actuación aparece asociada al documento de identidad No. ${sanitizeValue(record.cedula)}.`);
-  if (record.valor) facts.push(`El valor reportado para la obligación es ${sanitizeValue(record.valor)}.`);
-  if (record.codigo) facts.push(`El registro identifica la infracción con el código ${sanitizeValue(record.codigo)}.`);
-  if (record.fechaResolucion) facts.push(`Se reporta resolución o acto sancionatorio de fecha ${sanitizeValue(record.fechaResolucion)}.`);
-  if (record.fechaNotificacion) facts.push(`Se reporta una fecha de notificación (${sanitizeValue(record.fechaNotificacion)}); debe establecerse documentalmente qué actuación fue notificada.`);
-  if (record.fechaMandamientoPago) facts.push(`Se reporta mandamiento de pago de fecha ${sanitizeValue(record.fechaMandamientoPago)}; su expedición no se tendrá como equivalente a su notificación.`);
-  if (record.fechaNotificacionMandamiento) facts.push(`Se reporta como fecha de notificación del mandamiento de pago el ${sanitizeValue(record.fechaNotificacionMandamiento)}; debe verificarse su eficacia.`);
-  if (!record.fechaNotificacion) facts.push('No se encuentra acreditada en la información aportada la fecha ni el medio de notificación del acto sancionatorio.');
-  if (!record.fechaNotificacionMandamiento) facts.push('No se encuentra acreditada una fecha de notificación del mandamiento de pago. Esta ausencia no demuestra por sí sola que nunca ocurrió, pero identifica una prueba decisiva que debe aportar la autoridad.');
-  if (assessment.temporal.initialExpiryDate) facts.push(`Desde la fecha del hecho (${assessment.temporal.initialDate}) puede efectuarse el cómputo inicial de tres años, cuyo vencimiento calculado corresponde al ${assessment.temporal.initialExpiryDate}.`);
-  return facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n');
-}
-
-function buildGrounds(assessment: LegalAssessment): string {
-  const parts = [
-    'El artículo 23 de la Constitución Política garantiza el derecho fundamental de petición y el derecho a obtener respuesta de fondo, clara, congruente y oportuna.',
-    'El artículo 29 de la Constitución Política garantiza el debido proceso en las actuaciones administrativas y sancionatorias.',
-    'La Ley 1755 de 2015 regula el ejercicio del derecho fundamental de petición y sus requisitos y términos.',
-  ];
-  if (assessment.routes.includes('PRESCRIPCION')) parts.push('El artículo 159 de la Ley 769 de 2002 regula la prescripción de las sanciones de tránsito. La cronología debe reconstruirse con las fechas de firmeza, actuaciones de cobro y notificaciones jurídicamente eficaces que consten en el expediente.');
-  if (assessment.routes.includes('CADUCIDAD')) parts.push('El artículo 161 de la Ley 769 de 2002 regula la caducidad de la acción por contravenciones de tránsito; su configuración debe determinarse con las fechas procesales efectivamente acreditadas.');
-  if (assessment.routes.includes('PERDIDA_EJECUTORIEDAD')) parts.push('El artículo 91 del CPACA debe confrontarse con la firmeza, ejecutoria y circunstancias posteriores del acto administrativo.');
-  if (assessment.routes.includes('REVOCATORIA_DIRECTA')) parts.push('Los artículos 93 y siguientes del CPACA regulan la revocatoria directa y exigen verificar sus presupuestos propios, sin equipararla automáticamente a prescripción o nulidad.');
-  if (assessment.routes.includes('FOTODETECCION')) parts.push('La Ley 1843 de 2017 y la jurisprudencia constitucional sobre fotodetección exigen revisar el procedimiento de comunicación, la individualización y la responsabilidad personal, sin presumir automáticamente una nulidad por la sola existencia de una fotodetección.');
-  if (assessment.routes.includes('NOTIFICACION')) parts.push('La regularidad de las notificaciones debe acreditarse mediante los soportes que permitan establecer el acto comunicado, destinatario, medio, fecha y constancia de entrega, devolución o publicación, según corresponda.');
-  return parts.join('\n\n');
-}
-
-function buildRequests(record: SelectedRecordData, assessment: LegalAssessment): string {
-  const id = sanitizeValue(record.comparendo) || 'que figura registrado';
-  const requests = [
-    `Que se determine expresamente la situación jurídica actual de la actuación No. ${id}, indicando por qué continúa vigente, exigible o registrada, si así ocurre.`,
-    `Que se entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${id}.`,
-    'Que se identifique el acto mediante el cual se impuso la sanción, indicando número, fecha, autoridad que lo expidió y constancia de ejecutoria, y se entregue copia íntegra.',
-    'Que se entreguen las constancias de notificación de las actuaciones relevantes, indicando acto, destinatario, medio, fecha y soporte de entrega, publicación, devolución o recepción.',
-    'Que se informe si existe o existió proceso de cobro coactivo y, en caso afirmativo, se remita copia del mandamiento de pago, su fecha y forma de notificación, medidas cautelares y demás actuaciones posteriores.',
-  ];
-  if (assessment.primaryRoute === 'PRESCRIPCION') requests.push('Que, si del expediente se acredita la configuración de la prescripción, se declare expresamente y se adopte la consecuencia jurídica correspondiente, incluida la terminación del cobro y la actualización de los registros cuando legalmente proceda.');
-  else if (assessment.primaryRoute === 'CADUCIDAD') requests.push('Que se determine si operó la caducidad y, de acreditarse, se declare y adopten las consecuencias jurídicas correspondientes.');
-  else if (assessment.primaryRoute === 'FOTODETECCION') requests.push('Que se aporte la evidencia completa de la fotodetección y de la individualización y responsabilidad personal del presunto infractor.');
-  else requests.push('Que, si se acredita una irregularidad que afecte la validez, eficacia o exigibilidad de la actuación, se adopte la consecuencia jurídica procedente.');
-  requests.push('Que, si jurídicamente corresponde, se ordene la actualización, depuración o cancelación del registro en el SIMIT y demás sistemas competentes.');
-  requests.push('Que se emita respuesta de fondo, clara, precisa, congruente, completa y debidamente motivada frente a cada solicitud.');
-  return requests.map((request, index) => `${index + 1}. ${request}`).join('\n\n');
-}
-
-export function generateUnifiedLegalDocument(record: SelectedRecordData): LegalDraft {
-  const assessment = assessLegalSituation(record);
-  const authorities = selectAuthorities(assessment.routes);
-  const hechos = buildFacts(record, assessment);
-  const fundamentos = buildGrounds(assessment);
-  const solicitudConcreta = buildRequests(record, assessment);
-  const authority = sanitizeValue(record.organismo) || 'AUTORIDAD DE TRÁNSITO COMPETENTE';
-  const applicant = sanitizeValue(record.nombre) || 'SOLICITANTE';
-  const cedula = sanitizeValue(record.cedula);
-  const email = sanitizeValue(record.correo);
-  const number = sanitizeValue(record.comparendo) || 'que figura registrado';
-
-  const document = [
-    '**SEÑORES**', `**${authority.toUpperCase()}**`, 'E. S. D.', '',
-    `**ASUNTO:** DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN No. ${number}, DETERMINACIÓN DE LA CONSECUENCIA JURÍDICA QUE CORRESPONDA Y DEPURACIÓN DEL REGISTRO, SI HAY LUGAR.`,
-    `**PETICIONARIO:** ${applicant.toUpperCase()} — C.C. No. ${cedula}`,
-    `**REFERENCIA:** ACTUACIÓN / COMPARENDO No. ${number}`,
-    '',
-    `Yo, **${applicant}**, identificado con cédula de ciudadanía No. **${cedula}**, actuando en nombre propio, presento respetuosamente este derecho de petición, en ejercicio del derecho fundamental consagrado en el **artículo 23 de la Constitución Política de Colombia** y desarrollado por la **Ley 1755 de 2015**, mediante la cual se regula el ejercicio del derecho fundamental de petición.`,
-    '',
-    `En ejercicio del derecho fundamental de petición, solicito que se revise integralmente la situación jurídica de la actuación No. **${number}**, con base en los datos acreditados, el expediente administrativo y las actuaciones que la autoridad debe demostrar documentalmente, particularmente aquellas relacionadas con la notificación de las actuaciones administrativas, la eventual imposición de la sanción, su firmeza, las actuaciones de cobro y los demás elementos que resulten determinantes para establecer su situación jurídica actual.`,
-    '', '### **I. HECHOS ACREDITADOS**', '', hechos,
-    '', '### **II. HIPÓTESIS Y ASPECTOS SUJETOS A VERIFICACIÓN**', '',
-    `1. El Estado de Cuenta SIMIT acredita la existencia del registro descrito, pero no sustituye el expediente administrativo ni demuestra por sí solo la notificación, firmeza, ejecutoria o cobro de la sanción.\n\n2. ${assessment.photoDetection ? 'Por tratarse de una posible actuación de fotodetección, deben verificarse la validación, envío, recepción, vinculación del presunto infractor y elementos de responsabilidad personal.' : 'Debe verificarse el procedimiento contravencional, sus notificaciones, la resolución sancionatoria, su firmeza y las actuaciones posteriores de cobro.'}\n\n3. ${assessment.temporal.ageYears >= 3 ? 'La antigüedad del registro habilita una revisión específica de prescripción y de las demás consecuencias jurídicas temporalmente relevantes; su configuración depende de las fechas documentales del expediente.' : 'La antigüedad registrada no permite afirmar por sí sola la prescripción; las consecuencias temporales deben determinarse con las fechas procesales reales y la normativa aplicable.'}`,
-    '', '### **III. CONSECUENCIAS JURÍDICAS A DETERMINAR**', '',
-    '1. Si se acredita el vencimiento del término legal correspondiente sin actuación jurídicamente eficaz, deberá aplicarse la consecuencia legal que proceda.\n\n2. Si se acredita un defecto de notificación, falta de individualización o vulneración sustancial del debido proceso, deberán adoptarse las medidas administrativas jurídicamente procedentes.\n\n3. Ninguna conclusión de prescripción, caducidad, pérdida de ejecutoriedad o revocatoria se presenta como hecho acreditado sin el soporte documental que permita establecer su configuración.',
-    '', '### **IV. FUNDAMENTOS DE DERECHO Y JURISPRUDENCIA**', '', fundamentos,
-    '', '### **V. PRETENSIONES**', '', solicitudConcreta,
-    '', '### **VI. ANEXOS Y PRUEBAS**', '', '1. Estado de Cuenta / Reporte SIMIT aportado por el solicitante.', '2. Copia del documento de identidad, cuando sea aportada.',
-    '', '### **VII. NOTIFICACIONES**', '', 'La respuesta deberá ser remitida al medio de notificación que corresponda conforme a la información suministrada por el peticionario.',
-    '', 'Atentamente,', '', applicant, cedula ? `C.C. No. ${cedula}` : '', email ? `Correo electrónico: ${email}` : '',
-  ].filter((line, index, arr) => !(line === '' && (arr[index - 1] === '' || arr[index + 1] === ''))).join('\n').trim();
-
-  return {
-    document,
-    assessment,
-    authorities,
-    evidenceModel: assessment.evidenceQuestions.map((question) => ({ question, reason: 'Permite acreditar documentalmente el presupuesto jurídico relevante sin convertir una hipótesis en hecho.' })),
-    hechos,
-    solicitudConcreta,
-    fundamentos,
-  };
-}
-
-export function generateLegalDraft(record: SelectedRecordData): LegalDraft { return generateUnifiedLegalDocument(record); }
-
-export function getDynamicLegalQuestions(record: SelectedRecordData, assessment: LegalAssessment): DynamicLegalQuestion[] {
-  const questions: DynamicLegalQuestion[] = [];
-  if (assessment.routes.includes('NOTIFICACION')) {
-    questions.push({ id: 'fecha_notificacion', label: '¿Tiene o conoce la fecha de notificación del acto sancionatorio?', type: 'date', required: false });
-    questions.push({ id: 'medio_notificacion', label: '¿Cómo fue notificado?', type: 'select', required: false, options: [
-      { value: 'personal', label: 'Personal' }, { value: 'correo', label: 'Correo' }, { value: 'electronica', label: 'Electrónica' }, { value: 'no_conozco', label: 'No la conozco / no fui notificado' },
-    ] });
-  }
-  if (assessment.routes.includes('PRESCRIPCION')) {
-    questions.push({ id: 'fecha_mandamiento_pago', label: 'Fecha del mandamiento de pago, si existe', type: 'date', required: false });
-    questions.push({ id: 'fecha_notificacion_mandamiento', label: 'Fecha de notificación del mandamiento de pago, si existe', type: 'date', required: false });
-  }
-  if (assessment.routes.includes('CADUCIDAD')) {
-    questions.push({ id: 'hubo_audiencia', label: '¿Existe constancia de audiencia o actuación sancionatoria dentro del término legal?', type: 'radio', required: false, options: [{ value: 'si', label: 'Sí' }, { value: 'no', label: 'No' }, { value: 'no_se', label: 'No lo sé' }] });
-  }
-  if (assessment.routes.includes('FOTODETECCION')) {
-    questions.push({ id: 'identificacion_conductor', label: '¿La autoridad ha identificado formalmente al conductor?', type: 'radio', required: false, options: [{ value: 'si', label: 'Sí' }, { value: 'no', label: 'No' }, { value: 'no_se', label: 'No lo sé' }] });
-  }
-  if (assessment.routes.includes('PERDIDA_EJECUTORIEDAD')) questions.push({ id: 'actuaciones_cobro', label: 'Describa cualquier actuación de cobro que conozca', type: 'textarea', required: false });
-  return questions;
-}
-
-export function generateLegalDocument(data: LegalDocumentData): string {
-  return generateUnifiedLegalDocument({
-    comparendo: data.numComparendo, fecha: data.fechaComparendo, organismo: data.organismoTransito,
-    valor: data.valorComparendo == null ? '' : String(data.valorComparendo), codigo: data.codigoInfraccion,
-    nombre: data.nombreUsuario, cedula: data.cedulaUsuario, correo: data.emailUsuario, esFotodetencion: data.esFotodetencion,
-  }).document;
-}
+export function generateUnifiedLegalDocument(record:SelectedRecordData):LegalDraft{const a=assessLegalSituation(record);const authority=sanitizeValue(record.organismo)||'AUTORIDAD DE TRÁNSITO COMPETENTE';const applicant=sanitizeValue(record.nombre)||'SOLICITANTE';const cedula=sanitizeValue(record.cedula);const email=sanitizeValue(record.correo);const phone=sanitizeValue(record.telefono);const id=sanitizeValue(record.comparendo)||'que figura registrado';const title=a.primaryRoute==='CADUCIDAD'?'DERECHO DE PETICIÓN — REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO':a.primaryRoute==='PRESCRIPCION'?'DERECHO DE PETICIÓN — SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO':a.primaryRoute==='PERDIDA_EJECUTORIEDAD'?'DERECHO DE PETICIÓN — REVISIÓN DE PÉRDIDA DE FUERZA EJECUTORIA':a.primaryRoute==='FOTODETECCION'?'DERECHO DE PETICIÓN — REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN':'DERECHO DE PETICIÓN — REVISIÓN INTEGRAL DE LA ACTUACIÓN DE TRÁNSITO';const facts=buildFacts(record,a);const g=grounds(a);const req=requests(record,a);const noti=email?`La respuesta deberá ser remitida al correo electrónico ${email}.`:phone?`La respuesta deberá ser remitida por el medio de notificación suministrado por el peticionario.`:'La respuesta deberá ser remitida por el medio de notificación legalmente procedente.';const document=[`**SEÑORES**`,`**${authority.toUpperCase()}**`,'E. S. D.','',`**ASUNTO:** ${title}`,`**PETICIONARIO:** ${applicant.toUpperCase()} — C.C. No. ${cedula}`,`**REFERENCIA:** Actuación / comparendo No. ${id}`,record.fecha?`**FECHA DEL HECHO:** ${sanitizeValue(record.fecha)}`:'',record.valor?`**VALOR REPORTADO:** ${sanitizeValue(record.valor)}`:'','',`Yo, **${applicant}**, identificado con cédula de ciudadanía No. **${cedula}**, actuando en nombre propio, presento respetuosamente este derecho de petición, en ejercicio del derecho fundamental consagrado en el artículo 23 de la Constitución Política de Colombia y desarrollado por la Ley 1755 de 2015.`,'',`Solicito que se revise integralmente la situación jurídica de la actuación No. **${id}**, con base en los datos acreditados, el expediente administrativo y las actuaciones que la autoridad debe demostrar documentalmente. Ninguna conclusión de caducidad, prescripción o pérdida de fuerza ejecutoria se presenta como hecho acreditado cuando la prueba aún depende del expediente.`,'','### **I. HECHOS ACREDITADOS Y DATOS DISPONIBLES**','',facts,'','### **II. ANÁLISIS JURÍDICO DEL CASO CONCRETO**','',`La vía principal identificada por Trámi es **${a.primaryRoute||'REVISIÓN INTEGRAL'}**, pero su configuración permanece sujeta a la prueba documental necesaria. ${a.executiveSummary}`,'',a.primaryRoute==='CADUCIDAD'?`La fecha del hecho (${sanitizeValue(record.fecha)}) no permite por sí sola afirmar caducidad. Debe verificarse cuándo se realizó la audiencia o actuación decisoria exigida por el régimen especial y si ocurrió dentro del término legal.`:a.primaryRoute==='PRESCRIPCION'?`La fecha del hecho (${sanitizeValue(record.fecha)}) permite calcular un vencimiento inicial de tres años al ${a.temporal.initialExpiryDate||'no determinable'}. La prescripción no se presume: debe verificarse el mandamiento de pago, su notificación y las actuaciones posteriores.`:a.primaryRoute==='PERDIDA_EJECUTORIEDAD'?'La pérdida de fuerza ejecutoria exige revisar la firmeza del acto y las actuaciones realizadas para ejecutarlo durante el período legal.':'La información disponible exige reconstruir la notificación, firmeza y actuaciones administrativas antes de adoptar una conclusión definitiva.','','### **III. FUNDAMENTOS DE DERECHO**','',g,'','### **IV. PETICIONES**','',req,'','### **V. ANEXOS**','', '1. Estado de Cuenta SIMIT aportado por el solicitante.','2. Los demás documentos que obren en poder del peticionario o que sean solicitados a la autoridad.','','### **VI. NOTIFICACIONES**','',noti,'','Atentamente,','',applicant,cedula?`C.C. No. ${cedula}`:'',email?`Correo electrónico: ${email}`:'',phone?`Teléfono: ${phone}`:''].filter((x,i,a)=>x!==''|| (a[i-1]!==''&&a[i+1]!=='' )).join('\n').trim();const auth=authorities(a.routes);return {document,assessment:a,authorities:auth as typeof ADDITIONAL_TRAFFIC_LEGAL_LIBRARY,evidenceModel:a.evidenceQuestions.map(q=>({question:q,reason:'Permite acreditar documentalmente el presupuesto jurídico relevante.'})),hechos:facts,solicitudConcreta:req,fundamentos:g};}
+export function generateLegalDraft(record:SelectedRecordData):LegalDraft{return generateUnifiedLegalDocument(record);}
+export function getDynamicLegalQuestions(record:SelectedRecordData,a:LegalAssessment):DynamicLegalQuestion[]{const q:DynamicLegalQuestion[]=[];if(a.routes.includes('NOTIFICACION'))q.push({id:'fecha_notificacion',label:'¿Recuerdas haber recibido una notificación oficial sobre este comparendo?',type:'radio',options:[{value:'si',label:'Sí, recibí una notificación'},{value:'no',label:'No, nunca recibí una notificación'},{value:'no_se',label:'No estoy seguro'}]});if(a.routes.includes('PRESCRIPCION'))q.push({id:'fecha_notificacion_mandamiento',label:'¿Has recibido algún documento de cobro, mandamiento de pago o embargo?',type:'radio',options:[{value:'si',label:'Sí'},{value:'no',label:'No'},{value:'no_se',label:'No lo sé'}]});if(a.routes.includes('CADUCIDAD'))q.push({id:'hubo_audiencia',label:'¿Recuerdas si hubo una audiencia o decisión oficial sobre el comparendo?',type:'radio',options:[{value:'si',label:'Sí'},{value:'no',label:'No'},{value:'no_se',label:'No lo sé'}]});if(a.routes.includes('PERDIDA_EJECUTORIEDAD'))q.push({id:'actuaciones_cobro',label:'¿Conoces alguna actuación de cobro posterior?',type:'textarea'});if(a.routes.includes('FOTODETECCION'))q.push({id:'identificacion_conductor',label:'¿La autoridad te identificó formalmente como conductor?',type:'radio',options:[{value:'si',label:'Sí'},{value:'no',label:'No'},{value:'no_se',label:'No lo sé'}]});return q;}
+export function generateLegalDocument(data:LegalDocumentData):string{return generateUnifiedLegalDocument({comparendo:data.numComparendo,fecha:data.fechaComparendo,organismo:data.organismoTransito,valor:data.valorComparendo==null?'':String(data.valorComparendo),codigo:data.codigoInfraccion,nombre:data.nombreUsuario,cedula:data.cedulaUsuario,correo:data.emailUsuario,telefono:data.telefonoUsuario,esFotodetencion:data.esFotodetencion}).document;}
