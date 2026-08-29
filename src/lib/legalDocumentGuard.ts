@@ -51,7 +51,8 @@ function hasDuplicatedMajorSections(text: string): boolean {
 
 function hasRequiredPetitionRelief(text: string): boolean {
   const n = normalize(text);
-  const match = n.match(/(?:^|\n)\s*(?:i{1,3}|iv|v|vi|vii|viii|ix|x|xi|xii)\.?\s+peticiones\b/);
+  // Include V explicitly: the generated traffic templates use "V. PETICIONES".
+  const match = n.match(/(?:^|\n)\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii)\.?\s+peticiones\b/);
   if (!match) return false;
   const petitionText = n.slice(match.index ?? 0);
   if (petitionText.length < 80) return false;
