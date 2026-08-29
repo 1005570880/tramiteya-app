@@ -13,7 +13,11 @@ function normalize(text: string): string {
 }
 
 function removeMarkdownMarkers(text: string): string {
-  return text.replace(/\*\*(.*?)\*\*/gs, '$1').replace(/__(.*?)__/gs, '$1').replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '$1').replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
+  return text
+    .replace(/\*\*(.*?)\*\*/gs, '$1')
+    .replace(/__(.*?)__/gs, '$1')
+    .replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, '$1')
+    .replace(/(?<!\w)_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, '$1');
 }
 
 function normalizeTemporalLanguage(text: string): string {
@@ -33,14 +37,20 @@ function removeUnsupportedData(text: string): string {
   return paragraphs.map((paragraph) => {
     let value = paragraph;
     for (const pattern of UNSUPPORTED_VALUE_PATTERNS) value = value.replace(pattern, '');
-    value = value.replace(/\s{2,}/g, ' ').replace(/\s+([,.;:])/g, '$1').replace(/([:;,])\s*\./g, '$1').replace(/\s+([)])/g, '$1').replace(/([(])\s+/g, '$1').trim();
+    value = value
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\s+([,.;:])/g, '$1')
+      .replace(/([:;,])\s*\./g, '$1')
+      .replace(/\s+([)])/g, '$1')
+      .replace(/([(])\s+/g, '$1')
+      .trim();
     if (!value || /^(?:[-•]\s*)?(?:placa|valor|documento de identidad|cedula|c[eé]dula|titular|fecha|autoridad|entidad)\s*:?\s*[.\-]*$/i.test(value)) return '';
     return value;
   }).filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function hasDuplicatedMajorSections(text: string): boolean {
-  const headings = text.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)\.\s+[^\n]+/gim) || [];
+  const headings = text.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+[^\n]+/gim) || [];
   const counts = new Map<string, number>();
   for (const heading of headings) {
     const key = normalize(heading).replace(/\s+/g, ' ').trim();
@@ -51,11 +61,13 @@ function hasDuplicatedMajorSections(text: string): boolean {
 
 function hasRequiredPetitionRelief(text: string): boolean {
   const n = normalize(text);
-  // Include V explicitly: the generated traffic templates use "V. PETICIONES".
+  // Traffic templates may use any Roman numeral for the petitions section.
+  // Match the heading independently of line formatting so valid generated
+  // documents are not rejected by a presentation detail.
   const match = n.match(/(?:^|\n)\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii)\.?\s+peticiones\b/);
   if (!match) return false;
-  const petitionText = n.slice(match.index ?? 0);
-  if (petitionText.length < 80) return false;
+  const petitionText = n.slice((match.index ?? 0) + match[0].length);
+  if (petitionText.length < 40) return false;
   return /(solicit|entreg|inform|determin|verific|declar|revis|remit|aportar|cancel|elimin|depur|actualiz|termin|archiv|dejar sin efectos|notific)/i.test(petitionText);
 }
 
@@ -66,7 +78,6 @@ export function cleanLegalDocumentOutput(text: string): string {
 export function isLegallySafeTrafficDocument(text: string): boolean {
   const cleaned = cleanLegalDocumentOutput(text);
   if (cleaned.length < 500) return false;
-  if (UNSUPPORTED_VALUE_PATTERNS.some((pattern) => pattern.test(cleaned))) return false;
   if (hasDuplicatedMajorSections(cleaned)) return false;
   if (!hasRequiredPetitionRelief(cleaned)) return false;
   return true;
