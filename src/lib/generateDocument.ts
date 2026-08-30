@@ -78,17 +78,30 @@ function preserveDeterministicPetitions(deterministic: string, refined: string):
   return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function finalizeTrafficDocument(content: string): string {
-  const cleaned = cleanLegalDocumentOutput(content);
-  if (isLegallySafeTrafficDocument(cleaned)) return cleaned;
+function formatCurrency(value: unknown): string {
+  if (value == null || String(value).trim() === '') return '';
+  const numeric = Number(String(value).replace(/[^0-9-]/g, ''));
+  if (!Number.isFinite(numeric)) return String(value).trim();
+  return `$ ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(numeric)} COP`;
+}
 
-  // The deterministic traffic builder is the source of truth. The guard is a
-  // quality gate, not a reason to return HTTP 500 and strand the user after
-  // completing the Trámi interview. Keep the cleaned deterministic document
-  // available; refinement can still be rejected independently below.
+function finalizeTrafficText(content: string): string {
+  let output = content;
+  // Micro-cleanup: the SIMIT source is a factual source, not a label to expose.
+  output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
+  output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
+  // Defensive currency normalization for the common upper-header form.
+  output = output.replace(/(VALOR REPORTADO:\s*)\$\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
+  // Eliminate only accidental duplicate periods introduced by concatenation.
+  output = output.replace(/\.{2,}/g, '.');
+  return output;
+}
+
+function finalizeTrafficDocument(content: string): string {
+  const cleaned = finalizeTrafficText(cleanLegalDocumentOutput(content));
+  if (isLegallySafeTrafficDocument(cleaned)) return cleaned;
   console.warn('Traffic document safety guard flagged deterministic draft; delivering deterministic draft instead of failing generation.');
   if (cleaned.length >= 500) return cleaned;
-
   throw new Error('TRAFFIC_DOCUMENT_EMPTY: el documento jurídico generado quedó incompleto.');
 }
 
@@ -98,7 +111,7 @@ async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Pr
   const refined = await refineLegalDocument(deterministic);
   if (!refined || refined.length < 500) return deterministic;
   const merged = preserveDeterministicPetitions(deterministic, refined);
-  const finalContent = cleanLegalDocumentOutput(merged);
+  const finalContent = finalizeTrafficText(cleanLegalDocumentOutput(merged));
   return isLegallySafeTrafficDocument(finalContent) ? finalContent : deterministic;
 }
 
