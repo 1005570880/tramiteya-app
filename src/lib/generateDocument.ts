@@ -8,7 +8,6 @@ import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalD
 
 function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
 const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
-
 function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
   const a = { ...input } as FormAnswers & Record<string, any>;
   const trami = a.tramiAnswers && typeof a.tramiAnswers === 'object' ? a.tramiAnswers : {};
@@ -43,13 +42,14 @@ function documentContent(procedure: Procedure, answers: FormAnswers): string {
   const normalizedAnswers = trafficSlugs.has(procedure.slug) ? normalizeTrafficAnswers(answers) : answers;
   return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, normalizedAnswers) : buildDocumentText(procedure, normalizedAnswers);
 }
+const ROMAN = '(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)';
 function extractPetitions(content: string): string | null {
-  const match = content.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
+  const match = content.match(new RegExp(`(?:^|\\n)(${ROMAN})\\. PETICIONES\\n([\\s\\S]*?)(?=\\n${ROMAN}\\. |$)`, 'i'));
   if (!match) return null;
   return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
 }
 function hasDuplicatedTopLevelSections(content: string): boolean {
-  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+/gim) || [];
+  const headings = content.match(new RegExp(`^${ROMAN}\\.\\s+`, 'gim')) || [];
   const counts = new Map<string, number>();
   for (const heading of headings) { const key = heading.trim().toUpperCase(); counts.set(key, (counts.get(key) || 0) + 1); }
   return [...counts.values()].some(count => count > 1);
@@ -58,7 +58,7 @@ function preserveDeterministicPetitions(deterministic: string, refined: string):
   if (hasDuplicatedTopLevelSections(refined)) return deterministic;
   const sourcePetitions = extractPetitions(deterministic);
   if (!sourcePetitions) return deterministic;
-  const target = refined.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
+  const target = refined.match(new RegExp(`(?:^|\\n)(${ROMAN})\\. PETICIONES\\n([\\s\\S]*?)(?=\\n${ROMAN}\\. |$)`, 'i'));
   if (!target) return deterministic;
   const start = target.index ?? 0; const block = target[0]; const leading = block.startsWith('\n') ? '\n' : '';
   const bodyStart = start + leading.length; const bodyEnd = bodyStart + block.slice(leading.length).length;
@@ -72,13 +72,12 @@ function formatCurrency(value: unknown): string {
 }
 const ORDINALS = ['PRIMERO','SEGUNDO','TERCERO','CUARTO','QUINTO','SEXTO','SÉPTIMO','OCTAVO','NOVENO','DÉCIMO'];
 function formatPetitionsAsOrdinals(content: string): string {
-  return content.replace(/(^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i, (_m, lead, section, body) => {
+  return content.replace(new RegExp(`(^|\\n)(${ROMAN})\\. PETICIONES\\n([\\s\\S]*?)(?=\\n${ROMAN}\\. |$)`, 'i'), (_m, lead, section, body) => {
     const lines = body.split(/\n\s*\n/).map((x: string) => x.trim()).filter(Boolean);
     const items: string[] = [];
     for (const line of lines) {
       const stripped = line.replace(/^\d+[.)]\s*/, '').trim();
-      if (/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):/i.test(stripped)) items.push(stripped.toUpperCase());
-      else if (stripped) items.push(stripped);
+      if (stripped) items.push(stripped);
     }
     const normalized = items.map((item, i) => {
       const without = item.replace(/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):\s*/i, '');
@@ -92,10 +91,24 @@ function finalizeTrafficText(content: string): string {
   output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
   output = output.replace(/(me enteré por primera vez[^\n:]*:\s*)simit\.?/gi, '$1al consultar directamente la plataforma del SIMIT.');
   output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
+  output = output.replace(/(VALOR REPORTADO:[^\n]*)(\n)(?=Yo,)/gi, '$1\n\n');
   output = output.replace(/\.{2,}/g, '.');
-  output = output.replace(/\bEl solicitante manifiesta\s+no recordar\b/gi, 'No recuerdo').replace(/\bEl solicitante manifiesta\s+no haber recibido\b/gi, 'No he recibido').replace(/\bEl solicitante manifiesta\s+no tener conocimiento\b/gi, 'No tengo conocimiento');
+  output = output.replace(/\bEl solicitante manifiesta que no recibió\b/gi, 'No recibí')
+    .replace(/\bEl solicitante manifiesta que no recuerda\b/gi, 'No recuerdo')
+    .replace(/\bEl solicitante manifiesta no recordar\b/gi, 'No recuerdo')
+    .replace(/\bEl solicitante manifiesta no haber recibido\b/gi, 'No he recibido')
+    .replace(/\bEl solicitante manifiesta no tener conocimiento\b/gi, 'No tengo conocimiento')
+    .replace(/\bEl solicitante manifiesta:\s*/gi, 'Manifiesto: ')
+    .replace(/\bEl solicitante indica que conoció\b/gi, 'Indico que conocí')
+    .replace(/\bEl solicitante indica\b/gi, 'Indico')
+    .replace(/\bEl solicitante identificado para el trámite es\b/gi, 'Soy')
+    .replace(/\bLa actuación aparece asociada al documento de identidad No\.\s*/gi, 'La actuación está asociada a mi documento de identidad No. ')
+    .replace(/\bEl solicitante reporta una actuación de cobro\b/gi, 'Tengo registrado un antecedente de actuación de cobro')
+    .replace(/\bEl solicitante\b/gi, 'Yo')
+    .replace(/\bEl ciudadano\b/gi, 'Yo')
+    .replace(/\bLa persona interesada\b/gi, 'Yo');
   if (/\. PETICIONES\n/i.test(output)) output = formatPetitionsAsOrdinals(output);
-  return output;
+  return output.replace(/\n{3,}/g, '\n\n').trim();
 }
 function finalizeTrafficDocument(content: string): string {
   const cleaned = finalizeTrafficText(cleanLegalDocumentOutput(content));
