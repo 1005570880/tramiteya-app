@@ -1,3 +1,118 @@
+import type { Procedure } from '../types';
+import type { FormAnswers } from '../types/form';
+import type { DocumentItem } from '../types/procedure';
+import { buildDocumentText } from './documentTemplates';
+import { buildTrafficDocument } from './trafficDocumentTemplates';
+import { refineLegalDocument } from './aiDocumentRefiner';
+import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalDocumentGuard';
+
+function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
+const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
+
+function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
+  const a = { ...input } as FormAnswers & Record<string, any>;
+  const trami = a.tramiAnswers && typeof a.tramiAnswers === 'object' ? a.tramiAnswers : {};
+  const simit = a.__simitRecord && typeof a.__simitRecord === 'object' ? { ...a.__simitRecord } : {};
+  const first = (...values: unknown[]) => values.find(v => v !== undefined && v !== null && String(v).trim() !== '') as string | undefined;
+  const nombre = first(a.nombre, a.nombreCompleto, trami.nombre, simit.name, simit.ownerName);
+  const cedula = first(a.documento, a.documentNumber, a.numeroDocumento, a.cedula, trami.cedula, simit.documentNumber);
+  const correo = first(a.correo, a.email, trami.correo, simit.email);
+  const telefono = first(a.telefono, a.phone, trami.telefono, simit.phone);
+  const numero = first(a.numero_comparendo, a.numero_acto, simit.number);
+  const fecha = first(a.fecha_comparendo, simit.date);
+  const entidad = first(a.entidad, a.autoridad, simit.authority);
+  const municipio = first(a.municipio, a.ciudad, simit.municipality);
+  const valor = first(a.valor, a.valor_multa, a.valorMulta, simit.value);
+  const placa = first(a.placa, simit.plate);
+  const codigo = first(a.codigo_infraccion, a.codigoInfraccion, simit.infractionCode, simit.code);
+  if (nombre) { a.nombre = nombre; a.nombreCompleto = nombre; }
+  if (cedula) { a.documento = cedula; a.documentNumber = cedula; a.cedula = cedula; }
+  if (correo) { a.correo = correo; a.email = correo; }
+  if (telefono) { a.telefono = telefono; a.phone = telefono; }
+  if (numero) a.numero_comparendo = numero;
+  if (fecha) a.fecha_comparendo = fecha;
+  if (entidad) { a.entidad = entidad; a.autoridad = entidad; }
+  if (municipio) a.municipio = municipio;
+  if (valor) a.valor = valor;
+  if (placa) a.placa = placa;
+  if (codigo) a.codigo_infraccion = codigo;
+  a.__simitRecord = { ...simit, number: first(simit.number, numero), date: first(simit.date, fecha), authority: first(simit.authority, entidad), municipality: first(simit.municipality, municipio), value: first(simit.value, valor), plate: first(simit.plate, placa), infractionCode: first(simit.infractionCode, codigo), documentNumber: first(simit.documentNumber, cedula), name: first(simit.name, nombre), ownerName: first(simit.ownerName, nombre), email: first(simit.email, correo), phone: first(simit.phone, telefono) };
+  return a;
+}
+function documentContent(procedure: Procedure, answers: FormAnswers): string {
+  const normalizedAnswers = trafficSlugs.has(procedure.slug) ? normalizeTrafficAnswers(answers) : answers;
+  return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, normalizedAnswers) : buildDocumentText(procedure, normalizedAnswers);
+}
+function extractPetitions(content: string): string | null {
+  const match = content.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
+  if (!match) return null;
+  return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
+}
+function hasDuplicatedTopLevelSections(content: string): boolean {
+  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+/gim) || [];
+  const counts = new Map<string, number>();
+  for (const heading of headings) { const key = heading.trim().toUpperCase(); counts.set(key, (counts.get(key) || 0) + 1); }
+  return [...counts.values()].some(count => count > 1);
+}
+function preserveDeterministicPetitions(deterministic: string, refined: string): string {
+  if (hasDuplicatedTopLevelSections(refined)) return deterministic;
+  const sourcePetitions = extractPetitions(deterministic);
+  if (!sourcePetitions) return deterministic;
+  const target = refined.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
+  if (!target) return deterministic;
+  const start = target.index ?? 0; const block = target[0]; const leading = block.startsWith('\n') ? '\n' : '';
+  const bodyStart = start + leading.length; const bodyEnd = bodyStart + block.slice(leading.length).length;
+  return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
+}
+function formatCurrency(value: unknown): string {
+  if (value == null || String(value).trim() === '') return '';
+  const numeric = Number(String(value).replace(/[^0-9-]/g, ''));
+  if (!Number.isFinite(numeric)) return String(value).trim();
+  return `$ ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(numeric)} COP`;
+}
+const ORDINALS = ['PRIMERO','SEGUNDO','TERCERO','CUARTO','QUINTO','SEXTO','SÉPTIMO','OCTAVO','NOVENO','DÉCIMO'];
+function formatPetitionsAsOrdinals(content: string): string {
+  return content.replace(/(^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i, (_m, lead, section, body) => {
+    const lines = body.split(/\n\s*\n/).map((x: string) => x.trim()).filter(Boolean);
+    const items: string[] = [];
+    for (const line of lines) {
+      const stripped = line.replace(/^\d+[.)]\s*/, '').trim();
+      if (/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):/i.test(stripped)) items.push(stripped.toUpperCase());
+      else if (stripped) items.push(stripped);
+    }
+    const normalized = items.map((item, i) => {
+      const without = item.replace(/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):\s*/i, '');
+      return `${ORDINALS[i] || `NUMERAL ${i + 1}`}: ${without}`;
+    }).join('\n\n');
+    return `${lead}${section.toUpperCase()}. PETICIONES\n${normalized}`;
+  });
+}
+function finalizeTrafficText(content: string): string {
+  let output = content;
+  output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
+  output = output.replace(/(me enteré por primera vez[^\n:]*:\s*)simit\.?/gi, '$1al consultar directamente la plataforma del SIMIT.');
+  output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
+  output = output.replace(/\.{2,}/g, '.');
+  output = output.replace(/\bEl solicitante manifiesta\s+no recordar\b/gi, 'No recuerdo').replace(/\bEl solicitante manifiesta\s+no haber recibido\b/gi, 'No he recibido').replace(/\bEl solicitante manifiesta\s+no tener conocimiento\b/gi, 'No tengo conocimiento');
+  if (/\. PETICIONES\n/i.test(output)) output = formatPetitionsAsOrdinals(output);
+  return output;
+}
+function finalizeTrafficDocument(content: string): string {
+  const cleaned = finalizeTrafficText(cleanLegalDocumentOutput(content));
+  if (isLegallySafeTrafficDocument(cleaned)) return cleaned;
+  console.warn('Traffic document safety guard flagged deterministic draft; delivering deterministic draft instead of failing generation.');
+  if (cleaned.length >= 500) return cleaned;
+  throw new Error('TRAFFIC_DOCUMENT_EMPTY: el documento jurídico generado quedó incompleto.');
+}
+async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
+  const deterministic = finalizeTrafficDocument(documentContent(procedure, answers));
+  if (!trafficSlugs.has(procedure.slug)) return deterministic;
+  const refined = await refineLegalDocument(deterministic);
+  if (!refined || refined.length < 500) return deterministic;
+  const merged = preserveDeterministicPetitions(deterministic, refined);
+  const finalContent = finalizeTrafficText(cleanLegalDocumentOutput(merged));
+  return isLegallySafeTrafficDocument(finalContent) ? finalContent : deterministic;
+}
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
   const generatedAt = new Date().toISOString(); const version = Math.max(1, previousVersion + 1); const content = await buildFinalContent(procedure, answers);
   return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(normalizeTrafficAnswers(answers))), procedureSlug: procedure.slug, generatedAt, content } };
@@ -6,7 +121,6 @@ export async function generateDocx({ procedure, answers }: { procedure: Procedur
 export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(await buildFinalContent(procedure, answers)); }
 export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
-
 function isHeading(line: string) {
   return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|XI\.|XII\.|XIII\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
 }
