@@ -1,74 +1,150 @@
 import type { FormAnswers } from '../types/form';
-import { generateUnifiedLegalDocument, sanitizeValue, type LegalAssessment, type SelectedRecordData } from './legalEngine';
-import { applyTrafficLegalPolicy, routeLabelForPolicy } from './trafficLegalPolicy';
 
-function rawValue(a: FormAnswers, key: string): string {
-  const raw = (a as any)[key];
-  if (Array.isArray(raw)) return raw.join(', ');
-  if (typeof raw === 'boolean') return raw ? 'Sí' : 'No';
-  if (raw == null) return '';
-  return String(raw).replace(/\s+/g, ' ').trim();
+function text(value: unknown): string {
+  if (value == null) return '';
+  return String(value).replace(/\s+/g, ' ').trim();
 }
-function valueOrEmpty(value: unknown): string { if (value == null) return ''; const text = String(value).trim(); return text && !/^no identificado en el documento aportado$/i.test(text) ? text : ''; }
-function selectedRecord(a: FormAnswers): SelectedRecordData {
-  const source = ((a as any).__simitRecord && typeof (a as any).__simitRecord === 'object') ? (a as any).__simitRecord : {};
-  const trami = ((a as any).__tramiQuestionnaire && typeof (a as any).__tramiQuestionnaire === 'object') ? (a as any).__tramiQuestionnaire : {};
-  const stored = ((a as any).tramiAnswers && typeof (a as any).tramiAnswers === 'object') ? (a as any).tramiAnswers : {};
-  const q = { ...stored, ...trami } as Record<string, any>;
-  const pick = (key: string, ...fallbacks: unknown[]) => valueOrEmpty(rawValue(a, key)) || valueOrEmpty(q[key]) || fallbacks.map(valueOrEmpty).find(Boolean) || '';
-  return { comparendo: pick('numero_comparendo', source.number), fecha: pick('fecha_comparendo', source.date), organismo: pick('entidad', source.authority, rawValue(a, 'autoridad')), estado: pick('estadoComparendo', source.status), valor: pick('valor', source.value, rawValue(a, 'valor_multa')), placa: pick('placa', source.plate), cedula: pick('documento', q.cedula, source.documentNumber, rawValue(a, 'cedula')), codigo: pick('codigo_infraccion', source.infractionCode, source.code), nombre: pick('nombre', source.name, source.ownerName), correo: pick('correo', source.email), telefono: pick('telefono', source.phone), fechaResolucion: pick('fechaResolucion', source.resolutionDate), fechaNotificacion: pick('fechaNotificacion', source.notificationDate), fechaMandamientoPago: pick('fechaMandamientoPago', source.mandamientoDate, source.paymentOrderDate), fechaNotificacionMandamiento: pick('fechaNotificacionMandamiento', source.paymentOrderNotificationDate), fechaEjecutoria: pick('fechaEjecutoria', source.executedDate), huboAudiencia: (a as any).huboAudiencia ?? (q.audiencia === 'asisti' || q.audiencia === 'no_asisti'), existeResolucion: (a as any).existeResolucion ?? q.resolucion === 'si', actuacionesCobro: pick('actuacionesCobro', q.cobro, source.collectionActions), esFotodetencion: Boolean((a as any).esFotodetencion), tramiAnswers: q, tramiConocimiento: q.conocimiento || '', tramiNotificacion: q.notificacion || '', tramiAudiencia: q.audiencia || '', tramiResolucion: q.resolucion || '', tramiCobro: q.cobro || '', tramiPagos: q.pagos || '', tramiEvidencia: q.evidencia || '' };
-}
-function assessmentFromAnswers(a: FormAnswers): LegalAssessment | null { const assessment = (a as any).__legalAssessment; return assessment && typeof assessment === 'object' ? assessment as LegalAssessment : null; }
-function routeLabel(route: string | null | undefined): string { switch (route) { case 'CADUCIDAD': return 'SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO'; case 'PRESCRIPCION': return 'SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y/O ACCIÓN DE COBRO'; case 'PERDIDA_EJECUTORIEDAD': return 'REVISIÓN DE PÉRDIDA DE FUERZA EJECUTORIA'; case 'FOTODETECCION': return 'REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN'; case 'NOTIFICACION': return 'REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO'; case 'DEBIDO_PROCESO': return 'DEBIDO PROCESO E INDEBIDA NOTIFICACIÓN DE LA CITACIÓN'; case 'REVOCATORIA_DIRECTA': return 'SOLICITUD DE REVOCATORIA DIRECTA'; default: return 'REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA'; } }
-function normalizeCitizenValue(value: unknown): string { const text = sanitizeValue(value); const map: Record<string,string> = { no_recuerdo: 'No recuerdo el evento exacto.', no_notificado: 'No he recibido la notificación correspondiente.', no_se: 'No tengo certeza sobre este aspecto.', no_se_resolucion: 'No tengo conocimiento de una resolución.' }; return map[text.toLowerCase()] || text; }
-function formatCop(value: unknown): string { if (value == null || String(value).trim() === '') return ''; const numeric = Number(String(value).replace(/[^0-9-]/g, '')); if (!Number.isFinite(numeric)) return String(value).trim(); return `$ ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(numeric)} COP`; }
-function normalizeFirstPerson(output: string): string {
-  return output
-    .replace(/\bEl solicitante manifiesta que no recibió\b/gi, 'No recibí')
-    .replace(/\bEl solicitante manifiesta que no recuerda\b/gi, 'No recuerdo')
-    .replace(/\bEl solicitante manifiesta no recordar\b/gi, 'No recuerdo')
-    .replace(/\bEl solicitante manifiesta no haber recibido\b/gi, 'No he recibido')
-    .replace(/\bEl solicitante manifiesta no tener conocimiento\b/gi, 'No tengo conocimiento')
-    .replace(/\bEl solicitante manifiesta:\s*/gi, 'Manifiesto: ')
-    .replace(/\bEl solicitante indica que conoció\b/gi, 'Indico que conocí')
-    .replace(/\bEl solicitante indica\b/gi, 'Indico')
-    .replace(/\bEl solicitante identificado para el trámite es\b/gi, 'Soy')
-    .replace(/\bLa actuación aparece asociada al documento de identidad No\.\s*/gi, 'La actuación está asociada a mi documento de identidad No. ')
-    .replace(/\bEl solicitante reporta una actuación de cobro\b/gi, 'Tengo registrado un antecedente de actuación de cobro')
-    .replace(/\bEl solicitante\b/gi, 'Yo')
-    .replace(/\bEl ciudadano\b/gi, 'Yo')
-    .replace(/\bLa persona interesada\b/gi, 'Yo');
-}
-function normalizeTrafficDocument(content: string, record: SelectedRecordData, assessment: LegalAssessment): string {
-  let output = content;
-  const citizenTokens: Record<string,string> = { no_recuerdo: 'No recuerdo el evento exacto.', no_notificado: 'No he recibido la notificación correspondiente.', no_se: 'No tengo certeza sobre este aspecto.', no_se_resolucion: 'No tengo conocimiento de una resolución.' };
-  for (const [token,replacement] of Object.entries(citizenTokens)) output = output.replace(new RegExp(`\\b${token}\\b`,'gi'), replacement);
-  if (record.valor) {
-    const currency = formatCop(record.valor);
-    const escaped = String(record.valor).replace(/[.*+?^${}()|[\\]\\\\]/g,'\\$&');
-    output = output.replace(new RegExp(`(valor(?: reportado)?(?: para la obligación)?(?: es|:)\\s*)${escaped}`,'gi'), `$1${currency}`).replace(new RegExp(`\\$\\s*${escaped}`,'g'), currency);
+
+function first(...values: unknown[]): string {
+  for (const value of values) {
+    const candidate = text(value);
+    if (candidate) return candidate;
   }
-  output = output.replace(/(conocí por primera vez la actuación:\s*)simit\.?/gi, '$1al consultar directamente la plataforma del SIMIT.');
-  const policyLabel = routeLabelForPolicy(assessment.primaryRoute);
-  if (policyLabel) output = output.replace(/SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO|SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y\/O ACCIÓN DE COBRO|REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO|REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA/g, policyLabel);
-  if (assessment.primaryRoute === 'DEBIDO_PROCESO') {
-    const marker='I. IDENTIFICACIÓN Y CONTACTO';
-    const insertion='El término aplicable debe analizarse a partir de las actuaciones administrativas efectivamente acreditadas. Por tratarse de una actuación cuya fecha del hecho es inferior a un año, no planteo caducidad ni prescripción como vía principal. Mi solicitud se concentra en el debido proceso y en la notificación de la citación, incluida mi oportunidad real de ejercer defensa, sin afirmar hechos que deban acreditarse en el expediente.\n\nII. ENFOQUE JURÍDICO — DEBIDO PROCESO Y NOTIFICACIÓN\n\nSolicito que la autoridad acredite documentalmente la citación, sus constancias de notificación y las actuaciones que me permitieron conocer y controvertir la actuación, de conformidad con el régimen de tránsito aplicable.';
-    if(!output.includes('II. ENFOQUE JURÍDICO — DEBIDO PROCESO Y NOTIFICACIÓN')) output=output.replace(marker,`${insertion}\n\n${marker}`);
-  }
-  output = normalizeFirstPerson(output);
-  output = output.replace(/\b(?:Indico que )?conocí por primera vez la actuación:\s*simit\.?/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT.');
-  output = output.replace(/\bIndico que conocí por primera vez[^\n.]*/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT.');
-  output = output.replace(/\bManifiesto:\s*nunca\b/gi, 'Sobre la oportunidad de defensa, manifiesto que no fui notificado ni asistí a audiencia.');
-  output = output.replace(/\bManifiesto:\s*no\s*(?:recibí|he recibido)\b[^\n.]*/gi, 'Sobre la oportunidad de defensa, manifiesto que no fui notificado ni asistí a audiencia.');
-  output = output.replace(/aportado por Yo\b/gi, 'aportado por el suscrito peticionario.');
-  output = output.replace(/aportado por el suscrito peticionario\.\./gi, 'aportado por el suscrito peticionario.');
-  output = output.replace(/^\s*#{1,6}\s+/gm, '');
-  output = output.replace(/(VALOR REPORTADO:\s*\$?\s*[0-9][0-9.,]*\s*(?:COP)?)(?:\n\s*)+(?=Yo,)/gi, '$1\n\n');
-  return output.replace(/\n{3,}/g,'\n\n').replace(/\.{2,}/g,'.').trim();
+  return '';
 }
-export function buildTrafficDocument(slug: string, a: FormAnswers): string {
-  const record=selectedRecord(a); const baseDraft=generateUnifiedLegalDocument(record); const baseAssessment=assessmentFromAnswers(a)||baseDraft.assessment; const assessment=applyTrafficLegalPolicy(record,baseAssessment); const route=assessment.primaryRoute||(slug.includes('caducidad')?'CADUCIDAD':slug.includes('prescripcion')?'PRESCRIPCION':null); const authority=valueOrEmpty(rawValue(a,'entidad'))||record.organismo||'AUTORIDAD DE TRÁNSITO COMPETENTE'; const applicant=valueOrEmpty(rawValue(a,'nombre'))||valueOrEmpty(`${rawValue(a,'nombres')} ${rawValue(a,'apellidos')}`)||record.nombre; const cedula=valueOrEmpty(rawValue(a,'documento'))||record.cedula; const email=valueOrEmpty(rawValue(a,'correo'))||record.correo; const phone=valueOrEmpty(rawValue(a,'telefono'))||record.telefono; const number=valueOrEmpty(rawValue(a,'numero_comparendo'))||record.comparendo; const date=valueOrEmpty(rawValue(a,'fecha_comparendo'))||record.fecha; const dateDocument=valueOrEmpty(rawValue(a,'fecha'))||new Date().toLocaleDateString('es-CO');
-  if(baseDraft.document&&baseDraft.document.length>500)return normalizeTrafficDocument(baseDraft.document,record,assessment);
-  return normalizeTrafficDocument([dateDocument,'',authority.toUpperCase(),'','DERECHO DE PETICIÓN — '+routeLabel(route),'','ASUNTO: DERECHO DE PETICIÓN — '+routeLabel(route),'',`REFERENCIA: Comparendo / acto No. ${number}${date?` — Fecha: ${date}`:''}`,'',`Yo, ${normalizeCitizenValue(applicant)}, identificado con cédula de ciudadanía No. ${sanitizeValue(cedula)}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,'','Respetados señores:','','Solicito que se revise integralmente la situación jurídica de la actuación que me afecta, con base en el expediente administrativo y las pruebas que deben reposar en él.','','I. IDENTIFICACIÓN Y CONTACTO','','Nombre: '+sanitizeValue(applicant),'Cédula: '+sanitizeValue(cedula),'Correo electrónico: '+sanitizeValue(email),'Teléfono: '+sanitizeValue(phone),'','II. PETICIONES','','PRIMERO: Que se entregue copia íntegra del expediente administrativo y de las constancias de notificación, sanción, ejecutoria y cobro que correspondan.','','Atentamente,','',sanitizeValue(applicant),`C.C. No. ${sanitizeValue(cedula)}`,`Correo electrónico: ${sanitizeValue(email)}`,`Teléfono: ${sanitizeValue(phone)}`].join('\n'),record,assessment);
+
+function formatCurrency(value: unknown): string {
+  const raw = text(value);
+  if (!raw) return '';
+  if (/^\$/.test(raw) && /COP/i.test(raw)) return raw;
+  const numeric = Number(raw.replace(/[^0-9-]/g, ''));
+  if (!Number.isFinite(numeric)) return raw.includes('$') ? raw : `$ ${raw} COP`;
+  return `$ ${numeric.toLocaleString('es-CO')} COP`;
+}
+
+export function buildTrafficPetitionText(data: any): string {
+  const {
+    organismo,
+    comparendo,
+    fechaHecho,
+    valor,
+    infraccion,
+    nombre,
+    cedula,
+    correo,
+    telefono,
+    fuenteConocimiento,
+    notificado,
+    pago,
+  } = data;
+
+  const organismoLimpio = text(organismo).toUpperCase();
+  const valorFormateado = formatCurrency(valor);
+
+  let textoConocimiento = 'Me enteré de la existencia de este comparendo a través de una notificación de cobro.';
+  if (fuenteConocimiento === 'simit') {
+    textoConocimiento = 'Me enteré de la existencia de este comparendo al consultar directamente la plataforma SIMIT.';
+  } else if (fuenteConocimiento === 'no_recuerdo') {
+    textoConocimiento = 'No tengo claridad sobre el medio exacto por el cual se reportó inicialmente esta actuación.';
+  }
+
+  let textoDefensa = 'Sobre la oportunidad de ejercitar mi derecho a la defensa, manifiesto que no fui notificado en debida forma ni asistí a audiencia alguna.';
+  if (notificado === 'si') {
+    textoDefensa = 'Manifiesto que se adelantaron actuaciones sin garantizar plenamente las etapas procesales correspondientes.';
+  }
+
+  let textoPago = 'Aclaro que no he realizado pagos ni suscrito acuerdos de pago frente a esta obligación.';
+  if (pago === 'acuerdo' || pago === 'completo') {
+    textoPago = 'Respecto de la obligación, existe un antecedente de pago o acuerdo que requiere verificación en la carpeta administrativa.';
+  }
+
+  return `SEÑORES
+${organismoLimpio}
+E. S. D.
+
+ASUNTO: DERECHO DE PETICIÓN — REVISIÓN DE DEBIDO PROCESO Y NOTIFICACIÓN
+PETICIONARIO: ${text(nombre).toUpperCase()} — C.C. No. ${text(cedula)}
+REFERENCIA: Actuación / comparendo No. ${text(comparendo)}
+FECHA DEL HECHO: ${text(fechaHecho)}
+VALOR REPORTADO: ${valorFormateado}
+
+Yo, ${text(nombre)}, identificado con cédula de ciudadanía No. ${text(cedula)}, actuando en nombre propio, presento respetuosamente este derecho de petición en ejercicio del derecho fundamental consagrado en el artículo 23 de la Constitución Política de Colombia y la Ley 1755 de 2015.
+
+Solicito que se revise integralmente la situación jurídica de la actuación No. ${text(comparendo)}, con base en los datos acreditados y el expediente administrativo que la autoridad debe demostrar documentalmente.
+
+I. HECHOS ACREDITADOS Y DATOS DISPONIBLES
+
+1. En el Estado de Cuenta SIMIT aportado figura la actuación No. ${text(comparendo)}, asociada a ${organismoLimpio}, con fecha del hecho ${text(fechaHecho)}.
+2. La actuación se encuentra asociada a mi documento de identidad No. ${text(cedula)}.
+3. El valor reportado para la obligación corresponde a ${valorFormateado}.
+4. El registro identifica la infracción con el código ${text(infraccion)}.
+5. El Estado de Cuenta SIMIT no permite identificar por sí solo el acto sancionatorio, su fecha de expedición ni su ejecutoria.
+6. ${textoConocimiento}
+7. ${textoDefensa}
+8. ${textoPago}
+
+II. ANÁLISIS JURÍDICO DEL CASO CONCRETO
+
+La vía principal invocada corresponde a la verificación del DEBIDO PROCESO Y REGULARIDAD DE LA NOTIFICACIÓN. La validez de las actuaciones sancionatorias y la oportunidad real de defensa deben confrontarse directamente con las constancias físicas o digitales que reposen en el expediente administrativo.
+
+III. FUNDAMENTOS DE DERECHO
+
+- Artículo 23 de la Constitución Política de Colombia (Derecho Fundamental de Petición).
+- Artículo 29 de la Constitución Política de Colombia (Garantía del Debido Proceso).
+- Ley 1755 de 2015 (Reglamentaria del Derecho de Petición).
+- Artículo 135 y concordantes de la Ley 769 de 2002 (Código Nacional de Tránsito).
+- Artículo 91 de la Ley 1437 de 2011 (CPACA).
+
+IV. PETICIONES
+
+PRIMERO: Que se determine expresamente la situación jurídica actual de la actuación No. ${text(comparendo)}, indicando por qué continúa vigente o exigible.
+
+SEGUNDO: Que se me entregue copia íntegra, legible y completa del expediente administrativo relacionado con la actuación No. ${text(comparendo)}.
+
+TERCERO: Que se identifique el acto mediante el cual se impuso la sanción, indicando número, fecha, autoridad expedidora y constancia de ejecutoria, entregando copia del mismo.
+
+CUARTO: Que se me entreguen las constancias de notificación de las actuaciones procesales (citación, resolución o mandamiento), con sus respectivos soportes de entrega o publicación.
+
+QUINTO: Que se me informe si existe o existió proceso de cobro coactivo y se remita copia del mandamiento de pago y sus notificaciones.
+
+SEXTO: Que, de acreditarse una irregularidad en la notificación o trámite que afecte la exigibilidad, se adopten de inmediato las consecuencias jurídicas procedentes.
+
+SÉPTIMO: Que, si jurídicamente corresponde, se ordene la depuración o actualización del registro ante el SIMIT.
+
+OCTAVO: Que se emita respuesta de fondo, clara, congruente y debidamente motivada.
+
+V. ANEXOS
+
+1. Copia del Estado de Cuenta SIMIT aportado por el suscrito peticionario.
+
+VI. NOTIFICACIONES
+
+Solicito que la respuesta a la presente petición sea remitida al correo electrónico ${text(correo)} y/o al teléfono ${text(telefono)}.
+
+Atentamente,
+
+${text(nombre)}
+C.C. No. ${text(cedula)}
+Correo electrónico: ${text(correo)}
+Teléfono: ${text(telefono)}`;
+}
+
+export function buildTrafficDocument(_slug: string, a: FormAnswers): string {
+  const trami = (a as any).tramiAnswers && typeof (a as any).tramiAnswers === 'object' ? (a as any).tramiAnswers : {};
+  const simit = (a as any).__simitRecord && typeof (a as any).__simitRecord === 'object' ? (a as any).__simitRecord : {};
+
+  return buildTrafficPetitionText({
+    organismo: first(a.entidad, a.autoridad, simit.authority),
+    comparendo: first(a.numero_comparendo, simit.number),
+    fechaHecho: first(a.fecha_comparendo, simit.date),
+    valor: first(a.valor, a.valor_multa, simit.value),
+    infraccion: first(a.codigo_infraccion, simit.infractionCode, simit.code),
+    nombre: first(a.nombre, a.nombreCompleto, trami.nombre, simit.name, simit.ownerName),
+    cedula: first(a.documento, a.documentNumber, a.cedula, trami.cedula, simit.documentNumber),
+    correo: first(a.correo, a.email, trami.correo, simit.email),
+    telefono: first(a.telefono, a.phone, trami.telefono, simit.phone),
+    fuenteConocimiento: first(trami.conocimiento, (a as any).fuenteConocimiento),
+    notificado: first(trami.notificacion, (a as any).notificado),
+    pago: first(trami.pagos, (a as any).pago),
+  });
 }
