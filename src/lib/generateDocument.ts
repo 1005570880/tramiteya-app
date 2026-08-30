@@ -88,10 +88,18 @@ function formatPetitionsAsOrdinals(content: string): string {
 }
 function finalizeTrafficText(content: string): string {
   let output = content;
+  // Remove Markdown heading markers before preview/rendering.
+  output = output.replace(/^\s*#{1,6}\s+/gm, '');
+  // Force the requested human first-person phrasing.
+  output = output.replace(/\b(?:El solicitante )?(?:indica que )?conoció por primera vez la actuación:\s*simit\.?/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT.');
+  output = output.replace(/\bEl solicitante indica que conoció por primera vez la actuación\b[^\n.]*/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT');
+  output = output.replace(/\bEl solicitante manifiesta:\s*nunca\b/gi, 'Manifiesto que no fui notificado ni asistí a audiencia');
+  output = output.replace(/\bManifiesto:\s*nunca\b/gi, 'Manifiesto que no fui notificado ni asistí a audiencia');
   output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
   output = output.replace(/(me enteré por primera vez[^\n:]*:\s*)simit\.?/gi, '$1al consultar directamente la plataforma del SIMIT.');
   output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
-  output = output.replace(/(VALOR REPORTADO:[^\n]*)(\n)(?=Yo,)/gi, '$1\n\n');
+  // Header invariant: value line must be followed by a blank line before "Yo,".
+  output = output.replace(/(VALOR REPORTADO:[^\n]*)(?:\n\s*)+(?=Yo,)/gi, '$1\n\n');
   output = output.replace(/\.{2,}/g, '.');
   output = output.replace(/\bEl solicitante manifiesta que no recibió\b/gi, 'No recibí')
     .replace(/\bEl solicitante manifiesta que no recuerda\b/gi, 'No recuerdo')
@@ -107,6 +115,10 @@ function finalizeTrafficText(content: string): string {
     .replace(/\bEl solicitante\b/gi, 'Yo')
     .replace(/\bEl ciudadano\b/gi, 'Yo')
     .replace(/\bLa persona interesada\b/gi, 'Yo');
+  output = output.replace(/aportado por Yo\b/gi, 'aportado por el suscrito peticionario.');
+  output = output.replace(/aportado por el suscrito peticionario\.\./gi, 'aportado por el suscrito peticionario.');
+  // Final hard normalization of common hearing/notification wording.
+  output = output.replace(/\bManifiesto:\s*no\s*recib[ií]\b[^\n.]*/gi, 'Sobre la oportunidad de defensa, manifiesto que no fui notificado ni asistí a audiencia.');
   if (/\. PETICIONES\n/i.test(output)) output = formatPetitionsAsOrdinals(output);
   return output.replace(/\n{3,}/g, '\n\n').trim();
 }
