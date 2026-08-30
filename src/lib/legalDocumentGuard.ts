@@ -61,10 +61,7 @@ function hasDuplicatedMajorSections(text: string): boolean {
 
 function hasRequiredPetitionRelief(text: string): boolean {
   const n = normalize(text);
-  // Traffic templates may use any Roman numeral for the petitions section.
-  // Match the heading independently of line formatting so valid generated
-  // documents are not rejected by a presentation detail.
-  const match = n.match(/(?:^|\n)\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii)\.?\s+peticiones\b/);
+  const match = n.match(/(?:^|\n)\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii)\.?\s+(?:peticiones|pretensiones)\b/);
   if (!match) return false;
   const petitionText = n.slice((match.index ?? 0) + match[0].length);
   if (petitionText.length < 40) return false;
