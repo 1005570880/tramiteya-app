@@ -22,6 +22,20 @@ function formatCurrency(value: unknown): string {
   return `$ ${numeric.toLocaleString('es-CO')} COP`;
 }
 
+function buildFormalDestination(organismo: unknown): string {
+  let entidadDestino = text(organismo).toUpperCase().trim();
+  if (!entidadDestino) return 'SECRETARÍA DE TRÁNSITO Y TRANSPORTE';
+
+  if (!entidadDestino.includes('SECRETARIA') && !entidadDestino.includes('SECRETARÍA') && !entidadDestino.includes('INSPECCION') && !entidadDestino.includes('INSPECCIÓN') && !entidadDestino.includes('INSTITUTO') && !entidadDestino.includes('DIRECCION') && !entidadDestino.includes('DIRECCIÓN')) {
+    if (entidadDestino.startsWith('DPTAL')) {
+      entidadDestino = `INSTITUTO DE TRÁNSITO DE ${entidadDestino}`;
+    } else {
+      entidadDestino = `SECRETARÍA DE TRÁNSITO Y TRANSPORTE DE ${entidadDestino}`;
+    }
+  }
+  return entidadDestino;
+}
+
 export function buildTrafficPetitionText(data: any): string {
   const {
     organismo,
@@ -38,6 +52,7 @@ export function buildTrafficPetitionText(data: any): string {
     pago,
   } = data;
 
+  const entidadDestino = buildFormalDestination(organismo);
   const organismoLimpio = text(organismo).toUpperCase();
   const valorFormateado = formatCurrency(valor);
 
@@ -59,7 +74,7 @@ export function buildTrafficPetitionText(data: any): string {
   }
 
   return `SEÑORES
-${organismoLimpio}
+${entidadDestino}
 E. S. D.
 
 ASUNTO: DERECHO DE PETICIÓN — REVISIÓN DE DEBIDO PROCESO Y NOTIFICACIÓN
