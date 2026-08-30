@@ -36,13 +36,7 @@ function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
   if (valor) a.valor = valor;
   if (placa) a.placa = placa;
   if (codigo) a.codigo_infraccion = codigo;
-  a.__simitRecord = {
-    ...simit,
-    number: first(simit.number, numero), date: first(simit.date, fecha), authority: first(simit.authority, entidad),
-    municipality: first(simit.municipality, municipio), value: first(simit.value, valor), plate: first(simit.plate, placa),
-    infractionCode: first(simit.infractionCode, codigo), documentNumber: first(simit.documentNumber, cedula),
-    name: first(simit.name, nombre), ownerName: first(simit.ownerName, nombre), email: first(simit.email, correo), phone: first(simit.phone, telefono),
-  };
+  a.__simitRecord = { ...simit, number: first(simit.number, numero), date: first(simit.date, fecha), authority: first(simit.authority, entidad), municipality: first(simit.municipality, municipio), value: first(simit.value, valor), plate: first(simit.plate, placa), infractionCode: first(simit.infractionCode, codigo), documentNumber: first(simit.documentNumber, cedula), name: first(simit.name, nombre), ownerName: first(simit.ownerName, nombre), email: first(simit.email, correo), phone: first(simit.phone, telefono) };
   return a;
 }
 
@@ -56,28 +50,22 @@ function extractPetitions(content: string): string | null {
   if (!match) return null;
   return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
 }
-
 function hasDuplicatedTopLevelSections(content: string): boolean {
   const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+/gim) || [];
   const counts = new Map<string, number>();
   for (const heading of headings) { const key = heading.trim().toUpperCase(); counts.set(key, (counts.get(key) || 0) + 1); }
   return [...counts.values()].some(count => count > 1);
 }
-
 function preserveDeterministicPetitions(deterministic: string, refined: string): string {
   if (hasDuplicatedTopLevelSections(refined)) return deterministic;
   const sourcePetitions = extractPetitions(deterministic);
   if (!sourcePetitions) return deterministic;
   const target = refined.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
   if (!target) return deterministic;
-  const start = target.index ?? 0;
-  const block = target[0];
-  const leading = block.startsWith('\n') ? '\n' : '';
-  const bodyStart = start + leading.length;
-  const bodyEnd = bodyStart + block.slice(leading.length).length;
+  const start = target.index ?? 0; const block = target[0]; const leading = block.startsWith('\n') ? '\n' : '';
+  const bodyStart = start + leading.length; const bodyEnd = bodyStart + block.slice(leading.length).length;
   return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
 }
-
 function formatCurrency(value: unknown): string {
   if (value == null || String(value).trim() === '') return '';
   const numeric = Number(String(value).replace(/[^0-9-]/g, ''));
@@ -85,18 +73,34 @@ function formatCurrency(value: unknown): string {
   return `$ ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(numeric)} COP`;
 }
 
-function finalizeTrafficText(content: string): string {
-  let output = content;
-  // Micro-cleanup: the SIMIT source is a factual source, not a label to expose.
-  output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
-  output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
-  // Defensive currency normalization for the common upper-header form.
-  output = output.replace(/(VALOR REPORTADO:\s*)\$\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
-  // Eliminate only accidental duplicate periods introduced by concatenation.
-  output = output.replace(/\.{2,}/g, '.');
-  return output;
+const ORDINALS = ['PRIMERO','SEGUNDO','TERCERO','CUARTO','QUINTO','SEXTO','SÉPTIMO','OCTAVO','NOVENO','DÉCIMO'];
+function formatPetitionsAsOrdinals(content: string): string {
+  return content.replace(/(^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i, (_m, lead, section, body) => {
+    const lines = body.split(/\n\s*\n/).map((x: string) => x.trim()).filter(Boolean);
+    const items: string[] = [];
+    for (const line of lines) {
+      const stripped = line.replace(/^\d+[.)]\s*/, '').trim();
+      if (/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):/i.test(stripped)) items.push(stripped.toUpperCase());
+      else if (stripped) items.push(stripped);
+    }
+    const normalized = items.map((item, i) => {
+      const without = item.replace(/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):\s*/i, '');
+      return `${ORDINALS[i] || `NUMERAL ${i + 1}`}: ${without}`;
+    }).join('\n\n');
+    return `${lead}${section.toUpperCase()}. PETICIONES\n${normalized}`;
+  });
 }
 
+function finalizeTrafficText(content: string): string {
+  let output = content;
+  output = output.replace(/(conoció por primera vez la actuación:\s*)simit\.?/gi, '$1a través de la consulta en la plataforma SIMIT.');
+  output = output.replace(/(me enteré por primera vez[^\n:]*:\s*)simit\.?/gi, '$1al consultar directamente la plataforma del SIMIT.');
+  output = output.replace(/(VALOR REPORTADO:\s*)\$?\s*([0-9][0-9.,]*)\s*(?:COP)?/gi, (_m, prefix, value) => `${prefix}${formatCurrency(value)}`);
+  output = output.replace(/\.{2,}/g, '.');
+  output = output.replace(/\bEl solicitante manifiesta\s+no recordar\b/gi, 'No recuerdo').replace(/\bEl solicitante manifiesta\s+no haber recibido\b/gi, 'No he recibido').replace(/\bEl solicitante manifiesta\s+no tener conocimiento\b/gi, 'No tengo conocimiento');
+  if (/\. PETICIONES\n/i.test(output)) output = formatPetitionsAsOrdinals(output);
+  return output;
+}
 function finalizeTrafficDocument(content: string): string {
   const cleaned = finalizeTrafficText(cleanLegalDocumentOutput(content));
   if (isLegallySafeTrafficDocument(cleaned)) return cleaned;
@@ -104,7 +108,6 @@ function finalizeTrafficDocument(content: string): string {
   if (cleaned.length >= 500) return cleaned;
   throw new Error('TRAFFIC_DOCUMENT_EMPTY: el documento jurídico generado quedó incompleto.');
 }
-
 async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
   const deterministic = finalizeTrafficDocument(documentContent(procedure, answers));
   if (!trafficSlugs.has(procedure.slug)) return deterministic;
@@ -114,40 +117,36 @@ async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Pr
   const finalContent = finalizeTrafficText(cleanLegalDocumentOutput(merged));
   return isLegallySafeTrafficDocument(finalContent) ? finalContent : deterministic;
 }
-
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
-  const generatedAt = new Date().toISOString();
-  const version = Math.max(1, previousVersion + 1);
-  const content = await buildFinalContent(procedure, answers);
+  const generatedAt = new Date().toISOString(); const version = Math.max(1, previousVersion + 1); const content = await buildFinalContent(procedure, answers);
   return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(normalizeTrafficAnswers(answers))), procedureSlug: procedure.slug, generatedAt, content } };
 }
-
 export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(await buildFinalContent(procedure, answers)); }
 export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(await buildFinalContent(procedure, answers)); }
 export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
 export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
 
 function isHeading(line: string) {
-  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|XI\.|XII\.|XIII\.|4\.\d+\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
+  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|XI\.|XII\.|XIII\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
 }
 async function renderDocx(content: string): Promise<Uint8Array> {
-  const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
-  const paragraphs = content.split('\n').map(line => isHeading(line) ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] }) : new Paragraph({ children: [new TextRun(line)] }));
-  return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
+  const { Document, Packer, Paragraph, TextRun } = await import('docx');
+  const paragraphs = content.split('\n').map(line => {
+    const heading = isHeading(line);
+    return new Paragraph({ alignment: 3, spacing: { line: 276, after: heading ? 120 : 80 }, children: [new TextRun({ text: line, bold: heading, font: 'Arial Narrow', size: 24 })] });
+  });
+  return Packer.toBuffer(new Document({ styles: { default: { document: { run: { font: 'Arial Narrow', size: 24 } } } }, sections: [{ properties: {}, children: paragraphs }] }));
 }
 async function renderPdf(content: string): Promise<Buffer> {
   const PDFDocument = (await import('pdfkit')).default;
   return new Promise((resolve, reject) => {
     const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 60, bottom: 60, left: 65, right: 65 } });
     const chunks: Buffer[] = [];
-    pdf.on('data', (chunk: Buffer) => chunks.push(chunk));
-    pdf.on('end', () => resolve(Buffer.concat(chunks)));
-    pdf.on('error', reject);
-    pdf.font('Helvetica').fontSize(11);
+    pdf.on('data', (chunk: Buffer) => chunks.push(chunk)); pdf.on('end', () => resolve(Buffer.concat(chunks))); pdf.on('error', reject);
     for (const line of content.split('\n')) {
       if (!line.trim()) { pdf.moveDown(0.6); continue; }
-      if (isHeading(line)) pdf.font('Helvetica-Bold').fontSize(11.5).text(line, { paragraphGap: 5 });
-      else pdf.font('Helvetica').fontSize(11).text(line, { align: 'left', lineGap: 3 });
+      const heading = isHeading(line);
+      pdf.font(heading ? 'Helvetica-Bold' : 'Helvetica').fontSize(12).fillColor('#000000').text(line, { align: 'justify', lineGap: 2, paragraphGap: heading ? 5 : 3 });
     }
     pdf.end();
   });
