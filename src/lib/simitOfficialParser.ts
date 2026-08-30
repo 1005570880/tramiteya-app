@@ -43,14 +43,19 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
     const infraccionMatch = chunk.match(/([A-Z]\d{2,3})/);
     const codigoInfraccion = infraccionMatch ? infraccionMatch[1] : '';
 
-    let organismoTransito = 'Organismo de Tránsito';
+    let organismoTransito = 'ORGANISMO DE TRÁNSITO';
     if (fechaMatch && infraccionMatch) {
       const idxFecha = chunk.indexOf(fechaMatch[1]);
       const idxInfraccion = chunk.indexOf(infraccionMatch[1]);
-      if (idxFecha !== -1 && idxInfraccion > idxFecha) {
+      if (idxFecha !== -1 && idxInfraccion !== -1 && idxInfraccion > idxFecha) {
         let rawOrg = chunk.substring(idxFecha + fechaMatch[1].length, idxInfraccion);
-        rawOrg = rawOrg.replace(/\d{2}:\d{2}:\d{2}/g, '').replace(/[|#\t\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
-        if (rawOrg.length > 2) organismoTransito = rawOrg;
+        rawOrg = rawOrg
+          .replace(/\d{2}:\d{2}:\d{2}/g, '')
+          .replace(/\b\d{1,3}\b/g, '')
+          .replace(/[|#\t\n\r]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (rawOrg.length > 2) organismoTransito = rawOrg.toUpperCase();
       }
     }
 
