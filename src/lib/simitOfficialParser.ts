@@ -14,7 +14,7 @@ const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancela
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2,3})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 const ID_RE_20 = /(?<!\d)(?:\d\s*){20}(?!\d)/g;
-const ID_RE_LOCAL = /\b\d{9,12}\b/g;
+const ID_RE_LOCAL = /\b\d{8,12}\b/g;
 const SPECIAL_ID_RE = /\b(?:\d{4}-[A-Z0-9]+-[A-Z0-9]+|[A-Z]{2}-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
 const LEGACY_ID_RE = /\b\d{9}S\b/gi;
 
@@ -25,9 +25,6 @@ function normalizeWhitespace(value: string) {
     .replace(/\u00a0/g, ' ')
     .replace(/Pendiente\s+de\s+pago/gi, 'Pendiente de pago')
     .replace(/Cobro\s+coactivo/gi, 'Cobro coactivo')
-    .replace(/Agustin\s*\n\s*Codazzi/gi, 'Agustin Codazzi')
-    .replace(/Dptal\s+Cesar\s*-\s*\n\s*IDTRACESAR/gi, 'Dptal Cesar - IDTRACESAR')
-    .replace(/Sampues\s*-\s*\n\s*Dptal\s+Sucre/gi, 'Sampues - Dptal Sucre')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n')
     .trim();
@@ -81,8 +78,34 @@ export function extractSimitPlate(input: string): string | undefined {
   return undefined;
 }
 
-function authorityFromText(text: string, municipality?: string) {
-  return (municipality ? findMatchingAuthority(municipality) : undefined) || findMatchingAuthority(text);
+/**
+ * Extracts the transit authority dynamically from the SIMIT row layout.
+ * No municipality/city allow-list is used. The semantic column is the text
+ * between the row's date/time and its infraction code.
+ */
+function extractAuthorityBetweenDateAndCode(body: string, date: string, code?: string): string | undefined {
+  if (!date || !code) return undefined;
+  const dateIndex = body.indexOf(date);
+  if (dateIndex < 0) return undefined;
+
+  const afterDate = body.slice(dateIndex + date.length);
+  const codeIndex = afterDate.search(new RegExp(`\\b${code.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i'));
+  if (codeIndex < 0) return undefined;
+
+  let authority = afterDate.slice(0, codeIndex)
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ')
+    .replace(/\b(?:fecha|hora|comparendo|c[oó]digo|infracci[oó]n|organismo(?:\s+de)?\s+tr[aá]nsito)\b/gi, ' ')
+    .replace(/[|#\t\n\r]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // The slice can contain a preceding column separator or an item marker.
+  authority = authority.replace(/^(?:\d{1,2}\.\s*)+/, '').replace(/^[-–—:]+|[-–—:]+$/g, '').trim();
+  if (authority.length < 3) return undefined;
+
+  // Reject obvious non-authority fragments while keeping extraction dynamic.
+  if (/^(?:pendiente(?: de pago)?|cobro coactivo|pagado|cancelado)$/i.test(authority)) return undefined;
+  return authority;
 }
 
 function extractMunicipality(body: string, date: string, code?: string) {
@@ -95,15 +118,17 @@ function extractMunicipality(body: string, date: string, code?: string) {
 
 function identifiers(text: string, documentNumber?: string) {
   const out: { number: string; index: number }[] = [];
+  const seen = new Set<string>();
   const push = (number: string, index: number) => {
     const normalized = number.includes('-') || /S$/i.test(number) ? number.replace(/\s/g, '') : compactDigits(number);
-    if (!normalized || normalized === documentNumber) return;
-    if (/^\d{6,10}$/.test(normalized) && normalized === documentNumber) return;
-    if (/^\d{9,12}$/.test(normalized)) {
-      // Local 9–12 digit IDs are valid comparendo numbers, but never treat dates,
-      // times, or the holder's identity number as a record identifier.
-      if (/^\d{8,12}$/.test(normalized) && (normalized === documentNumber || normalized.length === 10 && /^20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/.test(normalized))) return;
+    if (!normalized || seen.has(`${normalized}|${index}`) || normalized === documentNumber) return;
+    if (/^018000\d+/.test(normalized) || /^333602\d+/.test(normalized)) return;
+    // Avoid treating dates/times/identity numbers as local comparendo IDs.
+    if (/^\d{8,12}$/.test(normalized)) {
+      if (/^\d{2}[01]\d[0-3]\d\d{4}$/.test(normalized)) return;
+      if (/^\d{1,2}0?\d{1,2}\d{4}$/.test(normalized)) return;
     }
+    seen.add(`${normalized}|${index}`);
     out.push({ number: normalized, index });
   };
   for (const m of text.matchAll(ID_RE_20)) push(m[0], m.index ?? 0);
@@ -119,14 +144,22 @@ function parseChunk(number: string, chunk: string): ParsedSimitRecord | undefine
   if (!date) return undefined;
   const code = extractCode(body);
   const value = extractAmount(body);
-  const municipality = extractMunicipality(body, date, code);
+  const dynamicAuthority = code ? extractAuthorityBetweenDateAndCode(body, date, code) : undefined;
+  const municipality = dynamicAuthority || extractMunicipality(body, date, code);
   const plate = (() => { const m = body.match(PLATE_RE); return m?.[1]?.replace(/[ -]/g, '').toUpperCase(); })();
   return {
     kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo',
     number, date, time: extractTime(body), municipality,
-    authority: authorityFromText(body, municipality), plate,
+    // Dynamic semantic extraction is authoritative. The legacy authority lookup
+    // remains only as a final fallback for older layouts where the semantic column
+    // is absent from the extracted text layer.
+    authority: dynamicAuthority || authorityFromLegacyText(body, municipality), plate,
     infractionCode: code, status: extractStatus(body) || 'Pendiente', value,
   };
+}
+
+function authorityFromLegacyText(text: string, municipality?: string) {
+  return (municipality ? findMatchingAuthority(municipality) : undefined) || findMatchingAuthority(text);
 }
 
 function dedupe(records: ParsedSimitRecord[]) {
@@ -147,17 +180,13 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const ids = identifiers(text, documentNumber);
   const records: ParsedSimitRecord[] = [];
 
-  // Handles both SIMIT layouts: identifier before the row marker and row marker
-  // before the identifier. Each candidate is evaluated by the presence of a real
-  // date, so incidental 9–12 digit values do not become fabricated comparendos.
   for (let i = 0; i < ids.length; i++) {
     const start = ids[i].index;
-    const previous = ids[i - 1];
     const end = ids[i + 1]?.index ?? text.length;
-    let chunk = text.slice(start, end);
-    // In the layout where "1." precedes the 20-digit identifier, retain a little
-    // context before the identifier for columns that PDF text extraction reverses.
-    if (previous && /^\d{1,2}$/.test(previous.number)) chunk = text.slice(Math.max(0, start - 120), end);
+    // Use context before the identifier as well as after it. This handles SIMIT
+    // layouts where the item marker/identifier is printed before the date columns
+    // and layouts where the date precedes the identifier in the text layer.
+    let chunk = text.slice(Math.max(0, start - 220), Math.min(text.length, Math.max(end, start + 420)));
     const total = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i);
     if (total >= 0) chunk = chunk.slice(0, total);
     const record = parseChunk(ids[i].number, chunk);
