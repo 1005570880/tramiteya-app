@@ -1,5 +1,6 @@
 import type { FormAnswers } from '../types/form';
 import { generateUnifiedLegalDocument, sanitizeValue, type LegalAssessment, type SelectedRecordData } from './legalEngine';
+import { applyTrafficLegalPolicy, routeLabelForPolicy } from './trafficLegalPolicy';
 
 function rawValue(a: FormAnswers, key: string): string {
   const raw = (a as any)[key];
@@ -32,7 +33,7 @@ function selectedRecord(a: FormAnswers): SelectedRecordData {
   const codigo = pick('codigo_infraccion', source.infractionCode, source.code);
   return {
     comparendo, fecha, organismo, estado: pick('estadoComparendo', source.status), valor,
-    placa: pick('placa', source.plate), cedula, codigo, nombre, correo, telefono,
+    placa: '', cedula, codigo, nombre, correo, telefono,
     fechaResolucion: pick('fechaResolucion', source.resolutionDate),
     fechaNotificacion: pick('fechaNotificacion', source.notificationDate),
     fechaMandamientoPago: pick('fechaMandamientoPago', source.mandamientoDate, source.paymentOrderDate),
@@ -65,15 +66,75 @@ function routeLabel(route: string | null | undefined): string {
     case 'PERDIDA_EJECUTORIEDAD': return 'REVISIÓN DE PÉRDIDA DE FUERZA EJECUTORIA';
     case 'FOTODETECCION': return 'REVISIÓN DE ACTUACIÓN DE FOTODETECCIÓN';
     case 'NOTIFICACION': return 'REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO';
+    case 'DEBIDO_PROCESO': return 'DEBIDO PROCESO E INDEBIDA NOTIFICACIÓN DE LA CITACIÓN';
     case 'REVOCATORIA_DIRECTA': return 'SOLICITUD DE REVOCATORIA DIRECTA';
     default: return 'REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA';
   }
 }
 
+function normalizeCitizenValue(value: unknown): string {
+  const text = sanitizeValue(value);
+  const normalized = text.toLowerCase();
+  const map: Record<string, string> = {
+    no_recuerdo: 'El solicitante manifiesta no recordar el evento exacto.',
+    no_notificado: 'El solicitante manifiesta no haber recibido la notificación correspondiente.',
+    no_se: 'El solicitante manifiesta no tener certeza sobre este aspecto.',
+    no_se_resolucion: 'El solicitante manifiesta no tener conocimiento de una resolución.',
+  };
+  return map[normalized] || text;
+}
+
+function formatCop(value: unknown): string {
+  if (value == null || String(value).trim() === '') return '';
+  const digits = String(value).replace(/[^0-9-]/g, '');
+  const numeric = Number(digits);
+  if (!Number.isFinite(numeric)) return String(value);
+  return `$ ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(numeric)} COP`;
+}
+
+function normalizeTrafficDocument(content: string, record: SelectedRecordData, assessment: LegalAssessment): string {
+  let output = content;
+  const citizenTokens: Record<string, string> = {
+    no_recuerdo: 'El solicitante manifiesta no recordar el evento exacto.',
+    no_notificado: 'El solicitante manifiesta no haber recibido la notificación correspondiente.',
+    no_se: 'El solicitante manifiesta no tener certeza sobre este aspecto.',
+    no_se_resolucion: 'El solicitante manifiesta no tener conocimiento de una resolución.',
+  };
+  for (const [token, replacement] of Object.entries(citizenTokens)) {
+    output = output.replace(new RegExp(`\\b${token}\\b`, 'gi'), replacement);
+  }
+
+  if (record.valor) {
+    const currency = formatCop(record.valor);
+    output = output.replace(new RegExp(`(valor(?: reportado)?(?: para la obligación)?(?: es|:)?\\s*)${String(record.valor).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}`, 'gi'), `$1${currency}`);
+    output = output.replace(new RegExp(`\\$\\s*${String(record.valor).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}`, 'g'), currency);
+  }
+
+  const policyLabel = routeLabelForPolicy(assessment.primaryRoute);
+  if (policyLabel) {
+    output = output.replace(/SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO|SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y\/O ACCIÓN DE COBRO|REVISIÓN DE NOTIFICACIÓN Y DEBIDO PROCESO|REVISIÓN INTEGRAL DE LA ACTUACIÓN ADMINISTRATIVA/g, policyLabel);
+  }
+
+  if (assessment.primaryRoute === 'DEBIDO_PROCESO') {
+    const marker = 'I. IDENTIFICACIÓN Y CONTACTO';
+    const insertion = `El término aplicable debe analizarse a partir de las actuaciones administrativas efectivamente acreditadas. Por tratarse de una actuación cuya fecha del hecho es inferior a un año, Trámi no presenta caducidad ni prescripción como vía principal. La revisión se concentra en el debido proceso y en la notificación de la citación, incluida la oportunidad real de ejercer defensa, sin prejuzgar sobre hechos que deban acreditarse en el expediente.\n\nII. ENFOQUE JURÍDICO — DEBIDO PROCESO Y NOTIFICACIÓN\n\nLa autoridad deberá acreditar documentalmente la citación, sus constancias de notificación y las actuaciones que permitieron al presunto infractor conocer y controvertir la actuación, de conformidad con el régimen de tránsito aplicable.`;
+    if (!output.includes('II. ENFOQUE JURÍDICO — DEBIDO PROCESO Y NOTIFICACIÓN')) output = output.replace(marker, `${insertion}\n\n${marker}`);
+  }
+
+  if (assessment.primaryRoute === 'NOTIFICACION' && /acuerdo\s+de\s+pago/i.test(JSON.stringify(record.tramiAnswers || {}))) {
+    output = output.replace(/SOLICITUD DE PRESCRIPCIÓN DE SANCIÓN Y\/O ACCIÓN DE COBRO/g, 'VERIFICACIÓN DE NOTIFICACIÓN DE COBRO COACTIVO Y CUMPLIMIENTO DEL DEBIDO PROCESO');
+    output = output.replace(/SOLICITUD DE REVISIÓN DE CADUCIDAD DE LA ACTUACIÓN DE TRÁNSITO/g, 'VERIFICACIÓN DE NOTIFICACIÓN DE COBRO COACTIVO Y CUMPLIMIENTO DEL DEBIDO PROCESO');
+    if (!output.includes('acuerdo de pago')) output += '\n\nSe deja constancia de que el solicitante reporta un acuerdo de pago. Por ello, la presente solicitud no formula una alegación de caducidad simple y solicita verificar la notificación del cobro coactivo, el mandamiento de pago, su ejecutoria y el cumplimiento del debido proceso.';
+  }
+
+  return output.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function buildTrafficDocument(slug: string, a: FormAnswers): string {
   const record = selectedRecord(a);
-  const draft = generateUnifiedLegalDocument(record);
-  const assessment = assessmentFromAnswers(a) || draft.assessment;
+  const baseDraft = generateUnifiedLegalDocument(record);
+  const baseAssessment = assessmentFromAnswers(a) || baseDraft.assessment;
+  const assessment = applyTrafficLegalPolicy(record, baseAssessment);
   const route = assessment.primaryRoute || (slug.includes('caducidad') ? 'CADUCIDAD' : slug.includes('prescripcion') ? 'PRESCRIPCION' : null);
   const authority = valueOrEmpty(rawValue(a, 'entidad')) || record.organismo || 'AUTORIDAD DE TRÁNSITO COMPETENTE';
   const applicant = valueOrEmpty(rawValue(a, 'nombre')) || valueOrEmpty(`${rawValue(a, 'nombres')} ${rawValue(a, 'apellidos')}`) || record.nombre;
@@ -84,12 +145,9 @@ export function buildTrafficDocument(slug: string, a: FormAnswers): string {
   const date = valueOrEmpty(rawValue(a, 'fecha_comparendo')) || record.fecha;
   const dateDocument = valueOrEmpty(rawValue(a, 'fecha')) || new Date().toLocaleDateString('es-CO');
 
-  // generateUnifiedLegalDocument is the authoritative legal builder. It now
-  // receives the full conversational identity and questionnaire, including
-  // phone, so the document guard cannot reject a valid Trami session.
-  if (draft.document && draft.document.length > 500) return draft.document;
+  if (baseDraft.document && baseDraft.document.length > 500) return normalizeTrafficDocument(baseDraft.document, record, assessment);
 
-  return [
+  return normalizeTrafficDocument([
     dateDocument,
     '',
     authority.toUpperCase(),
@@ -99,7 +157,7 @@ export function buildTrafficDocument(slug: string, a: FormAnswers): string {
     `ASUNTO: DERECHO DE PETICIÓN — ${routeLabel(route)}`,
     `REFERENCIA: Comparendo / acto No. ${number}${date ? ` — Fecha: ${date}` : ''}`,
     '',
-    `Yo, ${sanitizeValue(applicant)}, identificado con cédula de ciudadanía No. ${sanitizeValue(cedula)}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,
+    `Yo, ${normalizeCitizenValue(applicant)}, identificado con cédula de ciudadanía No. ${sanitizeValue(cedula)}, actuando en nombre propio, presento respetuosamente este derecho de petición.`,
     '',
     'Respetados señores:',
     '',
@@ -122,5 +180,5 @@ export function buildTrafficDocument(slug: string, a: FormAnswers): string {
     `C.C. No. ${sanitizeValue(cedula)}`,
     `Correo electrónico: ${sanitizeValue(email)}`,
     `Teléfono: ${sanitizeValue(phone)}`,
-  ].join('\n').trim();
+  ].join('\n'), record, assessment);
 }
