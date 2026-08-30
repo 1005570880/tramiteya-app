@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     const result = await lookupSimitByDocument(documentType, documentNumber);
     if (result.provider !== 'verifik') return NextResponse.json({ error: 'SIMIT_PROVIDER_UNAVAILABLE', code: 'SIMIT_PROVIDER_UNAVAILABLE', message: 'El proveedor SIMIT activo no es Verifik.' }, { status: 502 });
     if (result.raw !== undefined) console.log('[SIMIT AUDIT] rawResponse', JSON.stringify({ documentType, documentNumber, raw: result.raw }));
-    console.log('[SIMIT AUDIT] normalized', JSON.stringify({ documentType, documentNumber, provider: result.provider, found: result.found, pendingCount: result.pendingCount, recordCount: result.comparendos?.length ?? 0, personName: result.personName, status: result.status }));
+    console.log('[SIMIT AUDIT] normalized', JSON.stringify({ documentType, documentNumber, provider: result.provider, found: result.found, pendingCount: result.pendingCount, recordCount: result.comparendos?.length ?? 0, personName: result.personName }));
     const unverifiedIdentity = result.comparendos.some((record: any) => record.ownerName && !record.documentNumber);
     if (unverifiedIdentity) {
       console.error('[SIMIT AUDIT] identity_unverified', JSON.stringify({ documentType, documentNumber, personName: result.personName, recordCount: result.comparendos.length }));
