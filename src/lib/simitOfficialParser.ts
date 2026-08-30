@@ -44,18 +44,22 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
     const codigoInfraccion = infraccionMatch ? infraccionMatch[1] : '';
 
     let organismoTransito = 'ORGANISMO DE TRÁNSITO';
-    if (fechaMatch && infraccionMatch) {
+    if (fechaMatch) {
       const idxFecha = chunk.indexOf(fechaMatch[1]);
-      const idxInfraccion = chunk.indexOf(infraccionMatch[1]);
-      if (idxFecha !== -1 && idxInfraccion !== -1 && idxInfraccion > idxFecha) {
-        let rawOrg = chunk.substring(idxFecha + fechaMatch[1].length, idxInfraccion);
-        rawOrg = rawOrg
+      if (idxFecha !== -1) {
+        let postFechaText = chunk.substring(idxFecha + fechaMatch[1].length, idxFecha + 150);
+        postFechaText = postFechaText
           .replace(/\d{2}:\d{2}:\d{2}/g, '')
-          .replace(/\b\d{1,3}\b/g, '')
-          .replace(/[|#\t\n\r]/g, ' ')
+          .replace(/[|#\t\r]/g, ' ')
+          .replace(/\n+/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
-        if (rawOrg.length > 2) organismoTransito = rawOrg.toUpperCase();
+
+        const orgMatch = postFechaText.match(/^\s*([A-Za-zÁéíóúÁÉÍÓÚñÑ\s\-\.]{3,45}?)\s*(?=[A-Z]\d{2,3}|Pendiente|Cobro|\$)/i);
+        if (orgMatch && orgMatch[1].trim().length > 2) {
+          const cleanOrg = orgMatch[1].replace(/\s+/g, ' ').trim().toUpperCase();
+          if (!cleanOrg.includes('COMPARENDO') && !cleanOrg.includes('ESTADO')) organismoTransito = cleanOrg;
+        }
       }
     }
 
