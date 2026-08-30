@@ -67,7 +67,7 @@ function structurallySafe(text: string) {
 
 function extractCoreFacts(content: string) {
   const lines = content.split('\n').map(line => line.trim()).filter(Boolean);
-  const relevant = lines.filter(line => /^(PETICIONARIO|C\.C\.|REFERENCIA|FECHA|INFRACCIÓN|INFRACCION|VALOR|PRIMERO:|SEGUNDO:|TERCERO:|CUARTO:|QUINTO:|SEXTO:|SÉPTIMO:|SEPTIMO:|OCTAVO:|NOVENO:|DÉCIMA|DÉCIMO|DÉCIMA|III\.|IV\.)/i.test(line));
+  const relevant = lines.filter(line => /^(PETICIONARIO|C\.C\.|REFERENCIA|FECHA|INFRACCIÓN|INFRACCION|VALOR|PRIMERO:|SEGUNDO:|TERCERO:|CUARTO:|QUINTO:|SEXTO:|SÉPTIMO:|SEPTIMO:|OCTAVO:|NOVENO:|DÉCIMA|DÉCIMO|III\.|IV\.)/i.test(line));
   return relevant.join('\n').slice(0, 18000);
 }
 
@@ -117,7 +117,7 @@ REDACCIÓN:
 18. Las pretensiones deben numerarse en letras: PRIMERA, SEGUNDA, TERCERA...; si son más de diez, usa DÉCIMA PRIMERA, DÉCIMA SEGUNDA, etc.
 19. Las pretensiones deben ser accionables y específicas: identificar acto, pedir copia, acreditar notificación, informar ejecutoria, verificar cobro, declarar consecuencia cuando corresponda y ordenar depuración/actualización cuando jurídicamente proceda.
 20. Conserva siempre la información factual original: número, fecha, código, valor, nombre, documento y organismo.
-21. No introduzcas Markdown (###, **, ```). Devuelve texto jurídico limpio.
+21. No introduzcas Markdown (tres acentos graves, encabezados con almohadillas o texto entre asteriscos). Devuelve texto jurídico limpio.
 22. Devuelve ÚNICAMENTE el documento final, sin explicación sobre lo que hiciste.`,
         prompt: `REVISIÓN JURÍDICA PROFUNDA DEL SIGUIENTE ESCRITO.
 
