@@ -34,6 +34,7 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
     const pos = cleanText.indexOf(id);
     if (pos === -1) continue;
     const chunk = cleanText.substring(Math.max(0, pos - 20), Math.min(cleanText.length, pos + 280));
+
     const fechaMatch = chunk.match(/(\d{2}\/\d{2}\/\d{4})/);
     const fechaComparendo = fechaMatch ? fechaMatch[1] : 'Fecha no identificada';
     const infraccionMatch = chunk.match(/\b([A-Z]\d{2,3})\b/);
@@ -45,7 +46,11 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
       const idxInfraccion = chunk.indexOf(infraccionMatch[1]);
       if (idxFecha !== -1 && idxInfraccion !== -1 && idxInfraccion > idxFecha) {
         let rawOrg = chunk.substring(idxFecha + fechaMatch[1].length, idxInfraccion);
-        rawOrg = rawOrg.replace(/\d{2}:\d{2}:\d{2}/g, '').replace(/[|#\t\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+        rawOrg = rawOrg
+          .replace(/\d{2}:\d{2}:\d{2}/g, '')
+          .replace(/[|#\t\n\r]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         if (rawOrg.length > 2) organismoTransito = rawOrg;
       }
     }
@@ -55,8 +60,16 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
     if (/cobro\s+coactivo/i.test(chunk)) estadoComparendo = 'Cobro coactivo';
     else if (/pendiente\s+de\s+pago/i.test(chunk)) estadoComparendo = 'Pendiente de pago';
 
-    comparendos.push({ numComparendo: id, fechaComparendo, organismoTransito, codigoInfraccion, estadoComparendo, valorComparendo: valorMatch ? valorMatch[1] : '0' });
+    comparendos.push({
+      numComparendo: id,
+      fechaComparendo,
+      organismoTransito,
+      codigoInfraccion,
+      estadoComparendo,
+      valorComparendo: valorMatch ? valorMatch[1] : '0',
+    });
   }
+
   return { cedula, comparendos };
 }
 
@@ -67,9 +80,22 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const parsed = parseSimitPDF(input);
   return parsed.comparendos.map((r) => ({
-    ...r, kind: /cobro\s+coactivo/i.test(r.estadoComparendo) ? 'multa' : 'comparendo',
-    number: r.numComparendo, date: r.fechaComparendo, authority: r.organismoTransito,
-    infractionCode: r.codigoInfraccion, status: r.estadoComparendo,
+    ...r,
+    kind: /cobro\s+coactivo/i.test(r.estadoComparendo) ? 'multa' : 'comparendo',
+    number: r.numComparendo,
+    date: r.fechaComparendo,
+    authority: r.organismoTransito,
+    infractionCode: r.codigoInfraccion,
+    status: r.estadoComparendo,
     value: Number(r.valorComparendo.replace(/[^0-9]/g, '')) || undefined,
   }));
+}
+
+// Compatibility export used by /api/simit/upload.
+export function extractSimitPlate(input: string): string | undefined {
+  const normalized = input.replace(/\r/g, '');
+  const labeled = normalized.match(/(?:Placa|Veh[ií]culo)\s*[:|]?\s*([A-Z0-9]{5,8})/i);
+  if (labeled) return labeled[1].toUpperCase();
+  const plate = normalized.match(/\b([A-Z]{3}\s?\d{3})\b/i);
+  return plate ? plate[1].replace(/\s+/g, '').toUpperCase() : undefined;
 }
