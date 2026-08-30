@@ -57,7 +57,14 @@ function normalizeTrafficDocument(content: string, record: SelectedRecordData, a
     if(!output.includes('II. ENFOQUE JURÍDICO — DEBIDO PROCESO Y NOTIFICACIÓN')) output=output.replace(marker,`${insertion}\n\n${marker}`);
   }
   output = normalizeFirstPerson(output);
-  output = output.replace(/(VALOR REPORTADO:\s*\$?\s*[0-9][0-9.,]*\s*(?:COP)?)(\s*)(?=Yo,)/gi, '$1\n\n');
+  output = output.replace(/\b(?:Indico que )?conocí por primera vez la actuación:\s*simit\.?/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT.');
+  output = output.replace(/\bIndico que conocí por primera vez[^\n.]*/gi, 'Me enteré de la existencia de esta actuación a través de la plataforma SIMIT.');
+  output = output.replace(/\bManifiesto:\s*nunca\b/gi, 'Sobre la oportunidad de defensa, manifiesto que no fui notificado ni asistí a audiencia.');
+  output = output.replace(/\bManifiesto:\s*no\s*(?:recibí|he recibido)\b[^\n.]*/gi, 'Sobre la oportunidad de defensa, manifiesto que no fui notificado ni asistí a audiencia.');
+  output = output.replace(/aportado por Yo\b/gi, 'aportado por el suscrito peticionario.');
+  output = output.replace(/aportado por el suscrito peticionario\.\./gi, 'aportado por el suscrito peticionario.');
+  output = output.replace(/^\s*#{1,6}\s+/gm, '');
+  output = output.replace(/(VALOR REPORTADO:\s*\$?\s*[0-9][0-9.,]*\s*(?:COP)?)(?:\n\s*)+(?=Yo,)/gi, '$1\n\n');
   return output.replace(/\n{3,}/g,'\n\n').replace(/\.{2,}/g,'.').trim();
 }
 export function buildTrafficDocument(slug: string, a: FormAnswers): string {
