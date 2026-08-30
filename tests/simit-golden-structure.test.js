@@ -25,6 +25,10 @@ function buildGoldenStructure() {
   return `ESTADO DE CUENTA\nCédula: 37312647\nComparendos y multas\n${body}\nTotal a pagar: $25.313.797`;
 }
 
+function buildInlinePdfStructure() {
+  return `ESTADO DE CUENTA\nCédula: 37312647\nComparendos y multas\n1.\n20001000000051832377 11/10/2025\n13:21:00\nValledupar\nC02\nPendiente\n$603.939\n2.\n2024-FAD-06924 24/05/2024\n12:00:00\nDptal Cesar - IDTRACESAR\nC29\nCobro coactivo\n$748.361\nTotal a pagar: $1.352.300`;
+}
+
 const { parseOfficialSimitStatement } = loadParser();
 const result = parseOfficialSimitStatement(buildGoldenStructure());
 
@@ -40,4 +44,15 @@ assert.equal(result.records.at(-1).number, '2024-FAD-06924', 'Debe aceptar ident
 assert.equal(result.records.at(-1).status, 'Cobro coactivo');
 assert.equal(result.records.at(-1).value, 748361);
 
-console.log('SIMIT golden-structure test passed: 29 records / $25.313.797 / alphanumeric identifier.');
+const inline = parseOfficialSimitStatement(buildInlinePdfStructure());
+assert.equal(inline.isSimitStatement, true, 'El PDF con columnas inline debe seguir identificándose como SIMIT');
+assert.equal(inline.recordCount, 2, 'Las filas inline deben producir dos registros');
+assert.equal(inline.records[0].number, '20001000000051832377');
+assert.equal(inline.records[0].date, '11/10/2025');
+assert.equal(inline.records[0].infractionCode, 'C02');
+assert.equal(inline.records[0].value, 603939);
+assert.equal(inline.records[1].number, '2024-FAD-06924');
+assert.equal(inline.records[1].date, '24/05/2024');
+assert.equal(inline.records[1].value, 748361);
+
+console.log('SIMIT parser tests passed: 29-record golden + inline PDF rows.');
