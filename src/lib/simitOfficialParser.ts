@@ -11,14 +11,26 @@ export type ParsedSimitRecord = {
 const DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b/g;
 const TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
-const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
+const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2,3})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
-const ID_RE = /(?<!\d)(?:\d\s*){20}(?!\d)/g;
-const SPECIAL_ID_RE = /\b(?:\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
+const ID_RE_20 = /(?<!\d)(?:\d\s*){20}(?!\d)/g;
+const ID_RE_LOCAL = /\b\d{9,12}\b/g;
+const SPECIAL_ID_RE = /\b(?:\d{4}-[A-Z0-9]+-[A-Z0-9]+|[A-Z]{2}-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
 const LEGACY_ID_RE = /\b\d{9}S\b/gi;
 
 function normalizeWhitespace(value: string) {
-  return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim();
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/Pendiente\s+de\s+pago/gi, 'Pendiente de pago')
+    .replace(/Cobro\s+coactivo/gi, 'Cobro coactivo')
+    .replace(/Agustin\s*\n\s*Codazzi/gi, 'Agustin Codazzi')
+    .replace(/Dptal\s+Cesar\s*-\s*\n\s*IDTRACESAR/gi, 'Dptal Cesar - IDTRACESAR')
+    .replace(/Sampues\s*-\s*\n\s*Dptal\s+Sucre/gi, 'Sampues - Dptal Sucre')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n')
+    .trim();
 }
 function compactDigits(value: string) { return String(value ?? '').replace(/\D/g, ''); }
 function clean(value: string) { return String(value ?? '').replace(/\s+/g, ' ').replace(/^\|+|\|+$/g, '').trim(); }
@@ -81,11 +93,23 @@ function extractMunicipality(body: string, date: string, code?: string) {
   return s && !/^[0-9.,\s$]+$/.test(s) ? s : undefined;
 }
 
-function identifiers(text: string) {
+function identifiers(text: string, documentNumber?: string) {
   const out: { number: string; index: number }[] = [];
-  for (const m of text.matchAll(ID_RE)) out.push({ number: compactDigits(m[0]), index: m.index ?? 0 });
-  for (const m of text.matchAll(SPECIAL_ID_RE)) out.push({ number: m[0].replace(/\s/g, ''), index: m.index ?? 0 });
-  for (const m of text.matchAll(LEGACY_ID_RE)) out.push({ number: m[0].replace(/\s/g, ''), index: m.index ?? 0 });
+  const push = (number: string, index: number) => {
+    const normalized = number.includes('-') || /S$/i.test(number) ? number.replace(/\s/g, '') : compactDigits(number);
+    if (!normalized || normalized === documentNumber) return;
+    if (/^\d{6,10}$/.test(normalized) && normalized === documentNumber) return;
+    if (/^\d{9,12}$/.test(normalized)) {
+      // Local 9–12 digit IDs are valid comparendo numbers, but never treat dates,
+      // times, or the holder's identity number as a record identifier.
+      if (/^\d{8,12}$/.test(normalized) && (normalized === documentNumber || normalized.length === 10 && /^20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/.test(normalized))) return;
+    }
+    out.push({ number: normalized, index });
+  };
+  for (const m of text.matchAll(ID_RE_20)) push(m[0], m.index ?? 0);
+  for (const m of text.matchAll(SPECIAL_ID_RE)) push(m[0], m.index ?? 0);
+  for (const m of text.matchAll(LEGACY_ID_RE)) push(m[0], m.index ?? 0);
+  for (const m of text.matchAll(ID_RE_LOCAL)) push(m[0], m.index ?? 0);
   return out.sort((a, b) => a.index - b.index);
 }
 
@@ -116,34 +140,28 @@ function dedupe(records: ParsedSimitRecord[]) {
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
-  const raw = String(input ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ');
+  const raw = String(input ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\u00a0/g, ' ');
   if (!raw.trim()) return [];
   const text = normalizeWhitespace(raw);
-  const ids = identifiers(text);
+  const documentNumber = extractSimitDocumentNumber(text);
+  const ids = identifiers(text, documentNumber);
   const records: ParsedSimitRecord[] = [];
 
+  // Handles both SIMIT layouts: identifier before the row marker and row marker
+  // before the identifier. Each candidate is evaluated by the presence of a real
+  // date, so incidental 9–12 digit values do not become fabricated comparendos.
   for (let i = 0; i < ids.length; i++) {
     const start = ids[i].index;
+    const previous = ids[i - 1];
     const end = ids[i + 1]?.index ?? text.length;
     let chunk = text.slice(start, end);
+    // In the layout where "1." precedes the 20-digit identifier, retain a little
+    // context before the identifier for columns that PDF text extraction reverses.
+    if (previous && /^\d{1,2}$/.test(previous.number)) chunk = text.slice(Math.max(0, start - 120), end);
     const total = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i);
     if (total >= 0) chunk = chunk.slice(0, total);
     const record = parseChunk(ids[i].number, chunk);
     if (record) records.push(record);
-  }
-
-  // Fallback for PDFs whose text layer separates the identifier digits or row columns.
-  // A date following an identifier is enough to establish a real SIMIT row; optional
-  // fields are preserved only when actually present. This prevents false negatives
-  // without inventing legal or financial data.
-  if (!records.length) {
-    const fallbackId = /(?<!\d)((?:\d\s*){20}|\d{9}S|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)(?!\d)/gi;
-    for (const m of text.matchAll(fallbackId)) {
-      const number = /S$/i.test(m[0]) ? m[0].replace(/\s/g, '') : compactDigits(m[0]).length === 20 ? compactDigits(m[0]) : m[0].replace(/\s/g, '');
-      const chunk = text.slice(m.index ?? 0, (m.index ?? 0) + 600);
-      const record = parseChunk(number, chunk);
-      if (record) records.push(record);
-    }
   }
 
   return dedupe(records);
