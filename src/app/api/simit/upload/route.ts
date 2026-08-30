@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pdf from 'pdf-parse';
-import { parseOfficialSimitStatement } from '@/lib/simitOfficialParser';
+import { parseOfficialSimitStatement } from '../../../../lib/simitOfficialParser';
 
 export const runtime = 'nodejs';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -70,7 +70,6 @@ export async function POST(req: NextRequest) {
     const text = parsedPdf.text || '';
     if (!text.trim()) return NextResponse.json({ ok: false, code: 'SIMIT_PDF_NO_TEXT', message: 'El PDF no contiene texto extraíble. Descarga el Estado de Cuenta como PDF directamente desde SIMIT.' }, { status: 422 });
 
-    // La estructura del documento es la autoridad primaria. La IA nunca decide si existen registros.
     const deterministic = parseOfficialSimitStatement(text);
     const aiRecords = await aiExtract(text);
     const records = deterministic.records.length > 0
@@ -84,7 +83,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_NOT_STRUCTURED', message: 'El PDF fue recibido, pero no se encontraron comparendos o multas identificables. Sube el Estado de Cuenta oficial completo.' }, { status: 422 });
     }
 
-    // Protección contra cargar el estado de cuenta de una persona distinta.
     if (!normalizeNumber(text).includes(documentNumber)) {
       return NextResponse.json({ ok: false, code: 'SIMIT_DOCUMENT_MISMATCH', message: 'La cédula ingresada no coincide con el Estado de Cuenta. Verifica el PDF y vuelve a intentarlo.' }, { status: 422 });
     }
