@@ -22,18 +22,25 @@ function formatCurrency(value: unknown): string {
   return `$ ${numeric.toLocaleString('es-CO')} COP`;
 }
 
-function buildFormalDestination(organismo: unknown): string {
-  let entidadDestino = text(organismo).toUpperCase().trim();
-  if (!entidadDestino) return 'SECRETARÍA DE TRÁNSITO Y TRANSPORTE';
-
-  if (!entidadDestino.includes('SECRETARIA') && !entidadDestino.includes('SECRETARÍA') && !entidadDestino.includes('INSPECCION') && !entidadDestino.includes('INSPECCIÓN') && !entidadDestino.includes('INSTITUTO') && !entidadDestino.includes('DIRECCION') && !entidadDestino.includes('DIRECCIÓN')) {
-    if (entidadDestino.startsWith('DPTAL')) {
-      entidadDestino = `INSTITUTO DE TRÁNSITO DE ${entidadDestino}`;
-    } else {
-      entidadDestino = `SECRETARÍA DE TRÁNSITO Y TRANSPORTE DE ${entidadDestino}`;
-    }
+export function formatOrganismoDestino(rawOrganismo: string): string {
+  if (!rawOrganismo || rawOrganismo.trim().length === 0) {
+    return 'SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL';
   }
-  return entidadDestino;
+
+  const org = rawOrganismo.trim().toUpperCase();
+  const entidadesConocidas = [
+    'SECRETARIA', 'SECRETARÍA', 'INSPECCION', 'INSPECCIÓN', 'INSTITUTO',
+    'DIRECCION', 'DIRECCIÓN', 'DEPARTAMENTO', 'ALCALDIA', 'ALCALDÍA',
+  ];
+  const tieneEntidad = entidadesConocidas.some(e => org.includes(e));
+
+  if (tieneEntidad) return org;
+
+  if (org.startsWith('DPTAL') || org.startsWith('DEPARTAMENTAL')) {
+    return `INSTITUTO DE TRÁNSITO Y TRANSPORTE DE ${org}`;
+  }
+
+  return `SECRETARÍA DE TRÁNSITO Y TRANSPORTE DE ${org}`;
 }
 
 export function buildTrafficPetitionText(data: any): string {
@@ -52,8 +59,8 @@ export function buildTrafficPetitionText(data: any): string {
     pago,
   } = data;
 
-  const entidadDestino = buildFormalDestination(organismo);
   const organismoLimpio = text(organismo).toUpperCase();
+  const entidadDestino = formatOrganismoDestino(organismoLimpio);
   const valorFormateado = formatCurrency(valor);
 
   let textoConocimiento = 'Me enteré de la existencia de este comparendo a través de una notificación de cobro.';
