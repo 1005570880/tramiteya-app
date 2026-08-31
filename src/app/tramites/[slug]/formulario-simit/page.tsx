@@ -124,7 +124,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   useEffect(() => {
     const tryGenerate = (questionnaire?: Record<string, string>) => {
       if (!questionnaire || generationStarted.current || !selectedRecord) return;
-      const complete = questionnaire.nombre && questionnaire.correo && questionnaire.telefono;
+      const complete = Boolean(questionnaire.nombre && questionnaire.correo && questionnaire.telefono);
       if (!complete) return;
       generationStarted.current = true;
       void generateWithTrami(questionnaire);
@@ -137,8 +137,6 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
 
     window.addEventListener("trami:questionnaire-complete", onComplete);
 
-    // Robustez frente a una carrera de efectos React: Trámi puede completar
-    // el cuestionario antes de que este listener quede registrado.
     const recoverCompletion = () => {
       try {
         const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
@@ -160,7 +158,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   }, [selectedRecord, documentNumber, fileName]);
 
   async function generateWithTrami(questionnaire: Record<string, string>) {
-    if (!selectedRecord) return;
+    if (!selectedRecord || !procedure) return;
     setGenerating(true);
     setError("");
     try {
@@ -173,26 +171,32 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
         __trami: { completedAt: new Date().toISOString(), questionnaire },
       } as unknown as FormAnswers;
 
+      // Guest checkout must still have a real server-side instance. The old
+      // flow only created it for authenticated users and then generated a
+      // document referencing a client/local id, which could not satisfy the
+      // Supabase foreign key on `documents.instance_id`.
       const supabase = getSupabaseBrowser();
-      let instance: any = null;
-      if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const response = await fetch("/api/instances", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ procedureId: procedure!.id, procedureSlug: procedure!.slug, answers: enriched }),
-          });
-          if (response.ok) instance = await response.json();
-        }
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+      const instanceHeaders: HeadersInit = { "Content-Type": "application/json" };
+      if (session?.access_token) instanceHeaders.Authorization = `Bearer ${session.access_token}`;
+
+      const instanceResponse = await fetch("/api/instances", {
+        method: "POST",
+        headers: instanceHeaders,
+        body: JSON.stringify({ procedureId: procedure.id, procedureSlug: procedure.slug, answers: enriched }),
+      });
+
+      if (!instanceResponse.ok) {
+        const payload = await instanceResponse.json().catch(() => ({}));
+        throw new Error(payload.error || "No fue posible crear el expediente del trámite.");
       }
 
-      if (!instance) instance = procedureStorage.create(procedure!.id, procedure!.slug, enriched);
+      const instance = await instanceResponse.json();
 
       const response = await fetch("/api/documents/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ procedureSlug: procedure!.slug, answers: enriched, instanceId: instance.id }),
+        body: JSON.stringify({ procedureSlug: procedure.slug, answers: enriched, instanceId: instance.id }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -201,9 +205,9 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
 
       const document = await response.json();
       procedureStorage.update(instance.id, { answers: enriched, status: "document_ready", document, completedAt: new Date().toISOString() });
-      localDraftStorage.save(`procedure:${procedure!.slug}`, { data: enriched, savedAt: new Date().toISOString() });
+      localDraftStorage.save(`procedure:${procedure.slug}`, { data: enriched, savedAt: new Date().toISOString() });
       sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 5, answers: questionnaire, complete: true, generated: true, updatedAt: new Date().toISOString() }));
-      window.location.href = `/tramites/${procedure!.slug}/resultado/${instance.id}`;
+      window.location.href = `/tramites/${procedure.slug}/resultado/${instance.id}`;
     } catch (e) {
       console.error(e);
       generationStarted.current = false;
@@ -242,7 +246,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
             </div>
           </div>
           {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-          {generating && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Trámi está redactando tu documento con el expediente ya seleccionado…</div>}
+          {generating && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Trámi está creando el expediente y redactando tu documento…</div>}
           <TramiWidget />
         </section>
       ) : (
