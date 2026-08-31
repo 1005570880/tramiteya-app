@@ -7,10 +7,7 @@ import { patchInstanceSchema } from '../../../../lib/schemas';
 
 const factory = getRepositoryFactory();
 
-type GuestAccessRow = {
-  id: string;
-  guest_access_token_hash: string | null;
-};
+type GuestAccessRow = { id: string; guest_access_token_hash: string | null };
 
 async function getUser(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
@@ -23,7 +20,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const user = await getUser(req);
     const inst = await factory.getInstanceRepo().get(params.id);
     if (!inst) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
-
     if (user) {
       if (inst.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       return NextResponse.json(inst);
@@ -32,35 +28,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const supabase = getSupabaseServer();
     let guestToken = getGuestAccessToken(req);
     let guestHash = guestToken ? hashGuestAccessToken(guestToken) : '';
-    const { data: rawRow, error } = await supabase
+    const { data: row, error } = await (supabase as any)
       .from('procedure_instances')
       .select('id,guest_access_token_hash')
       .eq('id', params.id)
-      .maybeSingle();
+      .maybeSingle() as { data: GuestAccessRow | null; error: { message: string } | null };
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    const row = rawRow as GuestAccessRow | null;
 
     if (row?.guest_access_token_hash) {
       if (!guestToken || row.guest_access_token_hash !== guestHash) {
-        return NextResponse.json(
-          { error: 'Acceso no autorizado.', code: 'ACCESS_TOKEN_REQUIRED' },
-          { status: 403 }
-        );
+        return NextResponse.json({ error: 'Acceso no autorizado.', code: 'ACCESS_TOKEN_REQUIRED' }, { status: 403 });
       }
     } else {
       guestToken = createGuestAccessToken();
       guestHash = hashGuestAccessToken(guestToken);
-      const { error: updateError } = await supabase
+      const { error: updateError } = await (supabase as any)
         .from('procedure_instances')
         .update({ guest_access_token_hash: guestHash })
         .eq('id', params.id);
-      if (updateError) {
-        return NextResponse.json(
-          { error: 'No fue posible preparar el acceso de invitado.' },
-          { status: 500 }
-        );
-      }
+      if (updateError) return NextResponse.json({ error: 'No fue posible preparar el acceso de invitado.' }, { status: 500 });
     }
 
     const response = NextResponse.json(inst);
@@ -81,52 +67,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-
     const body = await req.json();
     const parsed = patchInstanceSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'Invalid payload', details: parsed.error.errors }, { status: 400 });
-    }
-
+    if (!parsed.success) return NextResponse.json({ error: 'Invalid payload', details: parsed.error.errors }, { status: 400 });
     const repo = factory.getInstanceRepo();
     const existing = await repo.get(params.id);
     if (!existing) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     if (existing.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
     const payload: any = parsed.data;
     const updated = await repo.update(params.id, payload);
     if (!updated) return NextResponse.json({ error: 'Update failed' }, { status: 500 });
-
     const docRepo = factory.getDocumentRepo();
     if (payload.document && docRepo) {
       try {
         const previous = docRepo.listByInstance ? await docRepo.listByInstance(params.id) : [];
         const requested = Number(payload.document.version) || 0;
-        const nextVersion = Math.max(
-          previous.reduce((max: any, d: any) => Math.max(max, Number(d.version) || 0), 0) + 1,
-          requested || 1
-        );
-        const doc = {
-          ...payload.document,
-          instanceId: params.id,
-          version: nextVersion,
-          sourceVersion: `v${nextVersion}`,
-          meta: {
-            ...(payload.document.meta || {}),
-            version: nextVersion,
-            generatedAt: payload.document.generatedAt || new Date().toISOString(),
-          },
-        };
-        await docRepo.create(doc);
+        const nextVersion = Math.max(previous.reduce((max: any, d: any) => Math.max(max, Number(d.version) || 0), 0) + 1, requested || 1);
+        await docRepo.create({ ...payload.document, instanceId: params.id, version: nextVersion, sourceVersion: `v${nextVersion}`, meta: { ...(payload.document.meta || {}), version: nextVersion, generatedAt: payload.document.generatedAt || new Date().toISOString() } });
       } catch (error) {
         console.error('Document persistence failed', error);
-        return NextResponse.json(
-          { error: 'Instance updated but document persistence failed' },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: 'Instance updated but document persistence failed' }, { status: 500 });
       }
     }
-
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: 'Unable to update instance' }, { status: 500 });
@@ -137,16 +99,12 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-
     const repo = factory.getInstanceRepo();
     const existing = await repo.get(params.id);
     if (!existing) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     if (existing.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
     const ok = await repo.remove(params.id);
-    return ok
-      ? NextResponse.json({ data: true })
-      : NextResponse.json({ error: 'Unable to remove instance' }, { status: 500 });
+    return ok ? NextResponse.json({ data: true }) : NextResponse.json({ error: 'Unable to remove instance' }, { status: 500 });
   } catch {
     return NextResponse.json({ error: 'Unable to delete instance' }, { status: 500 });
   }
