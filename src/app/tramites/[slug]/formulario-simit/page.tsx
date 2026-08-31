@@ -63,6 +63,26 @@ function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<str
   } as unknown as FormAnswers;
 }
 
+function readCompletedAnswers(): Record<string, string> | null {
+  try {
+    const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
+    if (raw) {
+      const state = JSON.parse(raw) as { answers?: Record<string, string>; complete?: boolean };
+      if (state.complete && state.answers && typeof state.answers === "object") return state.answers;
+    }
+  } catch {}
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (raw) {
+      const data = (JSON.parse(raw)?.data || {}) as Record<string, any>;
+      if (data.tramiQuestionnaireComplete && data.tramiAnswers && typeof data.tramiAnswers === "object") {
+        return data.tramiAnswers as Record<string, string>;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export default function SimitAutofillForm({ params }: { params: { slug: string } }) {
   const procedure = procedures.find((p) => p.slug === params.slug);
   const definition = getDynamicFormDefinition(params.slug);
@@ -73,74 +93,33 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const generationStarted = useRef(false);
+  const completionHandoff = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
     try {
       const saved = sessionStorage.getItem(SIMIT_SESSION_KEY);
-      if (!saved) { if (!cancelled) setHydratingSelection(false); return; }
+      if (!saved) { setHydratingSelection(false); return; }
       const state = JSON.parse(saved) as SimitSession;
       const selected = state.selectedRecord || null;
-      if (!cancelled) {
-        setSelectedRecord(selected);
-        setDocumentNumber(String(state.documentNumber || selected?.documentNumber || "").replace(/\D/g, ""));
-        setFileName(state.fileName || "Estado de Cuenta SIMIT");
-        setHydratingSelection(false);
-      }
+      setSelectedRecord(selected);
+      setDocumentNumber(String(state.documentNumber || selected?.documentNumber || "").replace(/\D/g, ""));
+      setFileName(state.fileName || "Estado de Cuenta SIMIT");
     } catch {
-      if (!cancelled) { setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente."); setHydratingSelection(false); }
+      setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente.");
+    } finally {
+      setHydratingSelection(false);
     }
-    return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    const getCompletedAnswers = (): Record<string, string> | null => {
-      try {
-        const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
-        if (raw) {
-          const state = JSON.parse(raw) as { answers?: Record<string, string>; complete?: boolean };
-          if (state.complete && state.answers) return state.answers;
-        }
-      } catch {}
-      try {
-        const raw = localStorage.getItem(DRAFT_KEY);
-        if (raw) {
-          const data = (JSON.parse(raw)?.data || {}) as Record<string, any>;
-          if (data.tramiQuestionnaireComplete && data.tramiAnswers && typeof data.tramiAnswers === "object") {
-            return data.tramiAnswers as Record<string, string>;
-          }
-        }
-      } catch {}
-      return null;
-    };
-
-    const tryGenerate = (questionnaire?: Record<string, string> | null) => {
-      if (!questionnaire || generationStarted.current || !selectedRecord || !procedure) return;
-      if (!questionnaire.nombre || !questionnaire.correo || !questionnaire.telefono) return;
-      generationStarted.current = true;
-      void generateWithTrami(questionnaire);
-    };
-
-    const onComplete = (event: Event) => {
-      const custom = event as CustomEvent<{ answers?: Record<string, string> }>;
-      tryGenerate(custom.detail?.answers || getCompletedAnswers());
-    };
-
-    window.addEventListener("trami:questionnaire-complete", onComplete);
-    const recoverCompletion = () => tryGenerate(getCompletedAnswers());
-    recoverCompletion();
-    const timer = window.setInterval(recoverCompletion, 250);
-
-    return () => {
-      window.removeEventListener("trami:questionnaire-complete", onComplete);
-      window.clearInterval(timer);
-    };
-  }, [selectedRecord, procedure]);
-
   async function generateWithTrami(questionnaire: Record<string, string>) {
-    if (!selectedRecord || !procedure) return;
+    if (!selectedRecord || !procedure || generationStarted.current) return;
+    if (!questionnaire.nombre || !questionnaire.correo || !questionnaire.telefono) return;
+
+    generationStarted.current = true;
+    completionHandoff.current = true;
     setGenerating(true);
     setError("");
+
     try {
       const answers = buildAnswers(selectedRecord, documentNumber, questionnaire);
       const decisions = evaluateTrafficCase(answers);
@@ -157,38 +136,110 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       if (session?.access_token) instanceHeaders.Authorization = `Bearer ${session.access_token}`;
 
       const instanceResponse = await fetch("/api/instances", {
-        method: "POST", headers: instanceHeaders,
+        method: "POST",
+        headers: instanceHeaders,
         body: JSON.stringify({ procedureId: procedure.id, procedureSlug: procedure.slug, answers: enriched }),
       });
+
       if (!instanceResponse.ok) {
         const payload = await instanceResponse.json().catch(() => ({}));
         throw new Error(payload.error || "No fue posible crear el expediente del trámite.");
       }
+
       const instance = await instanceResponse.json();
       if (!instance?.id) throw new Error("El expediente fue creado pero no devolvió un identificador válido.");
 
       const response = await fetch("/api/documents/generate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ procedureSlug: procedure.slug, answers: enriched, instanceId: instance.id }),
       });
+
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || "No fue posible generar el documento.");
       }
 
       const document = await response.json();
-      procedureStorage.update(instance.id, { answers: enriched, status: "document_ready", document, completedAt: new Date().toISOString() });
-      localDraftStorage.save(`procedure:${procedure.slug}`, { data: enriched, savedAt: new Date().toISOString() });
-      sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 5, answers: questionnaire, complete: true, generated: true, updatedAt: new Date().toISOString() }));
-      window.location.href = `/tramites/${procedure.slug}/resultado/${instance.id}`;
+      procedureStorage.update(instance.id, {
+        answers: enriched,
+        status: "document_ready",
+        document,
+        completedAt: new Date().toISOString(),
+      });
+      localDraftStorage.save(`procedure:${procedure.slug}`, {
+        data: enriched,
+        savedAt: new Date().toISOString(),
+      });
+      try {
+        sessionStorage.setItem(
+          TRAMI_ANSWERS_KEY,
+          JSON.stringify({
+            version: 5,
+            answers: questionnaire,
+            complete: true,
+            generated: true,
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+      } catch {}
+
+      window.location.replace(`/tramites/${procedure.slug}/resultado/${instance.id}`);
     } catch (e) {
-      console.error(e);
+      console.error("[TrámiteYa] generation handoff failed", e);
       generationStarted.current = false;
+      completionHandoff.current = false;
       setError(e instanceof Error ? e.message : "No fue posible generar el documento.");
     } finally {
       setGenerating(false);
     }
   }
+
+  useEffect(() => {
+    if (!selectedRecord || !procedure) return;
+
+    const tryHandoff = (answers?: Record<string, string> | null) => {
+      if (generationStarted.current || completionHandoff.current) return;
+      const completed = answers || readCompletedAnswers();
+      if (!completed) return;
+      if (!completed.nombre || !completed.correo || !completed.telefono) return;
+      void generateWithTrami(completed);
+    };
+
+    const onComplete = (event: Event) => {
+      const custom = event as CustomEvent<{ answers?: Record<string, string> }>;
+      tryHandoff(custom.detail?.answers);
+    };
+
+    window.addEventListener("trami:questionnaire-complete", onComplete);
+
+    // Handoff watchdog: catches completion even if the custom event was emitted
+    // before this listener mounted or React batched the state transition.
+    const poll = window.setInterval(() => tryHandoff(), 200);
+
+    // Last-resort DOM bridge: the completion message is rendered by TramiWidget.
+    // This makes the transition deterministic even if browser storage/event delivery
+    // is affected by a stale client state.
+    const observer = new MutationObserver(() => {
+      const text = document.body?.innerText || "";
+      if (
+        text.includes("He terminado la evaluación inicial") ||
+        text.includes("No necesitas escoger una figura jurídica")
+      ) {
+        tryHandoff();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    // Also check immediately after mounting.
+    tryHandoff();
+
+    return () => {
+      window.removeEventListener("trami:questionnaire-complete", onComplete);
+      window.clearInterval(poll);
+      observer.disconnect();
+    };
+  }, [selectedRecord, procedure]);
 
   if (!procedure || !definition || params.slug !== "derecho-de-peticion-eliminar-multa") {
     return <main className="min-h-screen bg-slate-50"><Header /><section className="mx-auto max-w-4xl px-4 py-16"><h1 className="text-2xl font-bold">Trámite no disponible</h1></section><Footer /></main>;
@@ -198,12 +249,29 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <Header />
       {hydratingSelection ? (
-        <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8"><div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm"><div className="animate-pulse space-y-3"><div className="h-3 w-40 rounded bg-slate-200" /><div className="h-5 w-72 rounded bg-slate-200" /><div className="h-4 w-full rounded bg-slate-100" /></div></div></section>
+        <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
+          <div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm">
+            <div className="animate-pulse space-y-3"><div className="h-3 w-40 rounded bg-slate-200" /><div className="h-5 w-72 rounded bg-slate-200" /><div className="h-4 w-full rounded bg-slate-100" /></div>
+          </div>
+        </section>
       ) : selectedRecord ? (
         <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
-          <div className="mb-4 rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm"><div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Expediente recuperado</div><div className="mt-2 grid gap-2 text-sm sm:grid-cols-4"><span><b>Comparendo:</b> {selectedRecord.number || "—"}</span><span><b>Fecha:</b> {selectedRecord.date || "—"}</span><span><b>Cédula:</b> {documentNumber || "—"}</span><span><b>Valor:</b> {selectedRecord.value != null ? `$${new Intl.NumberFormat("es-CO").format(selectedRecord.value)}` : "—"}</span></div></div>
+          <div className="mb-4 rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
+            <div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Expediente recuperado</div>
+            <div className="mt-2 grid gap-2 text-sm sm:grid-cols-4">
+              <span><b>Comparendo:</b> {selectedRecord.number || "—"}</span>
+              <span><b>Fecha:</b> {selectedRecord.date || "—"}</span>
+              <span><b>Cédula:</b> {documentNumber || "—"}</span>
+              <span><b>Valor:</b> {selectedRecord.value != null ? `$${new Intl.NumberFormat("es-CO").format(selectedRecord.value)}` : "—"}</span>
+            </div>
+          </div>
           {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-          {generating && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Trámi está creando el expediente y redactando tu documento…</div>}
+          {generating && (
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+              <div className="flex items-center gap-2"><span className="animate-pulse">●</span> Trámi está creando el expediente y redactando tu documento…</div>
+              <div className="mt-1 font-normal text-emerald-700">Analizando cronología, notificaciones, defensa, resolución, cobro, pagos y evidencia.</div>
+            </div>
+          )}
           <TramiWidget />
         </section>
       ) : (
