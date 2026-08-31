@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     const nextStatus = status === 'APPROVED' ? 'approved' : status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED' ? status.toLowerCase() : 'pending';
     const update: Record<string, any> = {
       status: nextStatus,
-      provider_transaction_id: transaction.id,
+      metadata: { ...(payment.metadata || {}), wompiTransactionId: transaction.id, wompiStatus: status },
       updated_at: new Date().toISOString(),
     };
     if (nextStatus === 'approved') update.approved_at = new Date().toISOString();
