@@ -28,6 +28,7 @@ type SimitSession = {
 
 const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
 const TRAMI_ANSWERS_KEY = "tramiteya:trami-questionnaire:v3";
+const DRAFT_KEY = "tramiteya:draft:procedure:derecho-de-peticion-eliminar-multa";
 
 function splitFullName(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
@@ -44,44 +45,21 @@ function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<str
   const telefono = q.telefono || "";
 
   return {
-    documentType: "CC",
-    documentNumber: cedula,
-    cedula,
-    numeroDocumento: cedula,
-    documento: cedula,
-    nombres: name.nombres,
-    apellidos: name.apellidos,
-    nombre: fullName,
-    nombreCompleto: fullName,
-    correo,
-    correo_dest: correo,
-    telefono,
-    direccion: q.direccion || "",
-    entidad: record.authority || "",
-    ciudad: record.municipality || "",
-    numero_acto: record.resolutionNumber || record.number || "",
-    fecha_acto: record.resolutionDate || record.date || "",
-    valor_multa: record.value != null ? String(record.value) : "",
-    placa: record.plate || "",
-    numero_comparendo: record.number || "",
-    fecha_comparendo: record.date || "",
-    autoridad: record.authority || "",
-    valor: record.value != null ? String(record.value) : "",
-    codigoInfraccion: record.infractionCode || "",
-    descripcionInfraccion: record.description || "",
-    estadoComparendo: record.status || "",
-    departamento: record.department || "",
-    numeroResolucion: record.resolutionNumber || "",
-    fechaResolucion: record.resolutionDate || "",
-    fechaNotificacion: record.notificationDate || "",
-    fechaPago: record.paymentDate || "",
+    documentType: "CC", documentNumber: cedula, cedula, numeroDocumento: cedula, documento: cedula,
+    nombres: name.nombres, apellidos: name.apellidos, nombre: fullName, nombreCompleto: fullName,
+    correo, correo_dest: correo, telefono, direccion: q.direccion || "", entidad: record.authority || "",
+    ciudad: record.municipality || "", numero_acto: record.resolutionNumber || record.number || "",
+    fecha_acto: record.resolutionDate || record.date || "", valor_multa: record.value != null ? String(record.value) : "",
+    placa: record.plate || "", numero_comparendo: record.number || "", fecha_comparendo: record.date || "",
+    autoridad: record.authority || "", valor: record.value != null ? String(record.value) : "",
+    codigoInfraccion: record.infractionCode || "", descripcionInfraccion: record.description || "",
+    estadoComparendo: record.status || "", departamento: record.department || "", numeroResolucion: record.resolutionNumber || "",
+    fechaResolucion: record.resolutionDate || "", fechaNotificacion: record.notificationDate || "", fechaPago: record.paymentDate || "",
     hechos: `Información suministrada durante la entrevista de Trámi:\n- Conocimiento inicial del comparendo: ${q.conocimiento || "No informado"}.\n- Comunicación oficial: ${q.notificacion || "No informado"}.\n- Citación a descargos: ${q.audiencia || "No informado"}.\n- Resolución sancionatoria: ${q.resolucion || "No informado"}.\n- Gestión de cobro: ${q.cobro || "No informado"}.\n- Pagos o acuerdos: ${q.pagos || "No informado"}.\n- Evidencia adicional: ${q.evidencia || "No informado"}.`,
     causal: "Trámi determinará autónomamente la vía jurídica aplicable a partir del expediente, la cronología y las respuestas del ciudadano. No se presume una causal que no esté acreditada.",
     pretension: "Solicitar la revisión integral del expediente y la aplicación de la consecuencia jurídica que corresponda según los hechos y pruebas acreditadas.",
-    anexos: "Estado de Cuenta SIMIT aportado por el solicitante.",
-    fecha: new Date().toISOString().slice(0, 10),
-    __simitRecord: record,
-    __tramiQuestionnaire: q,
+    anexos: "Estado de Cuenta SIMIT aportado por el solicitante.", fecha: new Date().toISOString().slice(0, 10),
+    __simitRecord: record, __tramiQuestionnaire: q,
   } as unknown as FormAnswers;
 }
 
@@ -100,10 +78,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
     let cancelled = false;
     try {
       const saved = sessionStorage.getItem(SIMIT_SESSION_KEY);
-      if (!saved) {
-        if (!cancelled) setHydratingSelection(false);
-        return;
-      }
+      if (!saved) { if (!cancelled) setHydratingSelection(false); return; }
       const state = JSON.parse(saved) as SimitSession;
       const selected = state.selectedRecord || null;
       if (!cancelled) {
@@ -113,49 +88,54 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
         setHydratingSelection(false);
       }
     } catch {
-      if (!cancelled) {
-        setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente.");
-        setHydratingSelection(false);
-      }
+      if (!cancelled) { setError("No fue posible recuperar el comparendo seleccionado. Regresa al Estado de Cuenta y selecciónalo nuevamente."); setHydratingSelection(false); }
     }
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    const tryGenerate = (questionnaire?: Record<string, string>) => {
-      if (!questionnaire || generationStarted.current || !selectedRecord) return;
-      const complete = Boolean(questionnaire.nombre && questionnaire.correo && questionnaire.telefono);
-      if (!complete) return;
+    const getCompletedAnswers = (): Record<string, string> | null => {
+      try {
+        const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
+        if (raw) {
+          const state = JSON.parse(raw) as { answers?: Record<string, string>; complete?: boolean };
+          if (state.complete && state.answers) return state.answers;
+        }
+      } catch {}
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (raw) {
+          const data = (JSON.parse(raw)?.data || {}) as Record<string, any>;
+          if (data.tramiQuestionnaireComplete && data.tramiAnswers && typeof data.tramiAnswers === "object") {
+            return data.tramiAnswers as Record<string, string>;
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    const tryGenerate = (questionnaire?: Record<string, string> | null) => {
+      if (!questionnaire || generationStarted.current || !selectedRecord || !procedure) return;
+      if (!questionnaire.nombre || !questionnaire.correo || !questionnaire.telefono) return;
       generationStarted.current = true;
       void generateWithTrami(questionnaire);
     };
 
     const onComplete = (event: Event) => {
       const custom = event as CustomEvent<{ answers?: Record<string, string> }>;
-      tryGenerate(custom.detail?.answers);
+      tryGenerate(custom.detail?.answers || getCompletedAnswers());
     };
 
     window.addEventListener("trami:questionnaire-complete", onComplete);
-
-    const recoverCompletion = () => {
-      try {
-        const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
-        if (!raw) return;
-        const state = JSON.parse(raw) as { answers?: Record<string, string>; complete?: boolean };
-        if (state.complete && state.answers) tryGenerate(state.answers);
-      } catch {
-        // El estado corrupto no debe bloquear el flujo principal.
-      }
-    };
-
+    const recoverCompletion = () => tryGenerate(getCompletedAnswers());
     recoverCompletion();
-    const timer = window.setInterval(recoverCompletion, 400);
+    const timer = window.setInterval(recoverCompletion, 250);
 
     return () => {
       window.removeEventListener("trami:questionnaire-complete", onComplete);
       window.clearInterval(timer);
     };
-  }, [selectedRecord, documentNumber, fileName]);
+  }, [selectedRecord, procedure]);
 
   async function generateWithTrami(questionnaire: Record<string, string>) {
     if (!selectedRecord || !procedure) return;
@@ -171,31 +151,24 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
         __trami: { completedAt: new Date().toISOString(), questionnaire },
       } as unknown as FormAnswers;
 
-      // Guest checkout must still have a real server-side instance. The old
-      // flow only created it for authenticated users and then generated a
-      // document referencing a client/local id, which could not satisfy the
-      // Supabase foreign key on `documents.instance_id`.
       const supabase = getSupabaseBrowser();
       const session = supabase ? (await supabase.auth.getSession()).data.session : null;
       const instanceHeaders: HeadersInit = { "Content-Type": "application/json" };
       if (session?.access_token) instanceHeaders.Authorization = `Bearer ${session.access_token}`;
 
       const instanceResponse = await fetch("/api/instances", {
-        method: "POST",
-        headers: instanceHeaders,
+        method: "POST", headers: instanceHeaders,
         body: JSON.stringify({ procedureId: procedure.id, procedureSlug: procedure.slug, answers: enriched }),
       });
-
       if (!instanceResponse.ok) {
         const payload = await instanceResponse.json().catch(() => ({}));
         throw new Error(payload.error || "No fue posible crear el expediente del trámite.");
       }
-
       const instance = await instanceResponse.json();
+      if (!instance?.id) throw new Error("El expediente fue creado pero no devolvió un identificador válido.");
 
       const response = await fetch("/api/documents/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ procedureSlug: procedure.slug, answers: enriched, instanceId: instance.id }),
       });
       if (!response.ok) {
@@ -225,37 +198,16 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <Header />
       {hydratingSelection ? (
-        <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
-          <div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm">
-            <div className="animate-pulse space-y-3">
-              <div className="h-3 w-40 rounded bg-slate-200" />
-              <div className="h-5 w-72 rounded bg-slate-200" />
-              <div className="h-4 w-full rounded bg-slate-100" />
-            </div>
-          </div>
-        </section>
+        <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8"><div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm"><div className="animate-pulse space-y-3"><div className="h-3 w-40 rounded bg-slate-200" /><div className="h-5 w-72 rounded bg-slate-200" /><div className="h-4 w-full rounded bg-slate-100" /></div></div></section>
       ) : selectedRecord ? (
         <section className="mx-auto min-h-[calc(100vh-140px)] max-w-6xl px-4 py-6 md:px-6 md:py-8">
-          <div className="mb-4 rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
-            <div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Expediente recuperado</div>
-            <div className="mt-2 grid gap-2 text-sm sm:grid-cols-4">
-              <span><b>Comparendo:</b> {selectedRecord.number || "—"}</span>
-              <span><b>Fecha:</b> {selectedRecord.date || "—"}</span>
-              <span><b>Cédula:</b> {documentNumber || "—"}</span>
-              <span><b>Valor:</b> {selectedRecord.value != null ? `$${new Intl.NumberFormat("es-CO").format(selectedRecord.value)}` : "—"}</span>
-            </div>
-          </div>
+          <div className="mb-4 rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm"><div className="text-xs font-bold uppercase tracking-wider text-indigo-500">Expediente recuperado</div><div className="mt-2 grid gap-2 text-sm sm:grid-cols-4"><span><b>Comparendo:</b> {selectedRecord.number || "—"}</span><span><b>Fecha:</b> {selectedRecord.date || "—"}</span><span><b>Cédula:</b> {documentNumber || "—"}</span><span><b>Valor:</b> {selectedRecord.value != null ? `$${new Intl.NumberFormat("es-CO").format(selectedRecord.value)}` : "—"}</span></div></div>
           {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {generating && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Trámi está creando el expediente y redactando tu documento…</div>}
           <TramiWidget />
         </section>
       ) : (
-        <section className="mx-auto max-w-2xl px-4 py-16">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
-            <h1 className="text-xl font-bold text-amber-900">No hay un comparendo seleccionado</h1>
-            <p className="mt-2 text-sm text-amber-800">El Estado de Cuenta ya no se vuelve a pedir aquí. Regresa al paso anterior, selecciona el comparendo y Trámi continuará directamente con la entrevista.</p>
-          </div>
-        </section>
+        <section className="mx-auto max-w-2xl px-4 py-16"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center"><h1 className="text-xl font-bold text-amber-900">No hay un comparendo seleccionado</h1><p className="mt-2 text-sm text-amber-800">El Estado de Cuenta ya no se vuelve a pedir aquí. Regresa al paso anterior, selecciona el comparendo y Trámi continuará directamente con la entrevista.</p></div></section>
       )}
       <Footer />
     </main>
