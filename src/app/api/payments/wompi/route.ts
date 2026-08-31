@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 
 type PaymentDocument = {
   id: string;
+  instance_id: string | null;
   procedure_id: string | null;
   meta: Record<string, any> | null;
 };
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     const { data: rawDocument, error: documentError } = await supabase
       .from('documents')
-      .select('id,procedure_id,meta')
+      .select('id,instance_id,procedure_id,meta')
       .eq('id', documentVersionId)
       .maybeSingle();
     const document = rawDocument as PaymentDocument | null;
@@ -50,6 +51,13 @@ export async function POST(request: NextRequest) {
       const nextMeta = { ...(document.meta || {}), guestAccessTokenHash: guestHash };
       const { error: metaError } = await supabase.from('documents').update({ meta: nextMeta }).eq('id', document.id);
       if (metaError) return NextResponse.json({ error: 'No fue posible preparar el acceso de invitado.' }, { status: 500 });
+      if (document.instance_id) {
+        const { error: instanceMetaError } = await supabase
+          .from('procedure_instances')
+          .update({ guest_access_token_hash: guestHash })
+          .eq('id', document.instance_id);
+        if (instanceMetaError) return NextResponse.json({ error: 'No fue posible vincular el acceso al trámite.' }, { status: 500 });
+      }
     }
 
     const amountInCents = pricing.price * 100;
