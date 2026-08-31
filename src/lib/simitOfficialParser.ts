@@ -1,7 +1,24 @@
 import { findMatchingAuthority } from './constants/transitAuthorities';
 
 export type ParsedSimitRecord = {
-  kind: 'multa' | 'comparendo'; number?: string; date?: string; time?: string; authority?: string; municipality?: string; department?: string; plate?: string; ownerName?: string; documentNumber?: string; infractionCode?: string; description?: string; status?: string; value?: number; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string;
+  kind: 'multa' | 'comparendo';
+  number?: string;
+  date?: string;
+  time?: string;
+  authority?: string;
+  municipality?: string;
+  department?: string;
+  plate?: string;
+  ownerName?: string;
+  documentNumber?: string;
+  infractionCode?: string;
+  description?: string;
+  status?: string;
+  value?: number;
+  resolutionNumber?: string;
+  resolutionDate?: string;
+  notificationDate?: string;
+  paymentDate?: string;
 };
 
 const DATE_RE = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/g;
@@ -10,28 +27,70 @@ const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancela
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 const ID_RE = /(?<![0-9])\d{20}(?![0-9])/g;
-const SPECIAL_ID_RE = /\b(?:\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
-const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,12}S(?![A-Z0-9])/gi;
 
-function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
-function normalizeIdentifier(value: string): string { return String(value || '').replace(/\s+/g, '').trim(); }
-function compactDigits(value: string): string { return String(value || '').replace(/[^0-9]/g, ''); }
-function clean(value: string): string { return String(value || '').replace(/\s+/g, ' ').replace(/^\|+|\|+$/g, '').trim(); }
-function moneyToNumber(value: string): number | undefined { const digits = String(value || '').replace(/[^0-9]/g, ''); return digits ? Number(digits) : undefined; }
-function extractMoney(value: string): number | undefined { const matches = [...String(value || '').matchAll(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/g)]; return matches.length ? moneyToNumber(matches[matches.length - 1][1]) : undefined; }
-function extractDate(value: string): string | undefined { DATE_RE.lastIndex = 0; return String(value || '').match(DATE_RE)?.[0]; }
-function extractTime(value: string): string | undefined { return String(value || '').match(TIME_RE)?.[0]; }
-function extractStatus(value: string): string | undefined { const match = String(value || '').match(STATUS_RE); return match?.[1] ? clean(match[1]) : undefined; }
-function extractCode(value: string): string | undefined { return String(value || '').match(CODE_RE)?.[1]?.toUpperCase(); }
+function normalizeWhitespace(value: string): string {
+  return String(value ?? '')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n')
+    .trim();
+}
+
+function normalizeIdentifier(value: string): string {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function compactDigits(value: string): string {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
+function clean(value: string): string {
+  return String(value || '').replace(/\s+/g, ' ').replace(/^\|+|\|+$/g, '').trim();
+}
+
+function moneyToNumber(value: string): number | undefined {
+  const digits = String(value || '').replace(/[^0-9]/g, '');
+  return digits ? Number(digits) : undefined;
+}
+
+function extractMoney(value: string): number | undefined {
+  const matches = [...String(value || '').matchAll(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/g)];
+  return matches.length ? moneyToNumber(matches[matches.length - 1][1]) : undefined;
+}
+
+function extractDate(value: string): string | undefined {
+  DATE_RE.lastIndex = 0;
+  return String(value || '').match(DATE_RE)?.[0];
+}
+
+function extractTime(value: string): string | undefined {
+  return String(value || '').match(TIME_RE)?.[0];
+}
+
+function extractStatus(value: string): string | undefined {
+  const match = String(value || '').match(STATUS_RE);
+  return match?.[1] ? clean(match[1]) : undefined;
+}
+
+function extractCode(value: string): string | undefined {
+  return String(value || '').match(CODE_RE)?.[1]?.toUpperCase();
+}
 
 export function extractSimitDocumentNumber(input: string): string | undefined {
-  const text = normalizeWhitespace(input); if (!text) return undefined;
+  const text = normalizeWhitespace(input);
+  if (!text) return undefined;
   const patterns = [
     /(?:c[eé]dula|cedula)\s*(?:de\s+)?(?:n[uú]mero|no\.?|nro\.?|n[º°])?\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /(?:documento\s+de\s+identidad|n[uú]mero\s+de\s+identificaci[oó]n|identificaci[oó]n)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /\b(?:CC|C\.C\.)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
   ];
-  for (const pattern of patterns) { const match = text.match(pattern); const digits = match?.[1] ? compactDigits(match[1]) : ''; if (/^\d{6,10}$/.test(digits)) return digits; }
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const digits = match?.[1] ? compactDigits(match[1]) : '';
+    if (/^\d{6,10}$/.test(digits)) return digits;
+  }
   const headingIndex = text.search(/estado\s+de\s+cuenta/i);
   if (headingIndex >= 0) {
     const window = text.slice(headingIndex, headingIndex + 700);
@@ -43,87 +102,107 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
 }
 
 export function extractSimitPlate(input: string): string | undefined {
-  const text = normalizeWhitespace(input); if (!text) return undefined;
-  const labelled = [/(?:^|[\n|])\s*(?:placa|plca)[^\n|:]*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im, /(?:placa|plca)[^A-Z0-9]{0,30}([A-Z]{3}[ -]?\d{3})\b/i];
-  for (const pattern of labelled) { const match = text.match(pattern); if (match?.[1]) return match[1].replace(/[ -]/g, '').toUpperCase(); }
-  for (const match of text.matchAll(PLATE_RE)) { const plate = match[1].replace(/[ -]/g, '').toUpperCase(); const before = text.slice(Math.max(0, (match.index ?? 0) - 60), match.index ?? 0).toLowerCase(); if (!/documento|c[eé]dula|identificaci[oó]n|comparendo|resoluci[oó]n|radicado/.test(before)) return plate; }
+  const text = normalizeWhitespace(input);
+  if (!text) return undefined;
+  const labelled = [
+    /(?:^|[\n|])\s*(?:placa|plca)[^\n|:]*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im,
+    /(?:placa|plca)[^A-Z0-9]{0,30}([A-Z]{3}[ -]?\d{3})\b/i,
+  ];
+  for (const pattern of labelled) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].replace(/[ -]/g, '').toUpperCase();
+  }
+  for (const match of text.matchAll(PLATE_RE)) {
+    const plate = match[1].replace(/[ -]/g, '').toUpperCase();
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 60), match.index ?? 0).toLowerCase();
+    if (!/documento|c[eé]dula|identificaci[oó]n|comparendo|resoluci[oó]n|radicado/.test(before)) return plate;
+  }
   return undefined;
 }
 
-function authorityFromMunicipality(municipality: string | undefined, body: string): string | undefined { return (municipality && findMatchingAuthority(municipality)) || findMatchingAuthority(body); }
+function authorityFromMunicipality(municipality: string | undefined, body: string): string | undefined {
+  return (municipality && findMatchingAuthority(municipality)) || findMatchingAuthority(body);
+}
+
 function extractMunicipality(body: string, date: string | undefined, code?: string): string | undefined {
   if (!date) return undefined;
-  const dateIndex = body.indexOf(date); if (dateIndex < 0) return undefined;
+  const dateIndex = body.indexOf(date);
+  if (dateIndex < 0) return undefined;
   let after = body.slice(dateIndex + date.length).replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, '');
-  if (code) { const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const codeIndex = after.search(new RegExp(`\\b${escaped}\\b`, 'i')); if (codeIndex >= 0) after = after.slice(0, codeIndex); }
-  const value = clean(after).replace(/^(?:\|\s*)+/, '').replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '').trim();
+  if (code) {
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const codeIndex = after.search(new RegExp(`\\b${escaped}\\b`, 'i'));
+    if (codeIndex >= 0) after = after.slice(0, codeIndex);
+  }
+  const value = clean(after)
+    .replace(/^(?:\|\s*)+/, '')
+    .replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '')
+    .trim();
   if (!value || /^(?:\$|[0-9.,\s]+)$/.test(value)) return undefined;
   return value;
 }
 
 function buildRecord(number: string, body: string, dateOverride?: string): ParsedSimitRecord {
   const date = dateOverride || extractDate(body);
-  const code = extractCode(body); const status = extractStatus(body) || 'Pendiente';
+  const code = extractCode(body);
+  const status = extractStatus(body) || 'Pendiente';
   const municipality = extractMunicipality(body, date, code);
   const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '');
-  return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority: authorityFromMunicipality(municipality, body), plate: extractSimitPlate(body), infractionCode: code, status, value: extractMoney(withoutNumber) };
+  return {
+    kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo',
+    number,
+    date,
+    time: extractTime(body),
+    municipality,
+    authority: authorityFromMunicipality(municipality, body),
+    plate: extractSimitPlate(body),
+    infractionCode: code,
+    status,
+    value: extractMoney(withoutNumber),
+  };
 }
 
+/**
+ * SIMIT identifiers are the primary deterministic evidence for a record.
+ *
+ * IMPORTANT: do not reconstruct a 20-digit identifier by concatenating numbers
+ * from different PDF columns/rows. pdf-parse may flatten a table, and doing so
+ * can manufacture a number that never existed in the source document. This was
+ * the source of false records such as 33360268000180004135.
+ */
 function findRecordIdentifiers(text: string): Array<{ number: string; index: number }> {
   const found: Array<{ number: string; index: number }> = [];
   const seen = new Set<string>();
-  const add = (number: string, index: number) => { const normalized = normalizeIdentifier(number); if (!/^\d{20}$/.test(normalized)) return; const key = `${normalized}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number: normalized, index }); } };
-  for (const match of text.matchAll(ID_RE)) add(match[0], match.index ?? 0);
-  for (const match of text.matchAll(SPECIAL_ID_RE)) add(match[0], match.index ?? 0);
-  for (const match of text.matchAll(LEGACY_ID_RE)) add(match[0], match.index ?? 0);
 
-  // PDF text extraction is not stable: a 20-digit SIMIT identifier may be split
-  // by spaces, pipes, tabs, line breaks, punctuation or column delimiters. Match
-  // the digit sequence independently of those layout artifacts, then normalize
-  // it back to the canonical 20-digit identifier. This is still evidence-bound:
-  // no identifier is synthesized and anything other than exactly 20 digits is rejected.
-  const spaced = /(?:^|[^0-9])((?:\d[\s|:/_\-]*){20})(?!\d)/g;
-  for (const match of text.matchAll(spaced)) {
-    const raw = match[1];
-    const number = compactDigits(raw);
-    if (/^\d{20}$/.test(number)) add(number, (match.index ?? 0) + match[0].length - raw.length);
+  for (const match of text.matchAll(ID_RE)) {
+    const number = normalizeIdentifier(match[0]);
+    const index = match.index ?? 0;
+    if (!/^\d{20}$/.test(number)) continue;
+    if (seen.has(number)) continue;
+    seen.add(number);
+    found.push({ number, index });
   }
 
-  // Last-resort row-local recovery for PDFs that insert non-standard separators
-  // between every numeric column. We only inspect each visual text row and only
-  // accept a contiguous 20-digit sequence after removing harmless column spaces.
-  for (const line of text.split(/\n/)) {
-    const candidate = line.replace(/[\s|]+/g, '');
-    const match = candidate.match(/\d{20}/);
-    if (match && match.index !== undefined) {
-      const lineIndex = text.indexOf(line);
-      add(match[0], Math.max(0, lineIndex) + match.index);
-    }
-  }
   return found.sort((a, b) => a.index - b.index);
 }
 
-function parseTokenAnchoredRows(text: string): ParsedSimitRecord[] {
-  const tokens = normalizeWhitespace(text).split(/\s+/).filter(Boolean); const records: ParsedSimitRecord[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = normalizeIdentifier(tokens[i]); if (!/^\d{20}$/.test(token) && !/^\d{6,12}S$/i.test(token)) continue;
-    const window = tokens.slice(Math.max(0, i - 25), Math.min(tokens.length, i + 55)).join(' ');
-    records.push(buildRecord(token, window));
-  }
-  return records;
-}
-
-function parseNearbyIdentifiers(text: string): ParsedSimitRecord[] {
-  const identifiers = findRecordIdentifiers(text); const records: ParsedSimitRecord[] = [];
+function parseRecordBlocks(text: string): ParsedSimitRecord[] {
+  const identifiers = findRecordIdentifiers(text);
+  const records: ParsedSimitRecord[] = [];
   for (let i = 0; i < identifiers.length; i++) {
     const current = identifiers[i];
     const next = identifiers[i + 1]?.index ?? text.length;
-    const start = Math.max(0, current.index - 600);
-    const end = Math.min(text.length, Math.max(current.index + 900, next));
+    // Keep the block anchored to this identifier. A small prefix captures a
+    // preceding table label while the upper bound prevents borrowing values
+    // from the next record.
+    const start = Math.max(0, current.index - 80);
+    const end = Math.min(text.length, next);
     const window = text.slice(start, end);
-    const dateMatches = [...window.matchAll(DATE_RE)];
     const anchor = current.index - start;
-    const date = dateMatches.length ? dateMatches.sort((a, b) => Math.abs((a.index ?? 0) - anchor) - Math.abs((b.index ?? 0) - anchor))[0]?.[0] : undefined;
+    const dateMatches = [...window.matchAll(DATE_RE)];
+    const date = dateMatches.length
+      ? dateMatches.sort((a, b) => Math.abs((a.index ?? 0) - anchor) - Math.abs((b.index ?? 0) - anchor))[0]?.[0]
+      : undefined;
     records.push(buildRecord(current.number, window, date));
   }
   return records;
@@ -133,17 +212,30 @@ function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
   const map = new Map<string, ParsedSimitRecord>();
   for (const record of records) {
     if (!record.number) continue;
-    const key = `${record.number}|${record.date || ''}`; const previous = map.get(key);
-    if (!previous) map.set(key, record);
-    else map.set(key, { ...previous, ...record, date: record.date || previous.date, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode });
+    const key = record.number;
+    const previous = map.get(key);
+    if (!previous) {
+      map.set(key, record);
+      continue;
+    }
+    map.set(key, {
+      ...previous,
+      ...record,
+      date: record.date || previous.date,
+      time: record.time || previous.time,
+      authority: record.authority || previous.authority,
+      municipality: record.municipality || previous.municipality,
+      plate: record.plate || previous.plate,
+      value: record.value ?? previous.value,
+      infractionCode: record.infractionCode || previous.infractionCode,
+      status: record.status || previous.status,
+    });
   }
   return [...map.values()];
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
-  const text = normalizeWhitespace(input); if (!text) return [];
-  // Deterministic evidence is the identifier itself. A degraded PDF table must
-  // not become a false negative merely because pdf-parse lost column boundaries.
-  // We never synthesize missing fields: absent date/plate/value remain undefined.
-  return dedupe([...parseNearbyIdentifiers(text), ...parseTokenAnchoredRows(text)]);
+  const text = normalizeWhitespace(input);
+  if (!text) return [];
+  return dedupe(parseRecordBlocks(text));
 }
