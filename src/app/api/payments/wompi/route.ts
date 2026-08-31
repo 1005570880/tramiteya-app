@@ -18,7 +18,6 @@ export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
     const user = token ? await getUserFromAccessToken(token) : null;
-
     const supabase = getSupabaseServer();
     const body = await request.json();
     const procedureId = String(body?.procedureId || '').trim();
@@ -39,26 +38,18 @@ export async function POST(request: NextRequest) {
 
     let guestToken = user ? '' : getGuestAccessToken(request);
     const storedHash = String(document.meta?.guestAccessTokenHash || '');
-
-    // Guest checkout: create the document access credential on first payment attempt.
     if (!user && !guestToken) guestToken = createGuestAccessToken();
-    if (!user && storedHash && storedHash !== hashGuestAccessToken(guestToken)) {
-      return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
-    }
+    if (!user && storedHash && storedHash !== hashGuestAccessToken(guestToken)) return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
 
     const guestHash = guestToken ? hashGuestAccessToken(guestToken) : '';
     if (!user && !storedHash) {
       const nextMeta = { ...(document.meta || {}), guestAccessTokenHash: guestHash };
-      // Supabase's generated schema currently lacks the JSON column typings for this table.
-      // Keep the runtime query intact while narrowing the write payload explicitly.
       const documentsTable = supabase.from('documents') as any;
       const { error: metaError } = await documentsTable.update({ meta: nextMeta }).eq('id', document.id);
       if (metaError) return NextResponse.json({ error: 'No fue posible preparar el acceso de invitado.' }, { status: 500 });
       if (document.instance_id) {
-        const { error: instanceMetaError } = await supabase
-          .from('procedure_instances')
-          .update({ guest_access_token_hash: guestHash })
-          .eq('id', document.instance_id);
+        const instancesTable = supabase.from('procedure_instances') as any;
+        const { error: instanceMetaError } = await instancesTable.update({ guest_access_token_hash: guestHash }).eq('id', document.instance_id);
         if (instanceMetaError) return NextResponse.json({ error: 'No fue posible vincular el acceso al trámite.' }, { status: 500 });
       }
     }
@@ -93,15 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     const response = NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken), accessToken: guestToken || undefined });
-    if (!user && guestToken) {
-      response.cookies.set('tramiteya_guest_access', guestToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 30,
-      });
-    }
+    if (!user && guestToken) response.cookies.set('tramiteya_guest_access', guestToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30 });
     return response;
   } catch {
     return NextResponse.json({ error: 'No fue posible preparar el pago Wompi.' }, { status: 400 });
