@@ -5,6 +5,12 @@ import { getGuestAccessToken, hashGuestAccessToken } from '../../../../../lib/gu
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type PaymentRow = {
+  id: string;
+  user_id: string | null;
+  metadata: Record<string, any> | null;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -14,12 +20,12 @@ export async function POST(request: NextRequest) {
 
     const guestToken = getGuestAccessToken(request);
     const supabase = getSupabaseServer();
-    const { data: payment, error: paymentError } = await supabase
+    const { data: payment, error: paymentError } = await (supabase as any)
       .from('payments')
       .select('*')
       .eq('provider', 'wompi')
       .eq('provider_reference', reference)
-      .maybeSingle();
+      .maybeSingle() as { data: PaymentRow | null; error: { message: string } | null };
     if (paymentError || !payment) return NextResponse.json({ error: 'Pago no encontrado.' }, { status: 404 });
 
     if (guestToken) {
@@ -51,7 +57,7 @@ export async function POST(request: NextRequest) {
     };
     if (nextStatus === 'approved') update.approved_at = new Date().toISOString();
 
-    const { error: updateError } = await supabase.from('payments').update(update).eq('id', payment.id);
+    const { error: updateError } = await (supabase as any).from('payments').update(update).eq('id', payment.id);
     if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
 
     return NextResponse.json({ approved: nextStatus === 'approved', status: nextStatus, transactionId: transaction.id });
