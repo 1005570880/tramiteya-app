@@ -4,13 +4,26 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import SimitDownloadGuide from "./SimitDownloadGuide";
 
-type RecordItem = { number?: string; date?: string; authority?: string; plate?: string; status?: string; value?: number; description?: string; documentNumber?: string; ownerName?: string; department?: string; infractionCode?: string; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string; organismId?: string; photoDetection?: boolean };
-type SimitSession = { records: RecordItem[]; documentNumber: string; fileName: string; selectedRecord?: RecordItem | null };
+type RecordItem = { number?: string; numero?: string; numeroComparendo?: string; date?: string; fecha?: string; fechaInfraccion?: string; authority?: string; organismo?: string; plate?: string; placa?: string; status?: string; estado?: string; value?: number; valor?: number; valorMulta?: number; description?: string; documentNumber?: string; ownerName?: string; department?: string; infractionCode?: string; resolutionNumber?: string; resolutionDate?: string; notificationDate?: string; paymentDate?: string; organismId?: string; photoDetection?: boolean };
+type SimitSession = { records: RecordItem[]; documentNumber: string; fileName: string; rawText?: string; selectedRecord?: RecordItem | null };
 const SIMIT_SESSION_KEY = "tramiteya:simit-upload:v1";
 
 function money(value?: number) { if (value == null) return "—"; return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value); }
 function normalizeDocument(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
-function saveSession(records: RecordItem[], documentNumber: string, fileName: string, selectedRecord: RecordItem | null = null) { try { sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName, selectedRecord } satisfies SimitSession)); } catch {} }
+function normalizeRecord(raw: RecordItem): RecordItem | null {
+  const number = String(raw.number ?? raw.numeroComparendo ?? raw.numero ?? "").replace(/\s+/g, "").trim();
+  if (!number) return null;
+  return {
+    ...raw,
+    number,
+    date: raw.date ?? raw.fecha ?? raw.fechaInfraccion,
+    authority: raw.authority ?? raw.organismo,
+    plate: raw.plate ?? raw.placa,
+    status: raw.status ?? raw.estado,
+    value: raw.value ?? raw.valor ?? raw.valorMulta,
+  };
+}
+function saveSession(records: RecordItem[], documentNumber: string, fileName: string, selectedRecord: RecordItem | null = null, rawText = "") { try { sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName, rawText, selectedRecord } satisfies SimitSession)); } catch {} }
 
 export default function SimitUploadFirst({ slug }: { slug: string }) {
   const router = useRouter(); const [loading, setLoading] = useState(false); const [error, setError] = useState(""); const [records, setRecords] = useState<RecordItem[]>([]); const [documentNumber, setDocumentNumber] = useState("");
@@ -19,18 +32,23 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
     if (file.size > 10 * 1024 * 1024) { setError("El PDF supera el límite de 10 MB."); return; }
     setLoading(true); setError(""); setRecords([]);
     try {
-      const form = new FormData(); form.append("file", file); const response = await fetch("/api/simit/upload", { method: "POST", body: form }); const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el Estado de Cuenta.");
-      const found = (payload.records || []) as RecordItem[]; if (!found.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
-      const doc = normalizeDocument(payload.documentNumber ?? payload.extraction?.documentNumber ?? payload.data?.documentNumber ?? found[0]?.documentNumber); const hydrated = found.map(record => ({ ...record, ...(doc ? { documentNumber: doc } : {}) }));
-      setDocumentNumber(doc); setRecords(hydrated); saveSession(hydrated, doc, file.name, null); if (hydrated.length === 1) select(hydrated[0], doc, hydrated, file.name);
+      const form = new FormData(); form.append("file", file);
+      const response = await fetch("/api/simit/upload", { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || (!payload.ok && !payload.success)) throw new Error(payload.message || "No fue posible analizar el Estado de Cuenta.");
+      const rawRecords = Array.isArray(payload.records) ? payload.records : Array.isArray(payload.comparendos) ? payload.comparendos : [];
+      const found = rawRecords.map(normalizeRecord).filter((record): record is RecordItem => Boolean(record));
+      if (!found.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
+      const doc = normalizeDocument(payload.documentNumber ?? payload.extraction?.documentNumber ?? payload.data?.documentNumber ?? found[0]?.documentNumber);
+      const hydrated = found.map(record => ({ ...record, ...(doc ? { documentNumber: doc } : {}) }));
+      const rawText = typeof payload.rawText === "string" ? payload.rawText : "";
+      setDocumentNumber(doc); setRecords(hydrated); saveSession(hydrated, doc, file.name, null, rawText);
+      if (hydrated.length === 1) select(hydrated[0], doc, hydrated, file.name);
     } catch (e) { setError(e instanceof Error ? e.message : "No fue posible analizar el PDF."); } finally { setLoading(false); }
   }
   function select(record: RecordItem, doc: string, allRecords: RecordItem[] = records, fileName = "Estado de Cuenta SIMIT") {
     const document = normalizeDocument(doc || record.documentNumber); const hydratedRecords = allRecords.map(item => ({ ...item, ...(document ? { documentNumber: document } : {}) }));
     try {
-      // La selección es parte del estado del expediente y debe sobrevivir a la navegación.
-      // Antes solo se guardaban los registros, por lo que la pantalla siguiente no sabía cuál había elegido el usuario.
       saveSession(hydratedRecords, document, fileName, { ...record, ...(document ? { documentNumber: document } : {}) });
       const comparendoId = encodeURIComponent(record.number || "");
       router.push(`/tramites/${slug}/formulario-simit?comparendoId=${comparendoId}`);
