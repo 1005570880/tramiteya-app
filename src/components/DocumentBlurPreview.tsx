@@ -42,7 +42,7 @@ II. CONSIDERACIONES JURÍDICAS DEL CASO CONCRETO
 
 El registro de una obligación en el SIMIT no permite establecer por sí solo la regularidad integral del procedimiento administrativo.`;
 
-function cleanText(text: string) {
+function cleanText(text: string): string {
   return text
     .replace(/^#{1,6}\s*/gm, '')
     .replace(/\*\*/g, '')
@@ -57,8 +57,6 @@ function getPreviewParts(text: string) {
   const lines = cleaned.split('\n');
   const sectionIndex = lines.findIndex((line) => /^II\.\s+/i.test(line.trim()));
 
-  // La frontera jurídica es preferente: el contenido visible termina antes de II.
-  // Si el documento no trae esa sección, usamos aproximadamente el 34% del texto.
   if (sectionIndex > 0) {
     return {
       visible: lines.slice(0, sectionIndex).join('\n').trim(),
@@ -77,16 +75,28 @@ function DocumentText({ text }: { text: string }) {
   const blocks = text.split(/\n\s*\n/).filter(Boolean);
 
   return (
-    <div className="text-[12pt] leading-[1.15] text-[#111827] [font-family:'Arial_Narrow',Arial,Helvetica,sans-serif]">
+    <div
+      style={{
+        fontFamily: '"Arial Narrow", Arial, Helvetica, sans-serif',
+        fontSize: '12pt',
+        lineHeight: '1.15',
+        color: '#111827',
+        textAlign: 'justify',
+      }}
+    >
       {blocks.map((block, index) => {
         const normalized = block.trim();
         const isHeading = /^(I\.|II\.|III\.|IV\.|V\.|VI\.|LÍNEA CRONOLÓGICA|ASUNTO:|PETICIONARIO:|C\.C\.:|REFERENCIA:|FECHA DEL HECHO:|INFRACCIÓN:|VALOR REPORTADO:)/i.test(normalized);
-        const isOrdinal = /^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO|DÉCIMA)/i.test(normalized);
 
         return (
           <p
             key={`${index}-${normalized.slice(0, 30)}`}
-            className={`${isHeading ? 'font-bold' : ''} ${isOrdinal ? 'text-justify' : 'text-justify'} mb-3 whitespace-pre-line last:mb-0`}
+            style={{
+              margin: '0 0 0.75rem 0',
+              fontWeight: isHeading ? 700 : 400,
+              textAlign: 'justify',
+              whiteSpace: 'pre-line',
+            }}
           >
             {normalized}
           </p>
@@ -102,43 +112,113 @@ export default function DocumentBlurPreview({ documentText, organismo, onUnlock 
   const destino = organismo?.trim() || 'el organismo de tránsito competente';
 
   return (
-    <section aria-labelledby="document-preview-title" className="w-full">
-      <div className="mx-auto mb-8 max-w-3xl text-center text-white">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-300">Vista previa del documento</p>
-        <h2 id="document-preview-title" className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Lee tu escrito antes de desbloquearlo.</h2>
-        <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300">Consulta el inicio de tu escrito completamente nítido. El análisis jurídico y las pretensiones quedan protegidos hasta completar el desbloqueo.</p>
+    <section aria-labelledby="document-preview-title" style={{ width: '100%' }}>
+      <div style={{ maxWidth: '48rem', margin: '0 auto 2rem', textAlign: 'center', color: '#ffffff' }}>
+        <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 900, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#a5b4fc' }}>
+          Vista previa del documento
+        </p>
+        <h2 id="document-preview-title" style={{ margin: '0.5rem 0 0', fontSize: 'clamp(1.875rem, 4vw, 2.25rem)', lineHeight: 1.1, fontWeight: 900, color: '#ffffff' }}>
+          Lee tu escrito antes de desbloquearlo.
+        </h2>
+        <p style={{ maxWidth: '42rem', margin: '0.75rem auto 0', fontSize: '0.875rem', lineHeight: 1.5, color: '#cbd5e1' }}>
+          Consulta el inicio de tu escrito completamente nítido. El análisis jurídico y las pretensiones quedan protegidos hasta completar el desbloqueo.
+        </p>
       </div>
 
-      <div className="relative mx-auto max-w-[820px] overflow-hidden rounded-[2px] bg-white shadow-[0_4px_20px_rgba(0,0,0,0.08)] ring-1 ring-slate-200">
-        <div className="px-9 py-10 sm:px-14 sm:py-14 lg:px-20 lg:py-16">
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: '820px',
+          margin: '0 auto',
+          overflow: 'hidden',
+          borderRadius: '2px',
+          border: '1px solid #e5e7eb',
+          backgroundColor: '#ffffff',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+        }}
+      >
+        <div style={{ padding: '2.5rem', backgroundColor: '#ffffff' }}>
           <DocumentText text={visible} />
 
-          <div className="relative mt-8 min-h-[820px] overflow-hidden border-t border-slate-100 pt-8">
+          <div style={{ position: 'relative', marginTop: '2rem', minHeight: '820px', overflow: 'hidden', borderTop: '1px solid #f1f5f9', paddingTop: '2rem' }}>
             <div
               aria-hidden="true"
-              className="pointer-events-none select-none blur-[5px]"
+              style={{
+                filter: 'blur(5px)',
+                userSelect: 'none',
+                pointerEvents: 'none',
+              }}
             >
               <DocumentText text={locked || visible} />
             </div>
 
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0)_0%,rgba(255,255,255,0.95)_40%,#ffffff_100%)]"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.95) 40%, #ffffff 100%)',
+                pointerEvents: 'none',
+                zIndex: 20,
+              }}
             />
 
-            <div className="absolute inset-x-4 top-1/2 z-10 -translate-y-1/2 sm:inset-x-10">
-              <div className="mx-auto max-w-md rounded-3xl border border-slate-200 bg-white/95 p-6 text-center shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur-md sm:p-8">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-xl text-indigo-700" aria-hidden="true">🔒</div>
-                <h3 className="mt-4 text-lg font-black leading-tight text-slate-950 sm:text-xl">Tu Derecho de Petición personalizado para {destino} está listo.</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-500">Incluye fundamentación jurídica, análisis del caso concreto y pretensiones procesales redactadas en primera persona.</p>
+            <div
+              style={{
+                position: 'absolute',
+                left: '1rem',
+                right: '1rem',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                zIndex: 30,
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  maxWidth: '28rem',
+                  margin: '0 auto',
+                  boxSizing: 'border-box',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '1rem',
+                  backgroundColor: 'rgba(255,255,255,0.97)',
+                  padding: '1.5rem',
+                  textAlign: 'center',
+                  boxShadow: '0 20px 60px rgba(15,23,42,0.18)',
+                }}
+              >
+                <div style={{ width: '3rem', height: '3rem', margin: '0 auto 0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '0.75rem', backgroundColor: '#eef2ff', fontSize: '1.25rem' }} aria-hidden="true">
+                  🔒
+                </div>
+                <h3 style={{ margin: 0, fontSize: '1.125rem', lineHeight: 1.25, fontWeight: 700, color: '#111827' }}>
+                  Tu Derecho de Petición personalizado para {destino} está listo.
+                </h3>
+                <p style={{ margin: '0.75rem 0 0', fontSize: '0.875rem', lineHeight: 1.5, color: '#4b5563' }}>
+                  Incluye fundamentación en Sentencia C-038/20, Ley 1066/06, Art. 818 E.T. y pretensiones procesales redactadas en primera persona.
+                </p>
                 <button
                   type="button"
                   onClick={onUnlock}
-                  className="mt-5 w-full rounded-2xl bg-indigo-600 px-5 py-4 text-sm font-black text-white shadow-lg shadow-indigo-600/20 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200"
+                  style={{
+                    width: '100%',
+                    marginTop: '1.25rem',
+                    border: 0,
+                    borderRadius: '0.75rem',
+                    backgroundColor: '#2563eb',
+                    padding: '0.75rem 1rem',
+                    color: '#ffffff',
+                    fontSize: '0.875rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(37,99,235,0.25)',
+                  }}
                 >
                   Desbloquear y descargar documento completo ($49.900 COP)
                 </button>
-                <p className="mt-3 text-[11px] font-semibold text-slate-400">Word (.docx) + PDF · Documento editable</p>
+                <p style={{ margin: '0.75rem 0 0', fontSize: '0.6875rem', fontWeight: 600, color: '#9ca3af' }}>
+                  Word (.docx) + PDF · Documento editable
+                </p>
               </div>
             </div>
           </div>
