@@ -23,25 +23,29 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
   async function load() {
     try {
       const supabase = getSupabaseBrowser();
-      if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const headers = { Authorization: `Bearer ${session.access_token}` };
-          const response = await fetch(`/api/instances/${params.id}`, { headers, cache: "no-store" });
-          if (response.ok) {
-            const data = await response.json();
-            setInstance(data);
-            const historyResponse = await fetch(`/api/instances/${params.id}/documents`, { headers, cache: "no-store" });
-            if (historyResponse.ok) setHistory((await historyResponse.json()).data || []);
-            const latest = data.document;
-            if (latest?.id) {
-              const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&documentVersionId=${encodeURIComponent(latest.id)}`, { headers, cache: "no-store" });
-              if (paymentResponse.ok) setPaid(Boolean((await paymentResponse.json()).approved));
-            }
-            return;
-          }
+      const sessionResult = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any;
+      const session = sessionResult.data.session;
+      const headers = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined;
+
+      // Authenticated users keep the existing path; guests use the same public URL and
+      // are authorized by the httpOnly guest cookie issued when checkout starts.
+      const response = await fetch(`/api/instances/${params.id}`, { headers, cache: "no-store" });
+      if (response.ok) {
+        const data = await response.json();
+        setInstance(data);
+        if (session?.access_token) {
+          const historyResponse = await fetch(`/api/instances/${params.id}/documents`, { headers, cache: "no-store" });
+          if (historyResponse.ok) setHistory((await historyResponse.json()).data || []);
         }
+        const latest = data.document;
+        if (latest?.id) {
+          const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&documentVersionId=${encodeURIComponent(latest.id)}`, { cache: "no-store" });
+          if (paymentResponse.ok) setPaid(Boolean((await paymentResponse.json()).approved));
+        }
+        return;
       }
+
+      // Development/local fallback remains available for browser-only instances.
       setInstance(procedureStorage.get(params.id));
     } finally { setLoading(false); }
   }
@@ -71,10 +75,12 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
     if (!paid) { alert("Primero debes completar el pago para descargar el documento."); return; }
     await markDownloaded();
     const suffix = version ? `?version=${encodeURIComponent(String(version))}` : "";
+    // Guest downloads authenticate through the httpOnly guest cookie; authenticated
+    // users may continue to use their Supabase bearer token.
     const supabase = getSupabaseBrowser();
     const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any;
-    if (!session?.access_token) { alert("Tu sesión ha expirado. Inicia sesión nuevamente."); return; }
-    const response = await fetch(`/api/documents/${instance.id}/download${format === "pdf" ? "/pdf" : ""}${suffix}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const headers = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined;
+    const response = await fetch(`/api/documents/${latest?.id || instance.id}/download${format === "pdf" ? "/pdf" : ""}${suffix}`, { headers });
     if (!response.ok) { alert("La descarga todavía no está habilitada."); return; }
     const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `tramiteya-${params.slug}.${format}`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
   };
@@ -87,6 +93,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
       <DocumentBlurPreview documentText={latest?.content || ""} organismo={organismo} onUnlock={goToPayment} />
       {!paid && <div id="payment-checkout" className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5"><div className="flex items-start gap-3"><div className="text-xl">🔒</div><div className="flex-1"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-bold text-lg">Documento listo para descargar</h2><p className="text-sm text-slate-600 mt-1">El pago habilita la descarga del documento final en Word y PDF.</p></div><div className="shrink-0"><span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total</span><div className="text-2xl font-black text-slate-950">$49.900 <span className="text-xs font-bold text-slate-500">COP</span></div></div></div><TrustBadges /><div className="mt-5"><WompiCheckout procedureId={instance.procedureId || instance.procedureSlug || params.slug} documentVersionId={String(latest?.id || "")} onPending={() => undefined} /></div></div></div></div>}
     </div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
-    <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p>
+    <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a Trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p>
   </div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
