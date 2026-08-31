@@ -55,16 +55,31 @@ function cleanText(text: string): string {
 function getPreviewParts(text: string) {
   const cleaned = cleanText(text);
   const lines = cleaned.split('\n');
-  const sectionIndex = lines.findIndex((line) => /^II\.\s+/i.test(line.trim()));
+  const sectionIndex = lines.findIndex((line) => /^I\.\s+HECHOS\s*$/i.test(line.trim()));
 
-  if (sectionIndex > 0) {
-    return {
-      visible: lines.slice(0, sectionIndex).join('\n').trim(),
-      locked: lines.slice(sectionIndex).join('\n').trim(),
-    };
+  if (sectionIndex >= 0) {
+    const factStart = sectionIndex + 1;
+    let factCount = 0;
+    let cutoff = factStart;
+
+    for (let i = factStart; i < lines.length; i += 1) {
+      const line = lines[i].trim();
+      if (/^(PRIMERO|SEGUNDO)\.?\s+/i.test(line)) {
+        factCount += 1;
+        cutoff = i + 1;
+        if (factCount === 2) break;
+      }
+    }
+
+    if (factCount > 0) {
+      return {
+        visible: lines.slice(0, cutoff).join('\n').trim(),
+        locked: lines.slice(cutoff).join('\n').trim(),
+      };
+    }
   }
 
-  const cutoff = Math.min(lines.length - 1, Math.max(8, Math.floor(lines.length * 0.34)));
+  const cutoff = Math.min(lines.length - 1, Math.max(8, Math.floor(lines.length * 0.2)));
   return {
     visible: lines.slice(0, cutoff).join('\n').trim(),
     locked: lines.slice(cutoff).join('\n').trim(),
@@ -145,7 +160,7 @@ export default function DocumentBlurPreview({ documentText, organismo, onUnlock 
             <div
               aria-hidden="true"
               style={{
-                filter: 'blur(5px)',
+                filter: 'blur(6px)',
                 userSelect: 'none',
                 pointerEvents: 'none',
               }}
@@ -157,8 +172,13 @@ export default function DocumentBlurPreview({ documentText, organismo, onUnlock 
               aria-hidden="true"
               style={{
                 position: 'absolute',
-                inset: 0,
-                background: 'linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.95) 40%, #ffffff 100%)',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: '82%',
+                background: 'linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 15%, rgba(255,255,255,0.98) 35%, #ffffff 100%)',
+                backdropFilter: 'blur(4px)',
+                WebkitBackdropFilter: 'blur(4px)',
                 pointerEvents: 'none',
                 zIndex: 20,
               }}
