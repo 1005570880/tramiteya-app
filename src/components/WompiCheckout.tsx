@@ -18,12 +18,22 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
     document.body.appendChild(script);
   }, []);
 
-  async function waitForApproval(attempts = 30): Promise<boolean> {
+  async function waitForApproval(transactionId: string, reference: string, attempts = 30): Promise<boolean> {
     for (let i = 0; i < attempts; i += 1) {
+      try {
+        await fetch('/api/payments/wompi/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId, reference }),
+          cache: 'no-store',
+        });
+      } catch { /* continue polling */ }
+
       const response = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&documentVersionId=${encodeURIComponent(documentVersionId)}`, { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
         if (data.approved) return true;
+        if (data.payment && ['declined', 'error', 'voided'].includes(String(data.payment.status).toLowerCase())) return false;
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -60,8 +70,9 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
 
       checkout.open(async (result: any) => {
         const status = String(result?.transaction?.status || '').toUpperCase();
-        if (status === 'APPROVED') {
-          const approved = await waitForApproval();
+        const transactionId = String(result?.transaction?.id || '').trim();
+        if (status === 'APPROVED' && transactionId) {
+          const approved = await waitForApproval(transactionId, data.reference);
           if (approved) {
             if (data.accessToken) {
               const url = new URL(window.location.href);
@@ -73,6 +84,10 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
           } else setError('El pago fue aprobado, pero estamos esperando la confirmación del servidor. Actualiza esta página en unos segundos.');
         } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
           setError('El pago no fue aprobado. Puedes intentarlo nuevamente.');
+        } else if (transactionId) {
+          const approved = await waitForApproval(transactionId, data.reference);
+          if (approved) window.location.reload();
+          else setError('El pago sigue en proceso. Vuelve a consultar en unos segundos.');
         }
       });
     } catch (e) {
