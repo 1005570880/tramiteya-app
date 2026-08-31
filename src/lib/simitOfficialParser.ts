@@ -13,7 +13,7 @@ const ID_RE = /(?<![0-9])\d{20}(?![0-9])/g;
 const SPECIAL_ID_RE = /\b(?:\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
 const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,12}S(?![A-Z0-9])/gi;
 
-function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
+function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r/g, '\n').replace(/\u00a0/g, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
 function normalizeIdentifier(value: string): string { return String(value || '').replace(/\s+/g, '').trim(); }
 function compactDigits(value: string): string { return String(value || '').replace(/[^0-9]/g, ''); }
 function clean(value: string): string { return String(value || '').replace(/\s+/g, ' ').replace(/^\|+|\|+$/g, '').trim(); }
@@ -72,12 +72,34 @@ function buildRecord(number: string, body: string, dateOverride?: string): Parse
 function findRecordIdentifiers(text: string): Array<{ number: string; index: number }> {
   const found: Array<{ number: string; index: number }> = [];
   const seen = new Set<string>();
-  const add = (number: string, index: number) => { const normalized = normalizeIdentifier(number); const key = `${normalized}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number: normalized, index }); } };
+  const add = (number: string, index: number) => { const normalized = normalizeIdentifier(number); if (!/^\d{20}$/.test(normalized)) return; const key = `${normalized}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number: normalized, index }); } };
   for (const match of text.matchAll(ID_RE)) add(match[0], match.index ?? 0);
   for (const match of text.matchAll(SPECIAL_ID_RE)) add(match[0], match.index ?? 0);
   for (const match of text.matchAll(LEGACY_ID_RE)) add(match[0], match.index ?? 0);
-  const split = /(?:^|[^0-9])((?:\d[\s|]*){20})(?!\d)/g;
-  for (const match of text.matchAll(split)) { const number = compactDigits(match[1]); if (/^\d{20}$/.test(number)) add(number, (match.index ?? 0) + match[0].length - match[1].length); }
+
+  // PDF text extraction is not stable: a 20-digit SIMIT identifier may be split
+  // by spaces, pipes, tabs, line breaks, punctuation or column delimiters. Match
+  // the digit sequence independently of those layout artifacts, then normalize
+  // it back to the canonical 20-digit identifier. This is still evidence-bound:
+  // no identifier is synthesized and anything other than exactly 20 digits is rejected.
+  const spaced = /(?:^|[^0-9])((?:\d[\s|:/_\-]*){20})(?!\d)/g;
+  for (const match of text.matchAll(spaced)) {
+    const raw = match[1];
+    const number = compactDigits(raw);
+    if (/^\d{20}$/.test(number)) add(number, (match.index ?? 0) + match[0].length - raw.length);
+  }
+
+  // Last-resort row-local recovery for PDFs that insert non-standard separators
+  // between every numeric column. We only inspect each visual text row and only
+  // accept a contiguous 20-digit sequence after removing harmless column spaces.
+  for (const line of text.split(/\n/)) {
+    const candidate = line.replace(/[\s|]+/g, '');
+    const match = candidate.match(/\d{20}/);
+    if (match && match.index !== undefined) {
+      const lineIndex = text.indexOf(line);
+      add(match[0], Math.max(0, lineIndex) + match.index);
+    }
+  }
   return found.sort((a, b) => a.index - b.index);
 }
 
