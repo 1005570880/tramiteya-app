@@ -49,7 +49,10 @@ export async function POST(request: NextRequest) {
     const guestHash = guestToken ? hashGuestAccessToken(guestToken) : '';
     if (!user && !storedHash) {
       const nextMeta = { ...(document.meta || {}), guestAccessTokenHash: guestHash };
-      const { error: metaError } = await supabase.from('documents').update({ meta: nextMeta }).eq('id', document.id);
+      // Supabase's generated schema currently lacks the JSON column typings for this table.
+      // Keep the runtime query intact while narrowing the write payload explicitly.
+      const documentsTable = supabase.from('documents') as any;
+      const { error: metaError } = await documentsTable.update({ meta: nextMeta }).eq('id', document.id);
       if (metaError) return NextResponse.json({ error: 'No fue posible preparar el acceso de invitado.' }, { status: 500 });
       if (document.instance_id) {
         const { error: instanceMetaError } = await supabase
@@ -84,8 +87,9 @@ export async function POST(request: NextRequest) {
       };
       const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
-    } else if (!user && guestHash && !String(existing.metadata?.guestAccessTokenHash || '')) {
-      await supabase.from('payments').update({ metadata: { ...(existing.metadata || {}), guestAccessTokenHash: guestHash } }).eq('id', existing.id);
+    } else if (!user && guestHash && !String((existing as any).metadata?.guestAccessTokenHash || '')) {
+      const paymentsTable = supabase.from('payments') as any;
+      await paymentsTable.update({ metadata: { ...((existing as any).metadata || {}), guestAccessTokenHash: guestHash } }).eq('id', existing.id);
     }
 
     const response = NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken), accessToken: guestToken || undefined });
