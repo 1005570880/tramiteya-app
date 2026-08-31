@@ -51,7 +51,8 @@ export function extractSimitPlate(input: string): string | undefined {
 }
 
 function authorityFromMunicipality(municipality: string | undefined, body: string): string | undefined { return (municipality && findMatchingAuthority(municipality)) || findMatchingAuthority(body); }
-function extractMunicipality(body: string, date: string, code?: string): string | undefined {
+function extractMunicipality(body: string, date: string | undefined, code?: string): string | undefined {
+  if (!date) return undefined;
   const dateIndex = body.indexOf(date); if (dateIndex < 0) return undefined;
   let after = body.slice(dateIndex + date.length).replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, '');
   if (code) { const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const codeIndex = after.search(new RegExp(`\\b${escaped}\\b`, 'i')); if (codeIndex >= 0) after = after.slice(0, codeIndex); }
@@ -60,8 +61,8 @@ function extractMunicipality(body: string, date: string, code?: string): string 
   return value;
 }
 
-function buildRecord(number: string, body: string, dateOverride?: string): ParsedSimitRecord | undefined {
-  const date = dateOverride || extractDate(body); if (!date) return undefined;
+function buildRecord(number: string, body: string, dateOverride?: string): ParsedSimitRecord {
+  const date = dateOverride || extractDate(body);
   const code = extractCode(body); const status = extractStatus(body) || 'Pendiente';
   const municipality = extractMunicipality(body, date, code);
   const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '');
@@ -75,7 +76,6 @@ function findRecordIdentifiers(text: string): Array<{ number: string; index: num
   for (const match of text.matchAll(ID_RE)) add(match[0], match.index ?? 0);
   for (const match of text.matchAll(SPECIAL_ID_RE)) add(match[0], match.index ?? 0);
   for (const match of text.matchAll(LEGACY_ID_RE)) add(match[0], match.index ?? 0);
-  // Some PDF text layers split the 20-digit identifier with spaces or pipes.
   const split = /(?:^|[^0-9])((?:\d[\s|]*){20})(?!\d)/g;
   for (const match of text.matchAll(split)) { const number = compactDigits(match[1]); if (/^\d{20}$/.test(number)) add(number, (match.index ?? 0) + match[0].length - match[1].length); }
   return found.sort((a, b) => a.index - b.index);
@@ -85,7 +85,8 @@ function parseTokenAnchoredRows(text: string): ParsedSimitRecord[] {
   const tokens = normalizeWhitespace(text).split(/\s+/).filter(Boolean); const records: ParsedSimitRecord[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = normalizeIdentifier(tokens[i]); if (!/^\d{20}$/.test(token) && !/^\d{6,12}S$/i.test(token)) continue;
-    const window = tokens.slice(i, Math.min(tokens.length, i + 55)).join(' '); const record = buildRecord(token, window); if (record) records.push(record);
+    const window = tokens.slice(Math.max(0, i - 25), Math.min(tokens.length, i + 55)).join(' ');
+    records.push(buildRecord(token, window));
   }
   return records;
 }
@@ -95,16 +96,13 @@ function parseNearbyIdentifiers(text: string): ParsedSimitRecord[] {
   for (let i = 0; i < identifiers.length; i++) {
     const current = identifiers[i];
     const next = identifiers[i + 1]?.index ?? text.length;
-    // PDF table extraction can place the date before the identifier. Look around
-    // both sides rather than assuming one fixed column order.
-    const start = Math.max(0, current.index - 260);
-    const end = Math.min(text.length, Math.max(current.index + 520, next));
+    const start = Math.max(0, current.index - 600);
+    const end = Math.min(text.length, Math.max(current.index + 900, next));
     const window = text.slice(start, end);
     const dateMatches = [...window.matchAll(DATE_RE)];
-    if (!dateMatches.length) continue;
-    const date = dateMatches.sort((a, b) => Math.abs((a.index ?? 0) - (current.index - start)) - Math.abs((b.index ?? 0) - (current.index - start)))[0]?.[0];
-    const record = buildRecord(current.number, window, date);
-    if (record) records.push(record);
+    const anchor = current.index - start;
+    const date = dateMatches.length ? dateMatches.sort((a, b) => Math.abs((a.index ?? 0) - anchor) - Math.abs((b.index ?? 0) - anchor))[0]?.[0] : undefined;
+    records.push(buildRecord(current.number, window, date));
   }
   return records;
 }
@@ -112,19 +110,18 @@ function parseNearbyIdentifiers(text: string): ParsedSimitRecord[] {
 function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
   const map = new Map<string, ParsedSimitRecord>();
   for (const record of records) {
-    if (!record.number || !record.date) continue;
-    const key = `${record.number}|${record.date}`; const previous = map.get(key);
+    if (!record.number) continue;
+    const key = `${record.number}|${record.date || ''}`; const previous = map.get(key);
     if (!previous) map.set(key, record);
-    else map.set(key, { ...previous, ...record, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode });
+    else map.set(key, { ...previous, ...record, date: record.date || previous.date, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode });
   }
   return [...map.values()];
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
-  // The identifier itself is the strongest deterministic evidence in the
-  // official statement. A nearby date is sufficient to recognize a record;
-  // code, plate, authority and amount are enrichment fields, not prerequisites.
-  const records = parseNearbyIdentifiers(text);
-  return dedupe([...records, ...parseTokenAnchoredRows(text)]);
+  // Deterministic evidence is the identifier itself. A degraded PDF table must
+  // not become a false negative merely because pdf-parse lost column boundaries.
+  // We never synthesize missing fields: absent date/plate/value remain undefined.
+  return dedupe([...parseNearbyIdentifiers(text), ...parseTokenAnchoredRows(text)]);
 }
