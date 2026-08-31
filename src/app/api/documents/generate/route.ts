@@ -5,6 +5,7 @@ import { getRepositoryFactory } from '../../../../lib/repositoryFactory';
 import type { FormAnswers } from '../../../../types/form';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const factory = getRepositoryFactory();
 
@@ -36,21 +37,29 @@ export async function POST(request: NextRequest) {
       instanceId: body.instanceId,
     });
 
-    // A generated preview is also a commercial document version. Persist it
-    // before returning it so checkout can always resolve documentVersionId.
-    // This removes the split-brain state where the preview exists in the
-    // instance/local state but Wompi cannot find the same version in `documents`.
+    // The legal draft itself is the critical result of this endpoint.
+    // Persistence is best-effort so a transient Supabase/schema/RLS problem
+    // cannot strand the guest after completing the interview.
     const documentRepo = factory.getDocumentRepo();
     if (documentRepo) {
-      const persisted = await documentRepo.create(generated);
-      return NextResponse.json(persisted);
+      try {
+        const persisted = await documentRepo.create(generated);
+        return NextResponse.json(persisted, {
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      } catch (persistenceError) {
+        console.error('[TrámiteYa] document persistence failed; returning generated draft:', persistenceError);
+      }
     }
 
-    // Local/file-backed development fallback: keep the generated document
-    // usable even when Supabase persistence is unavailable.
-    return NextResponse.json(generated);
+    return NextResponse.json(generated, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (error) {
-    console.error('Document generation failed:', error);
-    return NextResponse.json({ error: 'No fue posible generar el documento' }, { status: 500 });
+    console.error('[TrámiteYa] Document generation failed:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'No fue posible generar el documento' },
+      { status: 500 },
+    );
   }
 }
