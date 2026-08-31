@@ -7,6 +7,11 @@ import { patchInstanceSchema } from '../../../../lib/schemas';
 
 const factory = getRepositoryFactory();
 
+type GuestAccessRow = {
+  id: string;
+  guest_access_token_hash: string | null;
+};
+
 async function getUser(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
   const token = auth.replace(/^Bearer\s+/i, '');
@@ -27,12 +32,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const supabase = getSupabaseServer();
     let guestToken = getGuestAccessToken(req);
     let guestHash = guestToken ? hashGuestAccessToken(guestToken) : '';
-    const { data: row, error } = await supabase
+    const { data: rawRow, error } = await supabase
       .from('procedure_instances')
       .select('id,guest_access_token_hash')
       .eq('id', params.id)
       .maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const row = rawRow as GuestAccessRow | null;
 
     if (row?.guest_access_token_hash) {
       if (!guestToken || row.guest_access_token_hash !== guestHash) {
