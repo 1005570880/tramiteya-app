@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { procedures } from '../../../../data/procedures';
 import { generateDocument } from '../../../../lib/generateDocument';
+import { getRepositoryFactory } from '../../../../lib/repositoryFactory';
 import type { FormAnswers } from '../../../../types/form';
 
 export const runtime = 'nodejs';
+
+const factory = getRepositoryFactory();
 
 type RequestBody = {
   procedureSlug?: string;
@@ -26,14 +29,26 @@ export async function POST(request: NextRequest) {
     }
 
     const answers = body.answers ?? {};
-    const document = await generateDocument({
+    const generated = await generateDocument({
       procedure,
       answers,
       previousVersion: body.previousVersion ?? 0,
       instanceId: body.instanceId,
     });
 
-    return NextResponse.json(document);
+    // A generated preview is also a commercial document version. Persist it
+    // before returning it so checkout can always resolve documentVersionId.
+    // This removes the split-brain state where the preview exists in the
+    // instance/local state but Wompi cannot find the same version in `documents`.
+    const documentRepo = factory.getDocumentRepo();
+    if (documentRepo) {
+      const persisted = await documentRepo.create(generated);
+      return NextResponse.json(persisted);
+    }
+
+    // Local/file-backed development fallback: keep the generated document
+    // usable even when Supabase persistence is unavailable.
+    return NextResponse.json(generated);
   } catch (error) {
     console.error('Document generation failed:', error);
     return NextResponse.json({ error: 'No fue posible generar el documento' }, { status: 500 });
