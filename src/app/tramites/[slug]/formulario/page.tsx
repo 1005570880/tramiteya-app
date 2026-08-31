@@ -32,8 +32,34 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
   const currentProcedure = procedure;
   const analyze = (a: FormAnswers) => { const text = `${params.slug} ${currentProcedure.title} ${currentProcedure.category}`; const d = /multa|comparendo|fotomult|transito|tr[aá]nsito/i.test(text) ? evaluateTrafficCase(a) : []; setAnalysis(d); return d; };
 
-  async function uploadStatement(file: File) { const documentNumber = simitDocument.replace(/\D/g, ""); if (!documentNumber) return setSimitError("Primero ingresa la cédula."); if (file.size > 10 * 1024 * 1024) return setSimitError("El PDF supera el límite de 10 MB."); setStatementLoading(true); setSimitError(""); try { const form = new FormData(); form.append("file", file); form.append("documentNumber", documentNumber); const response = await fetch("/api/simit/upload", { method: "POST", body: form, signal: withTimeout(60000) }); const payload = await response.json().catch(() => ({})); if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el estado de cuenta."); const records = (payload.records || []) as SimitRecord[]; if (!records.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT."); setSimitRecords(records); sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, documentNumber, fileName: file.name, selectedRecord: null })); } catch (e) { setSimitError(e instanceof Error ? e.message : "No fue posible analizar el estado de cuenta."); } finally { setStatementLoading(false); } }
-  function selectSimitRecord(record: SimitRecord) { setSelectedSimit(record); const selected = fromSimit(simitDocument, record); localDraftStorage.save(draftKey, { data: { ...((localDraftStorage.load(draftKey) as any)?.data || {}), ...selected, __simitRecord: record, __simitSelected: true }, savedAt: new Date().toISOString() }); try { const raw = sessionStorage.getItem(SIMIT_SESSION_KEY); const current = raw ? JSON.parse(raw) : {}; sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ ...current, documentNumber: simitDocument.replace(/\D/g, "") || record.documentNumber || "", selectedRecord: record })); } catch {} }
+  async function uploadStatement(file: File) {
+    const documentNumber = simitDocument.replace(/\D/g, ""); if (!documentNumber) return setSimitError("Primero ingresa la cédula.");
+    if (file.size > 10 * 1024 * 1024) return setSimitError("El PDF supera el límite de 10 MB.");
+    setStatementLoading(true); setSimitError(""); setSimitRecords([]); setSelectedSimit(null);
+    try {
+      const form = new FormData(); form.append("file", file); form.append("documentNumber", documentNumber);
+      // The timeout only protects the NETWORK request. The server fully awaits file.arrayBuffer() and pdf-parse before responding.
+      const response = await fetch("/api/simit/upload", { method: "POST", body: form, signal: withTimeout(60000) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "No fue posible analizar el estado de cuenta.");
+      const records = (payload.records || []) as SimitRecord[];
+      const rawText = typeof payload.rawText === "string" ? payload.rawText : "";
+      if (!records.length) throw new Error("No encontramos comparendos en el PDF. Sube el Estado de Cuenta descargado directamente desde SIMIT.");
+
+      // Persist extraction immediately in both sessionStorage and the draft. No database round-trip is required.
+      const existing = (localDraftStorage.load(draftKey) as any)?.data || {};
+      localDraftStorage.save(draftKey, { data: { ...existing, documentNumber, cedula: documentNumber, __simitRawText: rawText, __simitRecords: records, __simitFileName: file.name }, savedAt: new Date().toISOString() });
+      try { sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ records, rawText, documentNumber, fileName: file.name, selectedRecord: null })); } catch {}
+      setSimitRecords(records);
+    } catch (e) { setSimitError(e instanceof Error ? e.message : "No fue posible analizar el estado de cuenta."); } finally { setStatementLoading(false); }
+  }
+
+  function selectSimitRecord(record: SimitRecord) {
+    setSelectedSimit(record); const selected = fromSimit(simitDocument, record);
+    const existing = (localDraftStorage.load(draftKey) as any)?.data || {};
+    localDraftStorage.save(draftKey, { data: { ...existing, ...selected, __simitRecord: record, __simitSelected: true }, savedAt: new Date().toISOString() });
+    try { const raw = sessionStorage.getItem(SIMIT_SESSION_KEY); const current = raw ? JSON.parse(raw) : {}; sessionStorage.setItem(SIMIT_SESSION_KEY, JSON.stringify({ ...current, documentNumber: simitDocument.replace(/\D/g, "") || record.documentNumber || "", selectedRecord: record })); } catch {}
+  }
 
   async function ensureInstance(a: FormAnswers) { const saved = localDraftStorage.load(draftKey) as any; const supabase = getSupabaseBrowser(); if (supabase) { try { const { data: { session } } = await supabase.auth.getSession(); if (session?.user) { if (instanceId) { const r = await fetch(`/api/instances/${instanceId}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store", signal: withTimeout(8000) }); if (r.ok) return r.json(); } const r = await fetch("/api/instances", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ procedureId: currentProcedure.id, procedureSlug: currentProcedure.slug, answers: a }), signal: withTimeout(10000) }); if (r.ok) { const x = await r.json(); setInstanceId(x.id); return x; } } } catch (e) { console.warn("Instancia remota no disponible; usando almacenamiento local", e); } } const savedId = saved?.data?.__instanceId; if (savedId) { const x = procedureStorage.get(savedId); if (x) return x; } const x = procedureStorage.create(currentProcedure.id, currentProcedure.slug, a); setInstanceId(x.id); return x; }
 
@@ -41,17 +67,12 @@ export default function ProcedureForm({ params }: { params: { slug: string } }) 
     const issues = validateProcedureAnswers(currentProcedure, a); if (issues.length) { alert(`Faltan ${issues.length} campo(s) obligatorio(s).`); return; }
     setLoading(true);
     try {
-      const decisions = analyze(a);
-      const instance = await ensureInstance(a);
-      const enrichedAnswers = { ...a, __legalDecisionEngine: { version: 1, generatedAt: new Date().toISOString(), decisions } } as unknown as FormAnswers;
+      const decisions = analyze(a); const instance = await ensureInstance(a); const enrichedAnswers = { ...a, __legalDecisionEngine: { version: 1, generatedAt: new Date().toISOString(), decisions } } as unknown as FormAnswers;
       const response = await fetch("/api/documents/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ procedureSlug: currentProcedure.slug, answers: enrichedAnswers, instanceId: instance.id }), signal: withTimeout(60000) });
       if (!response.ok) throw new Error(`Document generation failed (${response.status})`);
       const document = await response.json(); const completedAt = new Date().toISOString();
-      // Persist locally BEFORE touching Supabase. The result is never dependent on remote persistence.
       procedureStorage.update(instance.id, { answers: enrichedAnswers, status: "document_ready", document, completedAt }); localDraftStorage.remove(draftKey);
-      // Remote persistence is best-effort and never blocks navigation.
       void (async () => { try { const supabase = getSupabaseBrowser(); if (!supabase) return; const { data: { session } } = await supabase.auth.getSession(); if (!session?.user) return; await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ answers: enrichedAnswers, status: "document_ready", document, completedAt }), signal: withTimeout(10000) }); } catch (e) { console.warn("Persistencia remota diferida/fallida; resultado local conservado", e); } })();
-      // Redirect immediately after local persistence. Do not await Supabase.
       router.replace(`/tramites/${currentProcedure.slug}/resultado/${instance.id}`);
     } catch (e) { console.error(e); alert(e instanceof Error && e.name === "TimeoutError" ? "La generación está tardando demasiado. Inténtalo nuevamente." : "No fue posible generar el documento. Inténtalo nuevamente."); } finally { setLoading(false); }
   }
