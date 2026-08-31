@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { getSupabaseServer, getUserFromAccessToken } from '../../../../lib/supabaseServerClient';
 import { getProcedurePrice } from '../../../../data/pricing';
-import { getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guestAccess';
+import { createGuestAccessToken, getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guestAccess';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,15 +10,13 @@ export const dynamic = 'force-dynamic';
 type PaymentDocument = {
   id: string;
   procedure_id: string | null;
-  meta: Record<string, unknown> | null;
+  meta: Record<string, any> | null;
 };
 
 export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
     const user = token ? await getUserFromAccessToken(token) : null;
-    const guestToken = user ? '' : getGuestAccessToken(request);
-    if (!user && !guestToken) return NextResponse.json({ error: 'Se requiere autenticación o token de acceso del documento.' }, { status: 401 });
 
     const supabase = getSupabaseServer();
     const body = await request.json();
@@ -38,8 +36,20 @@ export async function POST(request: NextRequest) {
     if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
-    if (guestToken && String(document.meta?.guestAccessTokenHash || '') !== hashGuestAccessToken(guestToken)) {
+    let guestToken = user ? '' : getGuestAccessToken(request);
+    const storedHash = String(document.meta?.guestAccessTokenHash || '');
+
+    // Guest checkout: create the document access credential on first payment attempt.
+    if (!user && !guestToken) guestToken = createGuestAccessToken();
+    if (!user && storedHash && storedHash !== hashGuestAccessToken(guestToken)) {
       return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
+    }
+
+    const guestHash = guestToken ? hashGuestAccessToken(guestToken) : '';
+    if (!user && !storedHash) {
+      const nextMeta = { ...(document.meta || {}), guestAccessTokenHash: guestHash };
+      const { error: metaError } = await supabase.from('documents').update({ meta: nextMeta }).eq('id', document.id);
+      if (metaError) return NextResponse.json({ error: 'No fue posible preparar el acceso de invitado.' }, { status: 500 });
     }
 
     const amountInCents = pricing.price * 100;
@@ -62,13 +72,25 @@ export async function POST(request: NextRequest) {
         status: 'pending',
         provider: 'wompi',
         provider_reference: reference,
-        metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: guestToken ? hashGuestAccessToken(guestToken) : undefined },
+        metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: guestHash || undefined },
       };
       const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
+    } else if (!user && guestHash && !String(existing.metadata?.guestAccessTokenHash || '')) {
+      await supabase.from('payments').update({ metadata: { ...(existing.metadata || {}), guestAccessTokenHash: guestHash } }).eq('id', existing.id);
     }
 
-    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken) });
+    const response = NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken), accessToken: guestToken || undefined });
+    if (!user && guestToken) {
+      response.cookies.set('tramiteya_guest_access', guestToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 30,
+      });
+    }
+    return response;
   } catch {
     return NextResponse.json({ error: 'No fue posible preparar el pago Wompi.' }, { status: 400 });
   }
