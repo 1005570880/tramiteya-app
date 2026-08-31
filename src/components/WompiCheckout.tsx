@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type CheckoutData = { publicKey: string; currency: 'COP'; amountInCents: number; reference: string; integrity: string; price: number; documentVersionId: string };
+type CheckoutData = { publicKey: string; currency: 'COP'; amountInCents: number; reference: string; integrity: string; price: number; documentVersionId: string; accessToken?: string; guest?: boolean };
 declare global { interface Window { WidgetCheckout?: new (config: any) => { open: (callback?: (result: any) => void) => void }; } }
 
 export default function WompiCheckout({ procedureId, documentVersionId, onPending }: { procedureId: string; documentVersionId: string; onPending?: () => void }) {
@@ -62,8 +62,15 @@ export default function WompiCheckout({ procedureId, documentVersionId, onPendin
         const status = String(result?.transaction?.status || '').toUpperCase();
         if (status === 'APPROVED') {
           const approved = await waitForApproval();
-          if (approved) window.location.reload();
-          else setError('El pago fue aprobado, pero estamos esperando la confirmación del servidor. Actualiza esta página en unos segundos.');
+          if (approved) {
+            if (data.accessToken) {
+              const url = new URL(window.location.href);
+              url.searchParams.set('token', data.accessToken);
+              window.location.assign(url.toString());
+            } else {
+              window.location.reload();
+            }
+          } else setError('El pago fue aprobado, pero estamos esperando la confirmación del servidor. Actualiza esta página en unos segundos.');
         } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
           setError('El pago no fue aprobado. Puedes intentarlo nuevamente.');
         }
