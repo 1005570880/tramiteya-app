@@ -17,5 +17,10 @@ export function getGuestAccessToken(request: Request): string {
   const cookies = request.headers.get('cookie') || '';
   const cookie = cookies.split(';').map(v => v.trim()).find(v => v.startsWith('tramiteya_guest_access='));
   if (cookie) return decodeURIComponent(cookie.slice('tramiteya_guest_access='.length));
-  try { return new URL(request.url).searchParams.get('access_token')?.trim() || ''; } catch { return ''; }
+  try {
+    const url = new URL(request.url);
+    return (url.searchParams.get('token') || url.searchParams.get('access_token') || '').trim();
+  } catch {
+    return '';
+  }
 }
