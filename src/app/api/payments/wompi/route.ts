@@ -62,7 +62,10 @@ export async function POST(request: NextRequest) {
     if (!integritySecret || !publicKey) return NextResponse.json({ error: 'Wompi no está configurado en el servidor.' }, { status: 503 });
 
     const integrity = crypto.createHash('sha256').update(`${reference}${amountInCents}${currency}${integritySecret}`).digest('hex');
-    const { data: existing } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
+    const { data: existingRaw } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
+    // El esquema local de Supabase puede no exponer la tabla payments al generador de tipos.
+    // Normalizamos la respuesta aquí para evitar que TypeScript la infiera como `never`.
+    const existing = existingRaw as any;
 
     if (!existing) {
       const paymentPayload: any = {
@@ -78,9 +81,9 @@ export async function POST(request: NextRequest) {
       };
       const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
-    } else if (!user && guestHash && !String((existing as any).metadata?.guestAccessTokenHash || '')) {
+    } else if (!user && guestHash && !String(existing.metadata?.guestAccessTokenHash || '')) {
       const paymentsTable = supabase.from('payments') as any;
-      await paymentsTable.update({ metadata: { ...((existing as any).metadata || {}), guestAccessTokenHash: guestHash } }).eq('id', existing.id);
+      await paymentsTable.update({ metadata: { ...(existing.metadata || {}), guestAccessTokenHash: guestHash } }).eq('id', existing.id);
     }
 
     const response = NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken), accessToken: guestToken || undefined });
