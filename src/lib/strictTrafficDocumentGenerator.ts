@@ -111,8 +111,6 @@ export async function generateStrictTrafficDocument(procedure: Procedure, answer
       procedureSlug: procedure.slug,
       generatedAt,
       content,
-      legalAssessment: draft.assessment,
-      authorities: draft.authorities,
     },
   };
 }
