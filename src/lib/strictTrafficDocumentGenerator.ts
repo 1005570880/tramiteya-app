@@ -18,7 +18,8 @@ function objectValue(value: unknown): Record<string, any> {
 }
 
 function pick(...values: unknown[]): string | undefined {
-  return values.find((value) => value !== undefined && value !== null && sanitizeValue(value) !== '');
+  const value = values.find((candidate) => candidate !== undefined && candidate !== null && sanitizeValue(candidate) !== '');
+  return value === undefined || value === null ? undefined : sanitizeValue(value);
 }
 
 function toRecord(answers: FormAnswers): SelectedRecordData {
