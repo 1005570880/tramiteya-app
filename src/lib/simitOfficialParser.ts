@@ -9,7 +9,15 @@ const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
-const CONTIGUOUS_ID_RE = /(?<!\d)\d{20}(?!\d)/g;
+
+// PDF extraction is not column-aware: a 20-digit identifier can be split
+// across spaces/newlines and the row index may appear before or after it.
+const SPACED_20_DIGIT_ID_RE = /(?<!\d)(?:\d[ \t\n\r]*){20}(?!\d)/g;
+const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,10}S(?![A-Z0-9])/gi;
+const FAD_ID_RE = /(?<![A-Z0-9])\d{4}-FAD-\d+(?![A-Z0-9])/gi;
+const TC_ID_RE = /(?<![A-Z0-9])TC-\d{4}-\d+(?![A-Z0-9])/gi;
+const SA_ID_RE = /(?<![A-Z0-9])\d{4}-\d+-SA(?![A-Z0-9])/gi;
+const PLAIN_10_DIGIT_ID_RE = /(?<!\d)\d{10}(?!\d)/g;
 
 function normalizeWhitespace(value: string): string { return String(value ?? '').replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n').trim(); }
 function compactDigits(value: string): string { return String(value || '').replace(/[^0-9]/g, ''); }
@@ -52,36 +60,63 @@ function extractMunicipality(body: string, date: string | undefined, code?: stri
 }
 
 function buildRecord(number: string, body: string): ParsedSimitRecord | undefined {
-  if (!/^\d{20}$/.test(number)) return undefined;
+  if (!number) return undefined;
   const date = extractDate(body); const code = extractCode(body); const status = extractStatus(body) || 'Pendiente'; const municipality = extractMunicipality(body, date, code);
   const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '');
   const value = extractMoney(withoutNumber);
   return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority: authorityFromMunicipality(municipality, body), plate: extractSimitPlate(body), infractionCode: code, status, value };
 }
 
-/** Accept the official 20-digit SIMIT identifier first; secondary fields are enrichment, not identity validation. */
-function parseNumberedStatementRecords(text: string): ParsedSimitRecord[] {
-  const sectionMatch = text.match(/comparendos\s+y\s+multas([\s\S]*?)(?=\btotal\s+(?:a\s+)?pagar\b|$)/i);
-  const section = sectionMatch?.[1] || text;
-  const anchors = [...section.matchAll(/(?:^|\n)\s*\d+\.\s*(\d{20})\b/g)];
-  if (!anchors.length) return [];
-  return anchors.map((match, i) => { const number = match[1]; const start = match.index ?? 0; const nextStart = anchors[i + 1]?.index ?? section.length; const body = section.slice(start, nextStart).replace(/^\s*\d+\.\s*\d{20}\b/, number); return buildRecord(number, body); }).filter((record): record is ParsedSimitRecord => Boolean(record));
+type IdentifierAnchor = { number: string; index: number; end: number };
+
+function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
+  const anchors: IdentifierAnchor[] = [];
+  const add = (match: RegExpExecArray, normalize: (value: string) => string) => {
+    const number = normalize(match[0]);
+    if (number) anchors.push({ number, index: match.index ?? 0, end: (match.index ?? 0) + match[0].length });
+  };
+  for (const regex of [SPACED_20_DIGIT_ID_RE, FAD_ID_RE, TC_ID_RE, SA_ID_RE, LEGACY_ID_RE]) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) add(match, value => /^(?:\d[ \t\n\r]*){20}$/.test(value) ? compactDigits(value) : value.replace(/\s+/g, ''));
+  }
+
+  const sectionStart = text.search(/comparendos\s+y\s+multas/i);
+  if (sectionStart >= 0) {
+    const sectionEnd = text.search(/\btotal\s+(?:a\s+)?pagar\b/i);
+    const section = text.slice(sectionStart, sectionEnd >= 0 ? sectionEnd : text.length);
+    PLAIN_10_DIGIT_ID_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PLAIN_10_DIGIT_ID_RE.exec(section)) !== null) {
+      const number = match[0]; const absoluteIndex = sectionStart + (match.index ?? 0);
+      const before = section.slice(Math.max(0, (match.index ?? 0) - 30), match.index ?? 0);
+      if (!/estado\s+de\s+cuenta|c[eé]dula|documento|identificaci[oó]n/i.test(before)) anchors.push({ number, index: absoluteIndex, end: absoluteIndex + number.length });
+    }
+  }
+  return anchors.sort((a, b) => a.index - b.index).filter((anchor, index, all) => index === 0 || anchor.number !== all[index - 1].number || anchor.index !== all[index - 1].index);
 }
 
-function parseAnySimitIdentifiers(text: string): ParsedSimitRecord[] {
-  const ids = [...text.matchAll(CONTIGUOUS_ID_RE)];
-  return ids.map((match, i) => { const number = match[0]; const start = match.index ?? 0; const end = ids[i + 1]?.index ?? text.length; return buildRecord(number, text.slice(start, end)); }).filter((record): record is ParsedSimitRecord => Boolean(record));
+function parseIdentifierAnchors(text: string): ParsedSimitRecord[] {
+  const anchors = collectIdentifierAnchors(text);
+  if (!anchors.length) return [];
+  return anchors.map((anchor, i) => {
+    const start = anchor.index; const nextStart = anchors[i + 1]?.index ?? text.length;
+    const body = text.slice(Math.max(0, start - 80), nextStart);
+    return buildRecord(anchor.number, body);
+  }).filter((record): record is ParsedSimitRecord => Boolean(record));
 }
 
 function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
   const map = new Map<string, ParsedSimitRecord>();
-  for (const record of records) { if (!record.number) continue; const previous = map.get(record.number); map.set(record.number, previous ? { ...previous, ...record, date: record.date || previous.date, time: record.time || previous.time, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode, status: record.status || previous.status } : record); }
+  for (const record of records) {
+    if (!record.number) continue;
+    const previous = map.get(record.number);
+    map.set(record.number, previous ? { ...previous, ...record, date: record.date || previous.date, time: record.time || previous.time, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode, status: record.status || previous.status } : record);
+  }
   return [...map.values()];
 }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
-  const numbered = parseNumberedStatementRecords(text);
-  if (numbered.length) return dedupe(numbered);
-  return dedupe(parseAnySimitIdentifiers(text));
+  return dedupe(parseIdentifierAnchors(text));
 }
