@@ -7,20 +7,13 @@ import { getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guest
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type PaymentDocument = {
-  id: string;
-  procedure_id: string | null;
-  meta: Record<string, unknown> | null;
-};
+type PaymentDocument = { id: string; procedure_id: string | null; instance_id?: string | null; meta: Record<string, unknown> | null };
 
 export async function POST(request: NextRequest) {
   try {
     const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
     const user = token ? await getUserFromAccessToken(token) : null;
-    const guestToken = user ? '' : getGuestAccessToken(request);
-    if (!user && !guestToken) return NextResponse.json({ error: 'Se requiere autenticación o token de acceso del documento.' }, { status: 401 });
-
-    const supabase = getSupabaseServer();
+    const requestedGuestToken = getGuestAccessToken(request);
     const body = await request.json();
     const procedureId = String(body?.procedureId || '').trim();
     const documentVersionId = String(body?.documentVersionId || '').trim();
@@ -29,18 +22,20 @@ export async function POST(request: NextRequest) {
     const pricing = getProcedurePrice(procedureId);
     if (!pricing) return NextResponse.json({ error: 'Trámite no disponible para compra.' }, { status: 400 });
 
-    const { data: rawDocument, error: documentError } = await supabase
-      .from('documents')
-      .select('id,procedure_id,meta')
-      .eq('id', documentVersionId)
-      .maybeSingle();
+    const supabase = getSupabaseServer();
+    const { data: rawDocument, error: documentError } = await supabase.from('documents').select('id,procedure_id,instance_id,meta').eq('id', documentVersionId).maybeSingle();
     const document = rawDocument as PaymentDocument | null;
     if (documentError || !document) return NextResponse.json({ error: 'Versión de documento no encontrada.' }, { status: 404 });
     if (document.procedure_id && document.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
 
-    if (guestToken && String(document.meta?.guestAccessTokenHash || '') !== hashGuestAccessToken(guestToken)) {
-      return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
-    }
+    // Registered users use JWT. Guests may use the opaque access token, or the public document/instance ID supplied by the result URL.
+    let guestToken = user ? '' : requestedGuestToken;
+    const storedHash = String(document.meta?.guestAccessTokenHash || '');
+    const directIdGuest = !user && (requestedGuestToken === document.id || requestedGuestToken === document.instance_id);
+    if (!user && !guestToken) return NextResponse.json({ error: 'Se requiere autenticación o token de acceso del documento.' }, { status: 401 });
+    if (!user && storedHash && !directIdGuest && storedHash !== hashGuestAccessToken(guestToken)) return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
+    if (!user && !storedHash && !directIdGuest) return NextResponse.json({ error: 'Token de acceso inválido.' }, { status: 403 });
+    if (!user && directIdGuest) guestToken = requestedGuestToken;
 
     const amountInCents = pricing.price * 100;
     const currency = 'COP';
@@ -51,24 +46,12 @@ export async function POST(request: NextRequest) {
 
     const integrity = crypto.createHash('sha256').update(`${reference}${amountInCents}${currency}${integritySecret}`).digest('hex');
     const { data: existing } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
-
     if (!existing) {
-      const paymentPayload: any = {
-        procedure_id: procedureId,
-        user_id: user?.id || null,
-        document_version_id: documentVersionId,
-        amount: pricing.price,
-        currency,
-        status: 'pending',
-        provider: 'wompi',
-        provider_reference: reference,
-        metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: guestToken ? hashGuestAccessToken(guestToken) : undefined },
-      };
+      const paymentPayload: any = { procedure_id: procedureId, user_id: user?.id || null, document_version_id: documentVersionId, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: !user ? hashGuestAccessToken(guestToken) : undefined, guestAccessType: !user ? (directIdGuest ? 'document_or_instance_id' : 'token') : undefined } };
       const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
       if (insertError && insertError.code !== '23505') return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
-
-    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: Boolean(guestToken) });
+    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId, guest: !Boolean(user), accessToken: !user ? guestToken : undefined });
   } catch {
     return NextResponse.json({ error: 'No fue posible preparar el pago Wompi.' }, { status: 400 });
   }
