@@ -17,32 +17,50 @@ function inferDocumentNumber(text: string, ai: AiAnalysis) { const deterministic
 function extractTotal(text: string) { const match = text.match(/(?:total\s+(?:a\s+)?pagar|total\s+deuda|total\s+pendiente)[^$0-9]{0,40}\$?\s*([0-9.,]{4,})/i); return match?.[1] ? Number(match[1].replace(/[^0-9]/g, '')) : undefined; }
 function looksLikeSimit(text: string) { const n = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' '); const signals = ['estado de cuenta', 'comparendos y multas', 'simit'].filter(x => n.includes(x)).length; if (signals >= 2) return true; const hasIdentifier = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i.test(text); const hasDate = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/.test(text); return hasIdentifier && hasDate; }
 
-// Last-mile fallback: some pdf-parse layouts preserve the visible SIMIT table
-// but introduce unusual separators between digits. Extract only 20-digit
-// identifiers from the Comparendos y multas section; never use arbitrary
-// numbers from the rest of the document as comparendos.
+// Emergency last-mile parser for SIMIT statement PDFs. It deliberately does
+// not depend on table rows, column order, dates, amounts or secondary fields.
+// If the visible statement contains a 20-digit SIMIT identifier, that number
+// is enough to establish a record. Never synthesize facts that are not present.
 function extractStatementIdentifiers(text: string): string[] {
-  const normalized = String(text || '')
+  const source = String(text || '')
     .replace(/\u00a0/g, ' ')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/\r\n?/g, '\n');
-  const start = normalized.search(/comparendos\s+y\s+multas/i);
-  if (start < 0) return [];
-  const endMatch = normalized.slice(start).search(/\btotal\s+(?:a\s+)?pagar\b/i);
-  const section = normalized.slice(start, endMatch >= 0 ? start + endMatch : normalized.length);
+
+  const start = source.search(/comparendos\s+y\s+multas/i);
+  const startText = start >= 0 ? source.slice(start) : source;
+  const totalOffset = start >= 0 ? start : 0;
+  const end = startText.search(/\btotal\s+(?:a\s+)?pagar\b/i);
+  const block = end >= 0 ? startText.slice(0, end) : startText;
+
   const found = new Set<string>();
-  const add = (value: string) => { const digits = value.replace(/\D/g, ''); if (/^\d{20}$/.test(digits)) found.add(digits); };
+  const add = (value: string) => {
+    const digits = String(value).replace(/\D/g, '');
+    if (/^\d{20}$/.test(digits)) found.add(digits);
+  };
 
-  const direct = /(?<!\d)\d{20}(?!\d)/g;
-  let match: RegExpExecArray | null;
-  while ((match = direct.exec(section)) !== null) add(match[0]);
+  // 1. Standard pdf-parse output: the complete 20-digit identifier is intact.
+  for (const match of block.matchAll(/(?<!\d)\d{20}(?!\d)/g)) add(match[0]);
 
-  // Handles IDs rendered as "47001 000000 46390657" or with line breaks.
-  const digitChunks = section.match(/\d[\d\s]{19,45}\d/g) || [];
-  for (const chunk of digitChunks) {
-    const digits = chunk.replace(/\D/g, '');
-    if (/^\d{20}$/.test(digits)) add(digits);
+  // 2. The PDF may split the identifier over whitespace/newlines.
+  for (const match of block.matchAll(/(?:\d[\s]+){19}\d/g)) add(match[0]);
+
+  // 3. Some PDF layouts insert table separators between digit groups.
+  for (const match of block.matchAll(/(?:\d[\s|:.-]+){19}\d/g)) add(match[0]);
+
+  // 4. Last-resort scan of the entire extracted text. This is still safe:
+  // only exactly 20 digits are accepted, so dates, CC numbers and amounts do
+  // not become comparendos. This also handles PDFs where the section heading
+  // itself was lost by the extractor.
+  if (!found.size) {
+    for (const match of source.matchAll(/(?<!\d)\d{20}(?!\d)/g)) add(match[0]);
+    for (const match of source.matchAll(/(?:\d[\s]+){19}\d/g)) add(match[0]);
+    for (const match of source.matchAll(/(?:\d[\s|:.-]+){19}\d/g)) add(match[0]);
   }
+
+  // Keep deterministic document order when identifiers came from a degraded
+  // table. The offset is intentionally not used to invent row data.
+  void totalOffset;
   return [...found];
 }
 
@@ -68,14 +86,11 @@ export async function POST(req: NextRequest) {
     if (!deterministicRecords.length) {
       const fallbackIdentifiers = extractStatementIdentifiers(text);
       if (fallbackIdentifiers.length) {
-        // The identifier itself is sufficient to establish a record. Optional
-        // fields remain undefined until deterministic parsing/provider
-        // enrichment can supply them; no synthetic dates, values or plates.
         deterministicRecords = fallbackIdentifiers.map(number => ({ kind: 'comparendo', number, status: 'Pendiente' }));
-        console.warn('[SIMIT AUDIT] api_identifier_fallback', JSON.stringify({ identifiers: fallbackIdentifiers, timestamp: new Date().toISOString() }));
+        console.warn('[SIMIT AUDIT] identifier_fallback_used', JSON.stringify({ identifiers: fallbackIdentifiers, timestamp: new Date().toISOString() }));
       }
     }
-    if (!deterministicRecords.length) return NextResponse.json({ ok: false, success: false, code: 'SIMIT_NO_DETERMINISTIC_RECORDS', rawText: text, records: [], comparendos: [], message: 'El Estado de Cuenta SIMIT fue leído, pero no se identificaron números de comparendo válidos en el texto extraído.' }, { status: 422 });
+    if (!deterministicRecords.length) return NextResponse.json({ ok: false, success: false, code: 'SIMIT_NO_DETERMINISTIC_RECORDS', rawText: text, records: [], comparendos: [], message: 'El Estado de Cuenta SIMIT fue leído, pero no se pudo reconstruir ningún registro de comparendo.' }, { status: 422 });
 
     const ai = await aiEnrich(text, deterministicRecords);
     const records = mergeEnrichment(deterministicRecords, ai.records || []);
