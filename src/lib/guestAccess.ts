@@ -9,8 +9,8 @@ export function hashGuestAccessToken(token: string): string {
 }
 
 export function getGuestAccessToken(request: Request): string {
-  const header = request.headers.get('x-tramiteya-access-token')?.trim();
-  if (header) return header;
+  const explicit = request.headers.get('x-tramiteya-access-token')?.trim() || request.headers.get('x-guest-access-token')?.trim();
+  if (explicit) return explicit;
   const authorization = request.headers.get('authorization') || '';
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
   if (bearer) return bearer;
