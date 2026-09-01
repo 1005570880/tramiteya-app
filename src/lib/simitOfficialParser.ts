@@ -9,7 +9,6 @@ const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
-// SIMIT record identifiers can appear with different lengths/layouts in the PDF text layer.
 const CONTIGUOUS_ID_RE = /(?<!\d)\d{15,20}(?!\d)/g;
 const SPECIAL_ID_RE = /\b(?:\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)\b/gi;
 
@@ -25,8 +24,7 @@ function extractStatus(value: string): string | undefined { const match = String
 function extractCode(value: string): string | undefined { return String(value || '').match(CODE_RE)?.[1]?.toUpperCase(); }
 
 export function extractSimitDocumentNumber(input: string): string | undefined {
-  const text = normalizeWhitespace(input);
-  if (!text) return undefined;
+  const text = normalizeWhitespace(input); if (!text) return undefined;
   const labelledPatterns = [
     /(?:c[eé]dula|cedula)\s*(?:de\s+)?(?:n[uú]mero|no\.?|nro\.?|n[º°])?\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
     /(?:documento\s+de\s+identidad|n[uú]mero\s+de\s+identificaci[oó]n|identificaci[oó]n)\s*[:#-]?\s*((?:\d[\s\n]*){6,10})(?=\D|$)/i,
@@ -39,12 +37,8 @@ export function extractSimitDocumentNumber(input: string): string | undefined {
 }
 
 export function extractSimitPlate(input: string): string | undefined {
-  const text = normalizeWhitespace(input);
-  if (!text) return undefined;
-  const labelledPatterns = [
-    /(?:^|[\n|])\s*(?:placa|plca)\s*(?:del\s+veh[ií]culo|veh[ií]culo)?\s*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im,
-    /(?:placa|plca)[^A-Z0-9]{0,20}([A-Z]{3}[ -]?\d{3})\b/i,
-  ];
+  const text = normalizeWhitespace(input); if (!text) return undefined;
+  const labelledPatterns = [/(?:^|[\n|])\s*(?:placa|plca)\s*(?:del\s+veh[ií]culo|veh[ií]culo)?\s*[:#=\-]?\s*([A-Z]{3}[ -]?\d{3})\b/im, /(?:placa|plca)[^A-Z0-9]{0,20}([A-Z]{3}[ -]?\d{3})\b/i];
   for (const pattern of labelledPatterns) { const match = text.match(pattern); if (match?.[1]) return match[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase(); }
   const matches = [...text.matchAll(PLATE_RE)].map(m => ({ plate: m[1].replace(/\s+/g, '').replace(/-/g, '').toUpperCase(), index: m.index ?? -1 }));
   for (const { plate, index } of matches) { const before = text.slice(Math.max(0, index - 60), index).toLowerCase(); if (/documento|c[eé]dula|identificaci[oó]n|comparendo|resoluci[oó]n|radicado/.test(before)) continue; if (/^[A-Z]{3}\d{3}$/.test(plate)) return plate; }
@@ -52,88 +46,42 @@ export function extractSimitPlate(input: string): string | undefined {
 }
 
 function authorityFromMunicipality(municipality: string | undefined, body: string): string | undefined { if (municipality) { const direct = findMatchingAuthority(municipality); if (direct) return direct; } return findMatchingAuthority(body); }
-function extractMunicipality(body: string, date: string, code?: string): string | undefined {
-  const dateIndex = body.indexOf(date); if (dateIndex < 0) return undefined;
-  let after = body.slice(dateIndex + date.length).replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, '');
-  if (code) { const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const codeIndex = after.search(new RegExp(`\\b${escapedCode}\\b`, 'i')); if (codeIndex >= 0) after = after.slice(0, codeIndex); }
-  const value = clean(after).replace(/^(?:\|\s*)+/, '').replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '').trim();
-  if (!value || /^(?:\$|[0-9.,\s]+)$/.test(value)) return undefined;
-  return value;
-}
-function parseRecord(number: string, chunk: string): ParsedSimitRecord | undefined {
-  const body = clean(chunk); const date = extractDate(body); if (!date) return undefined; const code = extractCode(body); const status = extractStatus(body) || 'Pendiente'; const municipality = extractMunicipality(body, date, code); const authority = authorityFromMunicipality(municipality, body); const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '');
-  return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority, plate: extractSimitPlate(body), infractionCode: code, status, value: extractMoney(withoutNumber) };
-}
+function extractMunicipality(body: string, date: string, code?: string): string | undefined { const dateIndex = body.indexOf(date); if (dateIndex < 0) return undefined; let after = body.slice(dateIndex + date.length).replace(/^\s*\d{2}:\d{2}(?::\d{2})?\s*/, ''); if (code) { const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const codeIndex = after.search(new RegExp(`\\b${escapedCode}\\b`, 'i')); if (codeIndex >= 0) after = after.slice(0, codeIndex); } const value = clean(after).replace(/^(?:\|\s*)+/, '').replace(/(?:pendiente(?:\s+de\s+pago)?|cobro\s+coactivo|pagado|cancelado|vigente|en\s+cobro).*$/i, '').trim(); if (!value || /^(?:\$|[0-9.,\s]+)$/.test(value)) return undefined; return value; }
+function parseRecord(number: string, chunk: string): ParsedSimitRecord | undefined { const body = clean(chunk); const date = extractDate(body); if (!date) return undefined; const code = extractCode(body); const status = extractStatus(body) || 'Pendiente'; const municipality = extractMunicipality(body, date, code); const authority = authorityFromMunicipality(municipality, body); const withoutNumber = body.replace(new RegExp(number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), ''); return { kind: /cobro\s+coactivo/i.test(body) ? 'multa' : 'comparendo', number, date, time: extractTime(body), municipality, authority, plate: extractSimitPlate(body), infractionCode: code, status, value: extractMoney(withoutNumber) }; }
 function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] { const map = new Map<string, ParsedSimitRecord>(); for (const record of records) { const key = `${record.number || ''}|${record.date || ''}`; const previous = map.get(key); if (!previous) map.set(key, record); else map.set(key, { ...previous, ...record, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value }); } return [...map.values()]; }
 
 function findRecordIdentifiers(text: string): Array<{ number: string; index: number }> {
   const found: Array<{ number: string; index: number }> = []; const seen = new Set<string>();
   for (const match of text.matchAll(CONTIGUOUS_ID_RE)) { const number = match[0]; const index = match.index ?? 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
   for (const match of text.matchAll(SPECIAL_ID_RE)) { const number = normalizeIdentifier(match[0]); const index = match.index ?? 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
-  const splitIdRe = /(?:^|[^0-9])((?:\d[\s|]*){15,20})(?!\d)/g;
-  for (const match of text.matchAll(splitIdRe)) { const number = compactDigits(match[1]); const index = (match.index ?? 0) + (match[0].length - match[1].length); const localWindow = text.slice(index, index + 260); DATE_RE.lastIndex = 0; if (!/^\d{15,20}$/.test(number) || !DATE_RE.test(localWindow)) continue; DATE_RE.lastIndex = 0; const key = `${number}|${index}`; if (!seen.has(key)) { seen.add(key); found.push({ number, index }); } }
   return found.sort((a, b) => a.index - b.index);
 }
 
-function parseTokenAnchoredRows(text: string): ParsedSimitRecord[] {
-  const tokens = normalizeWhitespace(text).split(/\s+/).filter(Boolean);
-  const records: ParsedSimitRecord[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const number = compactDigits(tokens[i]);
-    if (!/^\d{15,20}$/.test(number)) continue;
-    const window = tokens.slice(i, Math.min(tokens.length, i + 40)).join(' ');
-    const date = extractDate(window); const code = extractCode(window);
-    const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/);
-    if (!date || !code || !valueMatch) continue;
-    const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code);
-    records.push({ kind: /cobro\s+coactivo/i.test(window) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) });
-  }
-  return records;
-}
-
-function parseSplitTokenAnchoredRows(text: string): ParsedSimitRecord[] {
+function parseNumberedRows(text: string): ParsedSimitRecord[] {
   const normalized = normalizeWhitespace(text); const records: ParsedSimitRecord[] = [];
-  const re = /(?:^|[^0-9])((?:\d[\s|]*){15,20})(?!\d)/g;
-  for (const match of normalized.matchAll(re)) {
-    const number = compactDigits(match[1]); if (!/^\d{15,20}$/.test(number)) continue;
-    const start = (match.index ?? 0) + match[0].length - match[1].length; const window = normalized.slice(start, start + 360);
-    const date = extractDate(window); const code = extractCode(window); const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/);
-    if (!date || !code || !valueMatch) continue;
-    const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code);
-    records.push({ kind: /cobro\s+coactivo/i.test(window) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) });
+  // The official SIMIT PDF exposes a stable ordinal column (1., 2., ... 29.).
+  // Use that ordinal as the row boundary so 10-digit numeric identifiers and
+  // identifiers containing letters/hyphens are handled exactly like 20-digit IDs.
+  const rowRe = /(?:^|\n)\s*\d{1,3}\.\s+(.+?)(?=\n\s*\d{1,3}\.\s+|\n\s*#?\s*N[uú]mero\s+multa\b|\n\s*Total\s+a\s+pagar\b|$)/gis;
+  for (const match of normalized.matchAll(rowRe)) {
+    const row = clean(match[1]);
+    const id = row.match(/^(\d{7,22}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i)?.[1];
+    if (!id) continue;
+    const record = parseRecord(normalizeIdentifier(id), row);
+    if (record?.date && record.infractionCode && record.value !== undefined) records.push(record);
   }
   return records;
 }
 
-function parseTabularRows(text: string): ParsedSimitRecord[] {
-  const records: ParsedSimitRecord[] = []; const identifiers = [...text.matchAll(CONTIGUOUS_ID_RE)].map(m => ({ number: m[0], index: m.index ?? 0 }));
-  for (let i = 0; i < identifiers.length; i++) { const current = identifiers[i]; const end = identifiers[i + 1]?.index ?? text.length; const chunk = text.slice(current.index, end); const date = extractDate(chunk); const code = extractCode(chunk); const status = extractStatus(chunk) || 'Pendiente'; const valueMatch = chunk.match(/\$\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})/); if (!date || !code || !valueMatch) continue; const municipality = extractMunicipality(chunk, date, code); records.push({ kind: /cobro\s+coactivo/i.test(chunk) ? 'multa' : 'comparendo', number: current.number, date, time: extractTime(chunk), municipality, authority: authorityFromMunicipality(municipality, chunk), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) }); }
-  return records;
-}
-
-/**
- * Last-resort keyword fallback for valid SIMIT PDFs whose text layer loses the
- * visual table boundaries. It still requires a real 15-20 digit record anchor
- * plus date, infraction code and monetary amount, so it cannot invent rows.
- */
-function parseKeywordFallback(text: string): ParsedSimitRecord[] {
-  const normalized = normalizeWhitespace(text); const records: ParsedSimitRecord[] = [];
-  const anchor = /(?:comparendo|multa|resoluci[oó]n|infracci[oó]n|secretar[ií]a)/gi;
-  for (const match of normalized.matchAll(anchor)) {
-    const start = match.index ?? 0; const window = normalized.slice(start, start + 900);
-    const idMatch = window.match(/(?<!\d)\d{15,20}(?!\d)/) || window.match(/\b\d{4}-FAD-\d+\b/i) || window.match(/\bTC-\d{4}-\d+\b/i) || window.match(/\b\d{4}-\d+-SA\b/i);
-    if (!idMatch) continue;
-    const number = normalizeIdentifier(idMatch[0]); const date = extractDate(window); const code = extractCode(window);
-    const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/);
-    if (!date || !code || !valueMatch) continue;
-    const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code);
-    records.push({ kind: /cobro\s+coactivo/i.test(window) || /multa/i.test(match[0]) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) });
-  }
-  return records;
-}
+function parseTokenAnchoredRows(text: string): ParsedSimitRecord[] { const tokens = normalizeWhitespace(text).split(/\s+/).filter(Boolean); const records: ParsedSimitRecord[] = []; for (let i = 0; i < tokens.length; i++) { const number = compactDigits(tokens[i]); if (!/^\d{15,20}$/.test(number)) continue; const window = tokens.slice(i, Math.min(tokens.length, i + 40)).join(' '); const date = extractDate(window); const code = extractCode(window); const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/); if (!date || !code || !valueMatch) continue; const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code); records.push({ kind: /cobro\s+coactivo/i.test(window) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) }); } return records; }
+function parseSplitTokenAnchoredRows(text: string): ParsedSimitRecord[] { const normalized = normalizeWhitespace(text); const records: ParsedSimitRecord[] = []; const re = /(?:^|[^0-9])((?:\d[\s|]*){15,20})(?!\d)/g; for (const match of normalized.matchAll(re)) { const number = compactDigits(match[1]); if (!/^\d{15,20}$/.test(number)) continue; const start = (match.index ?? 0) + match[0].length - match[1].length; const window = normalized.slice(start, start + 360); const date = extractDate(window); const code = extractCode(window); const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/); if (!date || !code || !valueMatch) continue; const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code); records.push({ kind: /cobro\s+coactivo/i.test(window) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) }); } return records; }
+function parseTabularRows(text: string): ParsedSimitRecord[] { const records: ParsedSimitRecord[] = []; const identifiers = [...text.matchAll(CONTIGUOUS_ID_RE)].map(m => ({ number: m[0], index: m.index ?? 0 })); for (let i = 0; i < identifiers.length; i++) { const current = identifiers[i]; const end = identifiers[i + 1]?.index ?? text.length; const chunk = text.slice(current.index, end); const date = extractDate(chunk); const code = extractCode(chunk); const status = extractStatus(chunk) || 'Pendiente'; const valueMatch = chunk.match(/\$\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{4,})/); if (!date || !code || !valueMatch) continue; const municipality = extractMunicipality(chunk, date, code); records.push({ kind: /cobro\s+coactivo/i.test(chunk) ? 'multa' : 'comparendo', number: current.number, date, time: extractTime(chunk), municipality, authority: authorityFromMunicipality(municipality, chunk), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) }); } return records; }
+function parseKeywordFallback(text: string): ParsedSimitRecord[] { const normalized = normalizeWhitespace(text); const records: ParsedSimitRecord[] = []; const anchor = /(?:comparendo|multa|resoluci[oó]n|infracci[oó]n|secretar[ií]a)/gi; for (const match of normalized.matchAll(anchor)) { const start = match.index ?? 0; const window = normalized.slice(start, start + 900); const idMatch = window.match(/(?<!\d)\d{15,20}(?!\d)/) || window.match(/\b\d{4}-FAD-\d+\b/i) || window.match(/\bTC-\d{4}-\d+\b/i) || window.match(/\b\d{4}-\d+-SA\b/i); if (!idMatch) continue; const number = normalizeIdentifier(idMatch[0]); const date = extractDate(window); const code = extractCode(window); const valueMatch = window.match(/\$\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+|[0-9]{4,})\b/); if (!date || !code || !valueMatch) continue; const status = extractStatus(window) || 'Pendiente'; const municipality = extractMunicipality(window, date, code); records.push({ kind: /cobro\s+coactivo/i.test(window) || /multa/i.test(match[0]) ? 'multa' : 'comparendo', number, date, time: extractTime(window), municipality, authority: authorityFromMunicipality(municipality, window), infractionCode: code, status, value: moneyToNumber(valueMatch[1]) }); } return records; }
 
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input); if (!text) return [];
+  const numbered = parseNumberedRows(text);
+  if (numbered.length) return dedupe(numbered);
   const identifiers = findRecordIdentifiers(text); const records: ParsedSimitRecord[] = [];
   for (let index = 0; index < identifiers.length; index++) { const current = identifiers[index]; const end = identifiers[index + 1]?.index ?? text.length; let chunk = text.slice(current.index, end); const totalIndex = chunk.search(/\bTotal\s+(?:a\s+)?pagar\b/i); if (totalIndex >= 0) chunk = chunk.slice(0, totalIndex); const record = parseRecord(current.number, chunk); if (record) records.push(record); }
   return dedupe([...records, ...parseTabularRows(text), ...parseTokenAnchoredRows(text), ...parseSplitTokenAnchoredRows(text), ...parseKeywordFallback(text)]);
