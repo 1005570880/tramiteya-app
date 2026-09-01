@@ -22,14 +22,32 @@ function pick(...values: unknown[]): string | undefined {
   return value === undefined || value === null ? undefined : sanitizeValue(value);
 }
 
+function normalizeAuthority(value: unknown, municipality: unknown): string | undefined {
+  const authority = sanitizeValue(value);
+  const city = sanitizeValue(municipality);
+  if (!authority) return city ? `SECRETARÍA DE TRÁNSITO Y MOVILIDAD DE ${city.toUpperCase()}` : undefined;
+
+  const upper = authority.toUpperCase();
+  if (/SECRETAR[IÍ]A|INSPECCI[ÓO]N|ORGANISMO DE TR[AÁ]NSITO|TR[AÁ]NSITO Y MOVILIDAD|TR[AÁ]NSITO Y TRANSPORTE/.test(upper)) {
+    return authority;
+  }
+
+  if (city && (upper === city.toUpperCase() || upper.replace(/[^A-ZÁÉÍÓÚÜÑ ]/g, '').trim() === city.toUpperCase())) {
+    return `SECRETARÍA DE TRÁNSITO Y MOVILIDAD DE ${city.toUpperCase()}`;
+  }
+
+  return city ? `SECRETARÍA DE TRÁNSITO Y MOVILIDAD DE ${city.toUpperCase()}` : authority;
+}
+
 function toRecord(answers: FormAnswers): SelectedRecordData {
   const a = answers as FormAnswers & Record<string, any>;
   const simit = objectValue(a.__simitRecord);
   const questionnaire = objectValue(a.__tramiQuestionnaire || a.tramiAnswers);
+  const municipality = pick(a.ciudad, a.municipio, simit.municipality);
   const record: SelectedRecordData = {
     comparendo: pick(a.numero_comparendo, simit.number),
     fecha: pick(a.fecha_comparendo, simit.date),
-    organismo: pick(a.entidad, a.autoridad, simit.authority),
+    organismo: normalizeAuthority(pick(a.entidad, a.autoridad, simit.authority), municipality),
     estado: pick(a.estadoComparendo, a.estado, simit.status),
     valor: pick(a.valor, a.valor_multa, simit.value),
     placa: pick(a.placa, simit.plate),
@@ -57,6 +75,17 @@ function toRecord(answers: FormAnswers): SelectedRecordData {
     tramiEvidencia: sanitizeValue(questionnaire.evidencia),
   };
   return record;
+}
+
+function enforceFirstPerson(content: string): string {
+  return content
+    .replace(/El solicitante identificado para el trámite es ([^.]+)\./gi, 'Me identifico como $1.')
+    .replace(/El solicitante manifiesta que no recibió/gi, 'Manifiesto que no recibí')
+    .replace(/El solicitante indica que conoció por primera vez la actuación:/gi, 'Indico que conocí por primera vez la actuación:')
+    .replace(/El solicitante reporta una actuación de cobro/gi, 'Manifiesto que he identificado una actuación de cobro')
+    .replace(/El solicitante manifiesta:/gi, 'Manifiesto:')
+    .replace(/El solicitante señala:/gi, 'Señalo:')
+    .replace(/El solicitante indica:/gi, 'Indico:');
 }
 
 function enrich(answers: FormAnswers): FormAnswers {
@@ -87,7 +116,7 @@ export async function generateStrictTrafficDocument(procedure: Procedure, answer
   const enriched = enrich(answers);
   const record = toRecord(enriched);
   const draft = generateUnifiedLegalDocument(record);
-  const content = draft.document?.trim();
+  const content = enforceFirstPerson(draft.document?.trim() || '');
 
   if (!content || content.length < 500) {
     throw new Error('STRICT_LEGAL_ENGINE_EMPTY_DOCUMENT: la biblioteca jurídica no produjo un documento completo.');
