@@ -28,10 +28,10 @@ const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
 const TWENTY_DIGIT_RE = /(?<!\d)\d{20}(?!\d)/g;
 const SPACED_TWENTY_DIGIT_RE = /(?<!\d)(?:\d[ \t\n\r]+){19}\d(?!\d)/g;
-const FAD_ID_RE = /(?<![A-Z0-9])\d{4}-FAD-\d+(?![A-Z0-9])/gi;
-const TC_ID_RE = /(?<![A-Z0-9])TC-\d{4}-\d+(?![A-Z0-9])/gi;
-const SA_ID_RE = /(?<![A-Z0-9])\d{4}-\d+-SA(?![A-Z0-9])/gi;
-const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,10}S(?![A-Z0-9])/gi;
+const FAD_ID_RE = /(?<![A-Z0-9])\d{4}\s*-\s*FAD\s*-\s*\d+(?![A-Z0-9])/gi;
+const TC_ID_RE = /(?<![A-Z0-9])TC\s*-\s*\d{4}\s*-\s*\d+(?![A-Z0-9])/gi;
+const SA_ID_RE = /(?<![A-Z0-9])\d{4}\s*-\s*\d+\s*-\s*SA(?![A-Z0-9])/gi;
+const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,10}\s*S(?![A-Z0-9])/gi;
 const PLAIN_10_DIGIT_ID_RE = /(?<!\d)\d{10}(?!\d)/g;
 
 function normalizeWhitespace(value: string): string {
@@ -152,9 +152,6 @@ function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
     }
   };
 
-  // Primary path: the official SIMIT statement uses 20-digit comparendo IDs.
-  // Keep this independent from row/column formatting so a degraded PDF layout
-  // cannot make a valid identifier disappear.
   pushMatches(TWENTY_DIGIT_RE, value => value);
   pushMatches(SPACED_TWENTY_DIGIT_RE, value => compactDigits(value));
   pushMatches(FAD_ID_RE, value => value.replace(/\s+/g, ''));
@@ -162,8 +159,6 @@ function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
   pushMatches(SA_ID_RE, value => value.replace(/\s+/g, ''));
   pushMatches(LEGACY_ID_RE, value => value.replace(/\s+/g, ''));
 
-  // Older layouts sometimes expose a 10-digit identifier. Only use this
-  // fallback inside the Comparendos y multas section.
   if (!anchors.length) {
     const sectionStart = text.search(/comparendos\s+y\s+multas/i);
     if (sectionStart >= 0) {
@@ -206,13 +201,24 @@ function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
 export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input);
   if (!text) return [];
-  const anchors = collectIdentifierAnchors(text);
+
+  // IMPORTANT: never let the "Total a pagar" footer become the body of the
+  // last record. We parse only the actual Comparendos y multas section.
+  const sectionStart = text.search(/comparendos\s+y\s+multas/i);
+  const sectionEnd = sectionStart >= 0
+    ? text.search(/\btotal\s+(?:a\s+)?pagar\b/i)
+    : -1;
+  const statementText = sectionStart >= 0
+    ? text.slice(sectionStart, sectionEnd >= sectionStart ? sectionEnd : text.length)
+    : text;
+
+  const anchors = collectIdentifierAnchors(statementText);
   if (!anchors.length) return [];
 
   const records = anchors.map((anchor, index) => {
     const start = anchor.index;
-    const end = anchors[index + 1]?.index ?? text.length;
-    return buildRecord(anchor.number, text.slice(start, end));
+    const end = anchors[index + 1]?.index ?? statementText.length;
+    return buildRecord(anchor.number, statementText.slice(start, end));
   });
 
   return dedupe(records);
