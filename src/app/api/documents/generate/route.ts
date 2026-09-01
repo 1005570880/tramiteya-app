@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { procedures } from '../../../../data/procedures';
 import { generateDocument } from '../../../../lib/generateDocument';
+import { generateStrictTrafficDocument } from '../../../../lib/strictTrafficDocumentGenerator';
 import type { FormAnswers } from '../../../../types/form';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,15 @@ type RequestBody = {
   previousVersion?: number;
   instanceId?: string;
 };
+
+const trafficSlugs = new Set([
+  'prescripcion-comparendo',
+  'caducidad-comparendo',
+  'revocatoria-comparendo',
+  'solicitud-soportes-comparendo',
+  'fotomultas',
+  'derecho-de-peticion-eliminar-multa',
+]);
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,16 +36,21 @@ export async function POST(request: NextRequest) {
     }
 
     const answers = body.answers ?? {};
-    const document = await generateDocument({
-      procedure,
-      answers,
-      previousVersion: body.previousVersion ?? 0,
-      instanceId: body.instanceId,
-    });
+    const document = trafficSlugs.has(procedureSlug)
+      ? await generateStrictTrafficDocument(procedure, answers, body.instanceId)
+      : await generateDocument({
+          procedure,
+          answers,
+          previousVersion: body.previousVersion ?? 0,
+          instanceId: body.instanceId,
+        });
 
     return NextResponse.json(document);
   } catch (error) {
-    console.error('Document generation failed:', error);
-    return NextResponse.json({ error: 'No fue posible generar el documento' }, { status: 500 });
+    console.error('CRITICAL_DOC_GEN_ERROR:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'No fue posible generar el documento' },
+      { status: 500 },
+    );
   }
 }
