@@ -4,31 +4,16 @@ import { getUserFromAccessToken, getSupabaseServer } from '../../../../../lib/su
 import { generateDocxFromContent } from '../../../../../lib/generateDocument';
 import { procedures } from '../../../../../data/procedures';
 import { getGuestAccessToken, hashGuestAccessToken } from '../../../../../lib/guestAccess';
-
 const factory = getRepositoryFactory();
-
-type DocumentRow = {
-  id: string;
-  instance_id: string | null;
-  procedure_id: string;
-  content: string | null;
-  meta: Record<string, any> | null;
-};
-
+type DocumentRow = { id: string; instance_id: string | null; procedure_id: string; content: string | null; meta: Record<string, any> | null };
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const authToken = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
     const user = authToken ? await getUserFromAccessToken(authToken) : null;
     const guestToken = user ? '' : getGuestAccessToken(req);
     const supabase = getSupabaseServer();
-
-    const { data: rawDocument, error: documentError } = await supabase
-      .from('documents')
-      .select('*')
-      .eq('id', params.id)
-      .maybeSingle();
+    const { data: rawDocument, error: documentError } = await supabase.from('documents').select('*').eq('id', params.id).maybeSingle();
     if (documentError || !rawDocument) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
-
     const document = rawDocument as unknown as DocumentRow;
     const instanceId = document.instance_id;
     if (user && instanceId) {
@@ -36,30 +21,23 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       if (!instance) return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
       if (instance.userId && instance.userId !== user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     } else if (!user) {
-      const meta = document.meta || {};
-      const storedHash = String(meta.guestAccessTokenHash || '');
-      if (!guestToken || !storedHash || storedHash !== hashGuestAccessToken(guestToken)) return NextResponse.json({ error: 'Acceso no autorizado.' }, { status: 401 });
+      const storedHash = String(document.meta?.guestAccessTokenHash || '');
+      const directIdGuest = guestToken === document.id || guestToken === instanceId;
+      if (!guestToken || (!directIdGuest && (!storedHash || storedHash !== hashGuestAccessToken(guestToken)))) return NextResponse.json({ error: 'Acceso no autorizado.' }, { status: 401 });
     }
-
     const procedure = procedures.find(item => item.id === document.procedure_id);
     if (!procedure) return NextResponse.json({ error: 'Procedure not found' }, { status: 404 });
-
     let paymentQuery = supabase.from('payments').select('id,status').eq('provider', 'wompi').eq('procedure_id', document.procedure_id).eq('document_version_id', params.id).eq('status', 'approved').limit(1);
     if (user) paymentQuery = paymentQuery.eq('user_id', user.id);
     else paymentQuery = paymentQuery.contains('metadata', { guestAccessTokenHash: hashGuestAccessToken(guestToken) });
     const { data: payment, error: paymentError } = await paymentQuery.maybeSingle();
     if (paymentError || !payment) return NextResponse.json({ error: 'Payment required', code: 'PAYMENT_REQUIRED' }, { status: 402 });
-
     const meta = document.meta || {};
     const snapshot = meta.snapshot && typeof meta.snapshot === 'object' ? meta.snapshot : null;
     const snapshotContent = snapshot && typeof snapshot.content === 'string' ? snapshot.content : null;
     const content = snapshotContent || (typeof document.content === 'string' ? document.content : null);
     if (!content) return NextResponse.json({ error: 'Document content not available' }, { status: 409 });
-
     const buffer = await generateDocxFromContent(content);
     return new NextResponse(buffer as unknown as BodyInit, { status: 200, headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': `attachment; filename="tramiteya-${procedure.slug}-v${meta.version || 1}.docx"`, 'Cache-Control': 'no-store' } });
-  } catch (error) {
-    console.error('Unable to generate document download', error);
-    return NextResponse.json({ error: 'Unable to generate document' }, { status: 500 });
-  }
+  } catch (error) { console.error('Unable to generate document download', error); return NextResponse.json({ error: 'Unable to generate document' }, { status: 500 }); }
 }
