@@ -33,6 +33,7 @@ const TC_ID_RE = /(?<![A-Z0-9])TC\s*-\s*\d{4}\s*-\s*\d+(?![A-Z0-9])/gi;
 const SA_ID_RE = /(?<![A-Z0-9])\d{4}\s*-\s*\d+\s*-\s*SA(?![A-Z0-9])/gi;
 const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,10}\s*S(?![A-Z0-9])/gi;
 const PLAIN_10_DIGIT_ID_RE = /(?<!\d)\d{10}(?!\d)/g;
+const GENERIC_HYPHEN_ID_RE = /(?<![A-Z0-9])[A-Z0-9]+(?:\s*-\s*[A-Z0-9]+)+(?![A-Z0-9])/gi;
 
 function normalizeWhitespace(value: string): string {
   return String(value ?? '')
@@ -141,16 +142,52 @@ function buildRecord(number: string, body: string): ParsedSimitRecord {
 
 type IdentifierAnchor = { number: string; index: number };
 
+function addAnchor(anchors: IdentifierAnchor[], number: string, index: number): void {
+  const normalized = String(number || '').replace(/\s+/g, '').trim();
+  if (!normalized) return;
+  if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(normalized)) return;
+  if (/^\d{1,9}$/.test(normalized)) return;
+  if (!/^\d{10,20}$/.test(normalized) && !/^[A-Z0-9]+(?:-[A-Z0-9]+)+$/i.test(normalized)) return;
+  anchors.push({ number: normalized, index });
+}
+
+function collectRowAnchors(text: string): IdentifierAnchor[] {
+  const anchors: IdentifierAnchor[] = [];
+  const rows = [...text.matchAll(/^\s*\d{1,3}[.)]\s*/gm)];
+  for (let i = 0; i < rows.length; i += 1) {
+    const rowStart = (rows[i].index ?? 0) + rows[i][0].length;
+    const rowEnd = rows[i + 1]?.index ?? text.length;
+    const row = text.slice(rowStart, rowEnd).trim();
+    if (!row) continue;
+
+    const firstToken = row.match(/^(\d{10,20}|[A-Z0-9]+(?:\s*-\s*[A-Z0-9]+)+)(?=\s|$|[$])/i);
+    if (firstToken?.[1]) {
+      addAnchor(anchors, firstToken[1], rowStart + (firstToken.index ?? 0));
+      continue;
+    }
+
+    const beforeDate = row.search(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/);
+    const prefix = beforeDate >= 0 ? row.slice(0, beforeDate) : row.slice(0, 100);
+    const candidate = prefix.match(/(?:^|\s)(\d{10,20}|[A-Z0-9]+(?:\s*-\s*[A-Z0-9]+)+)(?=\s|$|[$])/i);
+    if (candidate?.[1]) addAnchor(anchors, candidate[1], rowStart + (candidate.index ?? 0));
+  }
+  return anchors;
+}
+
 function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
   const anchors: IdentifierAnchor[] = [];
   const pushMatches = (regex: RegExp, normalize: (value: string) => string) => {
     regex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) {
-      const number = normalize(match[0]);
-      if (number) anchors.push({ number, index: match.index ?? 0 });
+      addAnchor(anchors, normalize(match[0]), match.index ?? 0);
     }
   };
+
+  // Row-first extraction is resilient to pdf-parse changing column order or
+  // splitting cells across lines. It recovers the identifier that starts each
+  // numbered statement row, which is the stable unit we need.
+  anchors.push(...collectRowAnchors(text));
 
   pushMatches(TWENTY_DIGIT_RE, value => value);
   pushMatches(SPACED_TWENTY_DIGIT_RE, value => compactDigits(value));
@@ -158,6 +195,7 @@ function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
   pushMatches(TC_ID_RE, value => value.replace(/\s+/g, ''));
   pushMatches(SA_ID_RE, value => value.replace(/\s+/g, ''));
   pushMatches(LEGACY_ID_RE, value => value.replace(/\s+/g, ''));
+  pushMatches(GENERIC_HYPHEN_ID_RE, value => value.replace(/\s+/g, ''));
 
   if (!anchors.length) {
     const sectionStart = text.search(/comparendos\s+y\s+multas/i);
@@ -167,7 +205,7 @@ function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
       PLAIN_10_DIGIT_ID_RE.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = PLAIN_10_DIGIT_ID_RE.exec(section)) !== null) {
-        anchors.push({ number: match[0], index: sectionStart + (match.index ?? 0) });
+        addAnchor(anchors, match[0], sectionStart + (match.index ?? 0));
       }
     }
   }
@@ -202,14 +240,14 @@ export function parseOfficialSimitText(input: string): ParsedSimitRecord[] {
   const text = normalizeWhitespace(input);
   if (!text) return [];
 
-  // IMPORTANT: never let the "Total a pagar" footer become the body of the
-  // last record. We parse only the actual Comparendos y multas section.
+  // Parse only the real "Comparendos y multas" section. This is also the hard
+  // boundary that prevents "Total a pagar" from becoming a fake last record.
   const sectionStart = text.search(/comparendos\s+y\s+multas/i);
   const sectionEnd = sectionStart >= 0
-    ? text.search(/\btotal\s+(?:a\s+)?pagar\b/i)
+    ? text.slice(sectionStart).search(/\btotal\s+(?:a\s+)?pagar\b/i)
     : -1;
   const statementText = sectionStart >= 0
-    ? text.slice(sectionStart, sectionEnd >= sectionStart ? sectionEnd : text.length)
+    ? text.slice(sectionStart, sectionEnd >= 0 ? sectionStart + sectionEnd : text.length)
     : text;
 
   const anchors = collectIdentifierAnchors(statementText);
