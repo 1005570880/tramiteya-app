@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Header from "../../../../components/Header";
 import Footer from "../../../../components/Footer";
 import TramiWidget from "../../../../components/TramiWidget";
@@ -87,7 +86,6 @@ function buildAnswers(record: SimitRecord, documentNumber: string, q: Record<str
 }
 
 export default function SimitAutofillForm({ params }: { params: { slug: string } }) {
-  const router = useRouter();
   const procedure = procedures.find((p) => p.slug === params.slug);
   const definition = getDynamicFormDefinition(params.slug);
   const [selectedRecord, setSelectedRecord] = useState<SimitRecord | null>(null);
@@ -96,8 +94,6 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
   const [fileName, setFileName] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
-  const [isEvaluationComplete, setIsEvaluationComplete] = useState(false);
-  const [instanceId, setInstanceId] = useState("");
   const generationStarted = useRef(false);
 
   useEffect(() => {
@@ -141,6 +137,8 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
 
     window.addEventListener("trami:questionnaire-complete", onComplete);
 
+    // Robustez frente a una carrera de efectos React: Trámi puede completar
+    // el cuestionario antes de que este listener quede registrado.
     const recoverCompletion = () => {
       try {
         const raw = sessionStorage.getItem(TRAMI_ANSWERS_KEY);
@@ -160,19 +158,6 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       window.clearInterval(timer);
     };
   }, [selectedRecord, documentNumber, fileName]);
-
-  // Observador de solo lectura del estado de finalización: la navegación
-  // pertenece exclusivamente a la capa de presentación y no altera SIMIT.
-  useEffect(() => {
-    if (!isEvaluationComplete) return;
-
-    const targetId = instanceId || "draft";
-    const navigationTimer = window.setTimeout(() => {
-      router.replace(`/tramites/derecho-de-peticion-eliminar-multa/resultado/${targetId}`);
-    }, 800);
-
-    return () => window.clearTimeout(navigationTimer);
-  }, [isEvaluationComplete, instanceId, router]);
 
   async function generateWithTrami(questionnaire: Record<string, string>) {
     if (!selectedRecord) return;
@@ -203,7 +188,6 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       }
 
       if (!instance) instance = procedureStorage.create(procedure!.id, procedure!.slug, enriched);
-      setInstanceId(String(instance.id));
 
       const response = await fetch("/api/documents/generate", {
         method: "POST",
@@ -219,7 +203,7 @@ export default function SimitAutofillForm({ params }: { params: { slug: string }
       procedureStorage.update(instance.id, { answers: enriched, status: "document_ready", document, completedAt: new Date().toISOString() });
       localDraftStorage.save(`procedure:${procedure!.slug}`, { data: enriched, savedAt: new Date().toISOString() });
       sessionStorage.setItem(TRAMI_ANSWERS_KEY, JSON.stringify({ version: 5, answers: questionnaire, complete: true, generated: true, updatedAt: new Date().toISOString() }));
-      setIsEvaluationComplete(true);
+      window.location.href = `/tramites/${procedure!.slug}/resultado/${instance.id}`;
     } catch (e) {
       console.error(e);
       generationStarted.current = false;
