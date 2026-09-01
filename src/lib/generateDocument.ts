@@ -3,6 +3,8 @@ import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
 import { buildTrafficDocument } from './trafficDocumentTemplates';
+import { assessLegalSituation, type SelectedRecordData } from './legalEngine';
+import { evaluateTrafficCase } from './legalRules';
 import { refineLegalDocument } from './aiDocumentRefiner';
 import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalDocumentGuard';
 
@@ -40,9 +42,70 @@ function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
   return a;
 }
 
+function legalRecordFromAnswers(a: FormAnswers): SelectedRecordData {
+  const x = a as FormAnswers & Record<string, any>;
+  const source = x.__simitRecord && typeof x.__simitRecord === 'object' ? x.__simitRecord : {};
+  const q = x.__tramiQuestionnaire && typeof x.__tramiQuestionnaire === 'object' ? x.__tramiQuestionnaire : (x.tramiAnswers && typeof x.tramiAnswers === 'object' ? x.tramiAnswers : {});
+  const pick = (...values: unknown[]) => values.find(v => v !== undefined && v !== null && String(v).trim() !== '') as string | undefined;
+  return {
+    comparendo: pick(x.numero_comparendo, source.number),
+    fecha: pick(x.fecha_comparendo, source.date),
+    organismo: pick(x.entidad, x.autoridad, source.authority),
+    estado: pick(x.estadoComparendo, x.estado, source.status),
+    valor: pick(x.valor, x.valor_multa, source.value),
+    placa: pick(x.placa, source.plate),
+    cedula: pick(x.documento, x.cedula, source.documentNumber),
+    codigo: pick(x.codigo_infraccion, x.codigoInfraccion, source.infractionCode, source.code),
+    nombre: pick(x.nombre, x.nombreCompleto, source.ownerName, source.name),
+    correo: pick(x.correo, x.email, source.email),
+    telefono: pick(x.telefono, x.phone, source.phone),
+    fechaResolucion: pick(x.fechaResolucion, x.fecha_resolucion, source.resolutionDate),
+    fechaNotificacion: pick(x.fechaNotificacion, x.fecha_notificacion, source.notificationDate),
+    fechaMandamientoPago: pick(x.fechaMandamientoPago, x.fecha_mandamiento_pago, source.mandamientoDate, source.paymentOrderDate),
+    fechaNotificacionMandamiento: pick(x.fechaNotificacionMandamiento, x.fecha_notificacion_mandamiento, source.paymentOrderNotificationDate),
+    fechaEjecutoria: pick(x.fechaEjecutoria, x.fecha_ejecutoria, source.executedDate),
+    huboAudiencia: x.huboAudiencia ?? x.hubo_audiencia ?? q.audiencia,
+    existeResolucion: x.existeResolucion ?? x.existe_resolucion ?? q.resolucion,
+    actuacionesCobro: pick(x.actuacionesCobro, q.cobro, source.collectionActions),
+    esFotodetencion: Boolean(x.esFotodetencion || /foto|fotomult|fotodetecci[oó]n|camara/i.test(String(q.causal || q.causal_principal || x.causal || ''))),
+    tramiAnswers: q,
+    tramiConocimiento: q.conocimiento || '',
+    tramiNotificacion: q.notificacion || '',
+    tramiAudiencia: q.audiencia || '',
+    tramiResolucion: q.resolucion || '',
+    tramiCobro: q.cobro || '',
+    tramiPagos: q.pagos || '',
+    tramiEvidencia: q.evidencia || '',
+  };
+}
+
+function enrichTrafficAnswers(a: FormAnswers): FormAnswers {
+  const normalized = normalizeTrafficAnswers(a) as FormAnswers & Record<string, any>;
+  const record = legalRecordFromAnswers(normalized);
+  const assessment = assessLegalSituation(record);
+  const decisions = evaluateTrafficCase(normalized);
+  normalized.__legalAssessment = assessment;
+  normalized.__legalDecisionEngine = {
+    version: 3,
+    generatedAt: new Date().toISOString(),
+    primaryRoute: assessment.primaryRoute,
+    routes: assessment.routes,
+    certainty: assessment.certainty,
+    decisions,
+    evidenceQuestions: assessment.evidenceQuestions,
+    missingEvidence: assessment.missingEvidence,
+    temporal: assessment.temporal,
+  };
+  return normalized;
+}
+
 function documentContent(procedure: Procedure, answers: FormAnswers): string {
-  const normalizedAnswers = trafficSlugs.has(procedure.slug) ? normalizeTrafficAnswers(answers) : answers;
-  return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, normalizedAnswers) : buildDocumentText(procedure, normalizedAnswers);
+  if (!trafficSlugs.has(procedure.slug)) return buildDocumentText(procedure, answers);
+  // The final assembler is deliberately responsible for running the legal
+  // decision engine again. This prevents the document endpoint from silently
+  // falling back to a generic draft when the frontend omitted derived fields.
+  const enriched = enrichTrafficAnswers(answers);
+  return buildTrafficDocument(procedure.slug, enriched);
 }
 
 function extractPetitions(content: string): string | null {
