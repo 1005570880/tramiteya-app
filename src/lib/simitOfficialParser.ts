@@ -9,9 +9,6 @@ const TIME_RE = /\b\d{2}:\d{2}(?::\d{2})?\b/;
 const STATUS_RE = /\b(Pendiente(?:\s+de\s+pago)?|Cobro\s+coactivo|Pagado|Cancelado|Acuerdo\s+de\s+pago|Vigente|En\s+cobro)\b/i;
 const CODE_RE = /(?:^|[^A-Z0-9])([A-D]\d{2})(?=$|[^A-Z0-9])/i;
 const PLATE_RE = /\b([A-Z]{3}[ -]?\d{3})\b/gi;
-
-// PDF extraction is not column-aware: a 20-digit identifier can be split
-// across spaces/newlines and the row index may appear before or after it.
 const SPACED_20_DIGIT_ID_RE = /(?<!\d)(?:\d[ \t\n\r]*){20}(?!\d)/g;
 const LEGACY_ID_RE = /(?<![A-Z0-9])\d{6,10}S(?![A-Z0-9])/gi;
 const FAD_ID_RE = /(?<![A-Z0-9])\d{4}-FAD-\d+(?![A-Z0-9])/gi;
@@ -71,25 +68,17 @@ type IdentifierAnchor = { number: string; index: number; end: number };
 
 function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
   const anchors: IdentifierAnchor[] = [];
-  const add = (match: RegExpExecArray, normalize: (value: string) => string) => {
-    const number = normalize(match[0]);
-    if (number) anchors.push({ number, index: match.index ?? 0, end: (match.index ?? 0) + match[0].length });
-  };
+  const add = (match: RegExpExecArray, normalize: (value: string) => string) => { const number = normalize(match[0]); if (number) anchors.push({ number, index: match.index ?? 0, end: (match.index ?? 0) + match[0].length }); };
   for (const regex of [SPACED_20_DIGIT_ID_RE, FAD_ID_RE, TC_ID_RE, SA_ID_RE, LEGACY_ID_RE]) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
+    regex.lastIndex = 0; let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) add(match, value => /^(?:\d[ \t\n\r]*){20}$/.test(value) ? compactDigits(value) : value.replace(/\s+/g, ''));
   }
-
   const sectionStart = text.search(/comparendos\s+y\s+multas/i);
   if (sectionStart >= 0) {
-    const sectionEnd = text.search(/\btotal\s+(?:a\s+)?pagar\b/i);
-    const section = text.slice(sectionStart, sectionEnd >= 0 ? sectionEnd : text.length);
-    PLAIN_10_DIGIT_ID_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
+    const sectionEnd = text.search(/\btotal\s+(?:a\s+)?pagar\b/i); const section = text.slice(sectionStart, sectionEnd >= 0 ? sectionEnd : text.length);
+    PLAIN_10_DIGIT_ID_RE.lastIndex = 0; let match: RegExpExecArray | null;
     while ((match = PLAIN_10_DIGIT_ID_RE.exec(section)) !== null) {
-      const number = match[0]; const absoluteIndex = sectionStart + (match.index ?? 0);
-      const before = section.slice(Math.max(0, (match.index ?? 0) - 30), match.index ?? 0);
+      const number = match[0]; const absoluteIndex = sectionStart + (match.index ?? 0); const before = section.slice(Math.max(0, (match.index ?? 0) - 30), match.index ?? 0);
       if (!/estado\s+de\s+cuenta|c[eé]dula|documento|identificaci[oó]n/i.test(before)) anchors.push({ number, index: absoluteIndex, end: absoluteIndex + number.length });
     }
   }
@@ -97,20 +86,24 @@ function collectIdentifierAnchors(text: string): IdentifierAnchor[] {
 }
 
 function parseIdentifierAnchors(text: string): ParsedSimitRecord[] {
-  const anchors = collectIdentifierAnchors(text);
-  if (!anchors.length) return [];
+  const anchors = collectIdentifierAnchors(text); if (!anchors.length) return [];
   return anchors.map((anchor, i) => {
     const start = anchor.index; const nextStart = anchors[i + 1]?.index ?? text.length;
-    const body = text.slice(Math.max(0, start - 80), nextStart);
-    return buildRecord(anchor.number, body);
+    const core = text.slice(start, nextStart);
+    const prefix = text.slice(Math.max(0, start - 24), start);
+    // Prefer the fields after the identifier. Prefix is used only for degraded
+    // PDF layouts where a field is rendered immediately before the identifier.
+    const coreRecord = buildRecord(anchor.number, core);
+    const prefixRecord = buildRecord(anchor.number, `${prefix} ${core}`);
+    if (!coreRecord) return prefixRecord;
+    return { ...coreRecord, date: coreRecord.date || prefixRecord?.date, time: coreRecord.time || prefixRecord?.time, municipality: coreRecord.municipality || prefixRecord?.municipality, authority: coreRecord.authority || prefixRecord?.authority, plate: coreRecord.plate || prefixRecord?.plate, infractionCode: coreRecord.infractionCode || prefixRecord?.infractionCode, status: coreRecord.status || prefixRecord?.status, value: coreRecord.value ?? prefixRecord?.value };
   }).filter((record): record is ParsedSimitRecord => Boolean(record));
 }
 
 function dedupe(records: ParsedSimitRecord[]): ParsedSimitRecord[] {
   const map = new Map<string, ParsedSimitRecord>();
   for (const record of records) {
-    if (!record.number) continue;
-    const previous = map.get(record.number);
+    if (!record.number) continue; const previous = map.get(record.number);
     map.set(record.number, previous ? { ...previous, ...record, date: record.date || previous.date, time: record.time || previous.time, authority: record.authority || previous.authority, municipality: record.municipality || previous.municipality, plate: record.plate || previous.plate, value: record.value ?? previous.value, infractionCode: record.infractionCode || previous.infractionCode, status: record.status || previous.status } : record);
   }
   return [...map.values()];
