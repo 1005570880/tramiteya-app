@@ -17,6 +17,35 @@ function inferDocumentNumber(text: string, ai: AiAnalysis) { const deterministic
 function extractTotal(text: string) { const match = text.match(/(?:total\s+(?:a\s+)?pagar|total\s+deuda|total\s+pendiente)[^$0-9]{0,40}\$?\s*([0-9.,]{4,})/i); return match?.[1] ? Number(match[1].replace(/[^0-9]/g, '')) : undefined; }
 function looksLikeSimit(text: string) { const n = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' '); const signals = ['estado de cuenta', 'comparendos y multas', 'simit'].filter(x => n.includes(x)).length; if (signals >= 2) return true; const hasIdentifier = /(?:\d{20}|\d{10}|\d{4}-FAD-\d+|TC-\d{4}-\d+|\d{4}-\d+-SA)/i.test(text); const hasDate = /\b\d{2}[/-]\d{2}[/-]\d{4}\b/.test(text); return hasIdentifier && hasDate; }
 
+// Last-mile fallback: some pdf-parse layouts preserve the visible SIMIT table
+// but introduce unusual separators between digits. Extract only 20-digit
+// identifiers from the Comparendos y multas section; never use arbitrary
+// numbers from the rest of the document as comparendos.
+function extractStatementIdentifiers(text: string): string[] {
+  const normalized = String(text || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\r\n?/g, '\n');
+  const start = normalized.search(/comparendos\s+y\s+multas/i);
+  if (start < 0) return [];
+  const endMatch = normalized.slice(start).search(/\btotal\s+(?:a\s+)?pagar\b/i);
+  const section = normalized.slice(start, endMatch >= 0 ? start + endMatch : normalized.length);
+  const found = new Set<string>();
+  const add = (value: string) => { const digits = value.replace(/\D/g, ''); if (/^\d{20}$/.test(digits)) found.add(digits); };
+
+  const direct = /(?<!\d)\d{20}(?!\d)/g;
+  let match: RegExpExecArray | null;
+  while ((match = direct.exec(section)) !== null) add(match[0]);
+
+  // Handles IDs rendered as "47001 000000 46390657" or with line breaks.
+  const digitChunks = section.match(/\d[\d\s]{19,45}\d/g) || [];
+  for (const chunk of digitChunks) {
+    const digits = chunk.replace(/\D/g, '');
+    if (/^\d{20}$/.test(digits)) add(digits);
+  }
+  return [...found];
+}
+
 async function aiEnrich(text: string, deterministicRecords: ExtractedRecord[]): Promise<AiAnalysis> { const key = process.env.OPENAI_API_KEY; if (!key || !deterministicRecords.length) return {}; const prompt = `Eres un enriquecedor documental. NO puedes crear, eliminar ni cambiar registros. Recibes registros determinísticos ya identificados en un Estado de Cuenta SIMIT. Solo completa campos vacíos cuando el dato esté literalmente presente en el texto. Devuelve JSON {"ownerName":"","documentNumber":"","records":[{"number":"","date":"","authority":"","department":"","plate":"","infractionCode":"","description":"","status":"","value":0,"resolutionNumber":"","resolutionDate":"","notificationDate":"","paymentDate":""}],"confidence":0,"evidence":[]}. Conserva exactamente los números de comparendo existentes.\nREGISTROS:\n${JSON.stringify(deterministicRecords)}\nTEXTO:\n${text.slice(0, MAX_TEXT_CHARS)}`; try { const response = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: process.env.OPENAI_SIMIT_MODEL || 'gpt-4o-mini', temperature: 0, messages: [{ role: 'system', content: 'Solo enriqueces evidencia existente. Nunca inventes registros.' }, { role: 'user', content: prompt }], response_format: { type: 'json_object' } }) }); if (!response.ok) return {}; const data = await response.json(); const content = data?.choices?.[0]?.message?.content; if (!content) return {}; const parsed = JSON.parse(content); return { ownerName: parsed?.ownerName ? String(parsed.ownerName) : undefined, documentNumber: parsed?.documentNumber ? normalizeDocument(parsed.documentNumber) : undefined, records: Array.isArray(parsed?.records) ? parsed.records : [], confidence: Number(parsed?.confidence || 0), evidence: Array.isArray(parsed?.evidence) ? parsed.evidence.map(String).slice(0, 5) : [] }; } catch { return {}; } }
 
 async function enrichPlatesFromSimit(documentNumber: string, records: ExtractedRecord[]) { if (!documentNumber || records.every(record => record.plate)) return records; try { const result = await lookupSimitByDocument('CC', documentNumber); const byNumber = new Map(result.comparendos.map(record => [String(record.number || '').replace(/\s+/g, ''), record])); return records.map(record => { if (record.plate) return record; const match = byNumber.get(String(record.number || '').replace(/\s+/g, '')); if (!match?.plate) return record; return { ...record, plate: match.plate }; }); } catch (error) { console.warn('[SIMIT AUDIT] plate_provider_enrichment_unavailable', JSON.stringify({ documentNumber, reason: error instanceof Error ? error.message : String(error) })); return records; } }
@@ -35,7 +64,17 @@ export async function POST(req: NextRequest) {
     if (!text) return NextResponse.json({ ok: false, success: false, code: 'SIMIT_PDF_NO_TEXT', message: 'El PDF no contiene texto extraíble. Descarga nuevamente el Estado de Cuenta desde SIMIT.' }, { status: 422 });
     if (!looksLikeSimit(text)) return NextResponse.json({ ok: false, success: false, code: 'SIMIT_DOCUMENT_NOT_RECOGNIZED', message: 'El PDF no presenta la estructura esperada de un Estado de Cuenta SIMIT.' }, { status: 422 });
 
-    const deterministicRecords = parseOfficialSimitText(text);
+    let deterministicRecords = parseOfficialSimitText(text).map(normalizeRecord).filter((record): record is ExtractedRecord => Boolean(record));
+    if (!deterministicRecords.length) {
+      const fallbackIdentifiers = extractStatementIdentifiers(text);
+      if (fallbackIdentifiers.length) {
+        // The identifier itself is sufficient to establish a record. Optional
+        // fields remain undefined until deterministic parsing/provider
+        // enrichment can supply them; no synthetic dates, values or plates.
+        deterministicRecords = fallbackIdentifiers.map(number => ({ kind: 'comparendo', number, status: 'Pendiente' }));
+        console.warn('[SIMIT AUDIT] api_identifier_fallback', JSON.stringify({ identifiers: fallbackIdentifiers, timestamp: new Date().toISOString() }));
+      }
+    }
     if (!deterministicRecords.length) return NextResponse.json({ ok: false, success: false, code: 'SIMIT_NO_DETERMINISTIC_RECORDS', rawText: text, records: [], comparendos: [], message: 'El Estado de Cuenta SIMIT fue leído, pero no se identificaron números de comparendo válidos en el texto extraído.' }, { status: 422 });
 
     const ai = await aiEnrich(text, deterministicRecords);
@@ -51,23 +90,7 @@ export async function POST(req: NextRequest) {
 
     console.log('[SIMIT AUDIT] statement_upload', JSON.stringify({ documentType: 'CC', documentNumber, plate: finalGlobalPlate, ownerName, fileName: file.name, size: file.size, textLength: text.length, deterministicRecords: deterministicRecords.length, finalRecords: hydratedRecords.length, totalDebt, aiUsed: Boolean(process.env.OPENAI_API_KEY), providerPlateEnrichment: Boolean(finalGlobalPlate && !globalPlate), timestamp: new Date().toISOString() }));
 
-    // Contracto estable para la UI: nunca obliga al frontend a conocer la implementación interna del parser.
-    // `records` y `comparendos` contienen exactamente la misma colección normalizada.
-    return NextResponse.json({
-      ok: true,
-      success: true,
-      source: 'SIMIT_STATEMENT_UPLOAD',
-      extraction: process.env.OPENAI_API_KEY ? 'deterministic+ai-enrichment' : 'deterministic',
-      rawText: text,
-      extractionData: { documentNumber: documentNumber || null, plate: finalGlobalPlate || null, recordCount: hydratedRecords.length },
-      documentType: 'CC', documentNumber, ownerName, plate: finalGlobalPlate, fileName: file.name,
-      recordCount: hydratedRecords.length, totalDebt,
-      records: hydratedRecords,
-      comparendos: hydratedRecords,
-      confidence: ai.confidence || 100,
-      evidence: ai.evidence || [],
-      message: `Estado de Cuenta SIMIT identificado. ${hydratedRecords.length} comparendos y multas encontrados.`
-    });
+    return NextResponse.json({ ok: true, success: true, source: 'SIMIT_STATEMENT_UPLOAD', extraction: process.env.OPENAI_API_KEY ? 'deterministic+ai-enrichment' : 'deterministic', rawText: text, extractionData: { documentNumber: documentNumber || null, plate: finalGlobalPlate || null, recordCount: hydratedRecords.length }, documentType: 'CC', documentNumber, ownerName, plate: finalGlobalPlate, fileName: file.name, recordCount: hydratedRecords.length, totalDebt, records: hydratedRecords, comparendos: hydratedRecords, confidence: ai.confidence || 100, evidence: ai.evidence || [], message: `Estado de Cuenta SIMIT identificado. ${hydratedRecords.length} comparendos y multas encontrados.` });
   } catch (error) {
     console.error('[SIMIT] statement upload error', error);
     return NextResponse.json({ ok: false, success: false, message: 'No fue posible analizar el Estado de Cuenta de SIMIT.' }, { status: 500 });
