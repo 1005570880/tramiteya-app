@@ -13,6 +13,7 @@ import TestimonialsSlider from "../../../../../components/TestimonialsSlider";
 
 function cleanDisplayText(value: string) {
   return String(value || "")
+    .replace(/\r\n?/g, "\n")
     .replace(/^\s*#{1,6}\s*/gm, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
@@ -24,23 +25,19 @@ function cleanDisplayText(value: string) {
 }
 
 function DocumentBody({ content }: { content: string }) {
-  const lines = useMemo(() => {
-    const normalized = cleanDisplayText(String(content || "").replace(/\r\n?/g, "\n"));
-    return normalized.split("\n");
+  const blocks = useMemo(() => {
+    const normalized = cleanDisplayText(content);
+    return normalized.split("\n\n").filter((block) => block.trim());
   }, [content]);
 
   return (
-    <article
-      className="mx-auto w-full max-w-[850px] bg-white border border-slate-300 shadow-xl px-8 py-10 md:px-12 md:py-12 text-[15px] text-slate-900 leading-[1.3]"
-      style={{ fontFamily: '"Arial Narrow", Arial, sans-serif', whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-    >
-      {lines.map((line, index) => (
-        <React.Fragment key={index}>
-          {line}
-          {index < lines.length - 1 ? "\n" : null}
-        </React.Fragment>
+    <div className="prose max-w-none text-gray-900 leading-relaxed space-y-4 whitespace-pre-wrap font-sans p-8">
+      {blocks.map((block, index) => (
+        <div key={index} className="whitespace-pre-wrap">
+          {block}
+        </div>
       ))}
-    </article>
+    </div>
   );
 }
 
@@ -100,6 +97,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
 
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
   <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Historial ({docs.length})</button></div>
-  {tab === "preview" ? <div className="mt-6"><DocumentBody content={latest?.content || "El contenido del documento no está disponible todavía."} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
+  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentBody content={latest?.content || "El contenido del documento no está disponible todavía."} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
   <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p></div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
