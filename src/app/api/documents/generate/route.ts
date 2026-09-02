@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { procedures } from '../../../../data/procedures';
 import { generateDocument } from '../../../../lib/generateDocument';
-import { generateStrictTrafficDocument } from '../../../../lib/strictTrafficDocumentGenerator';
 import type { FormAnswers } from '../../../../types/form';
 
 export const runtime = 'nodejs';
@@ -13,19 +12,11 @@ type RequestBody = {
   instanceId?: string;
 };
 
-const trafficSlugs = new Set([
-  'prescripcion-comparendo',
-  'caducidad-comparendo',
-  'revocatoria-comparendo',
-  'solicitud-soportes-comparendo',
-  'fotomultas',
-  'derecho-de-peticion-eliminar-multa',
-]);
-
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RequestBody;
     const procedureSlug = body.procedureSlug?.trim();
+
     if (!procedureSlug) {
       return NextResponse.json({ error: 'procedureSlug es obligatorio' }, { status: 400 });
     }
@@ -35,15 +26,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Trámite no encontrado' }, { status: 404 });
     }
 
-    const answers = body.answers ?? {};
-    const document = trafficSlugs.has(procedureSlug)
-      ? await generateStrictTrafficDocument(procedure, answers, body.instanceId)
-      : await generateDocument({
-          procedure,
-          answers,
-          previousVersion: body.previousVersion ?? 0,
-          instanceId: body.instanceId,
-        });
+    const document = await generateDocument({
+      procedure,
+      answers: body.answers ?? {},
+      previousVersion: body.previousVersion ?? 0,
+      instanceId: body.instanceId,
+    });
 
     return NextResponse.json(document);
   } catch (error) {
