@@ -45,7 +45,15 @@ export async function POST(request: NextRequest) {
             if (docRepo) {
               const guestToken = user ? '' : requestedGuestToken || requestedInstanceId;
               const persisted = await docRepo.create({ ...generated, instanceId: undefined, meta: !user && guestToken ? { guestAccessTokenHash: hashGuestAccessToken(guestToken), guestAccessType: 'instance-id' } : undefined } as any);
-              rawDocument = persisted as PaymentDocument;
+              // DocumentItem and PaymentDocument have different repository shapes.
+              // Normalize the persisted record explicitly so TypeScript does not accept
+              // an unsafe structural assertion while preserving the runtime fields used here.
+              rawDocument = {
+                id: String(persisted.id),
+                procedure_id: persisted.procedure_id ?? null,
+                instance_id: persisted.instance_id ?? persisted.instanceId ?? null,
+                meta: (persisted.meta ?? null) as Record<string, any> | null,
+              };
             }
           } catch (generationError) {
             console.warn('WOMPI_DOCUMENT_MATERIALIZATION_FALLBACK:', generationError);
