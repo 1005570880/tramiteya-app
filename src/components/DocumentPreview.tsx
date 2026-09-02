@@ -7,20 +7,12 @@ import WompiCheckout from "./WompiCheckout";
 function cleanDisplayText(value: string) {
   return String(value || "").replace(/\r\n?/g, "\n").replace(/^\s*#{1,6}\s*/gm, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/__(.*?)__/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^\s*[-•]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
-
 function isFundamentalsStart(line: string) { return /^\s*IV\.?\s+FUNDAMENTOS DE DERECHO\b/i.test(line.trim()); }
 
-export default function DocumentPreview({ content, instanceId, initiallyUnlocked = false, onUnlocked }: { content: string; instanceId?: string; initiallyUnlocked?: boolean; onUnlocked?: () => void; }) {
+export default function DocumentPreview({ content, procedureId, instanceId, initiallyUnlocked = false }: { content: string; procedureId: string; instanceId?: string; initiallyUnlocked?: boolean; }) {
   const [unlocked, setUnlocked] = useState(initiallyUnlocked);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-
-  const sections = useMemo(() => {
-    const lines = cleanDisplayText(content).split("\n");
-    const index = lines.findIndex(isFundamentalsStart);
-    if (index < 0) return { visible: lines, protected: [] as string[] };
-    return { visible: lines.slice(0, index), protected: lines.slice(index) };
-  }, [content]);
-
+  const sections = useMemo(() => { const lines = cleanDisplayText(content).split("\n"); const index = lines.findIndex(isFundamentalsStart); if (index < 0) return { visible: lines, protected: [] as string[] }; return { visible: lines.slice(0, index), protected: lines.slice(index) }; }, [content]);
   const handlePending = () => setCheckoutOpen(true);
 
   return <div className="relative">
@@ -41,7 +33,7 @@ export default function DocumentPreview({ content, instanceId, initiallyUnlocked
       <button type="button" aria-label="Cerrar" onClick={() => setCheckoutOpen(false)} className="absolute right-4 top-4 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
       <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white"><FileText className="h-5 w-5" /></div><div><h2 className="text-lg font-bold text-slate-900">Completa tu pago</h2><p className="text-sm text-slate-500">Documento jurídico completo · $49.900 COP</p></div></div>
       <div className="mt-5 space-y-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-600"><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />Sin crear cuenta ni iniciar sesión</div><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />Acceso inmediato al documento completo</div><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />PDF y Word (.DOCX) disponibles después del pago</div></div>
-      <div className="mt-5"><WompiCheckout procedureId="traffic" documentVersionId={instanceId} instanceId={instanceId} onPending={handlePending} /></div>
+      <div className="mt-5"><WompiCheckout procedureId={procedureId} instanceId={instanceId} onPending={handlePending} /></div>
       <p className="mt-3 text-center text-[11px] text-slate-400">Checkout oficial de Wompi · $49.900 COP · sin registro.</p>
     </div></div>}
   </div>;
