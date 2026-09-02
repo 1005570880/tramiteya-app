@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { FileText, Scale, ShieldCheck } from "lucide-react";
 import { procedureStorage } from "../../../../../lib/procedureStorage";
 import type { ProcedureInstance } from "../../../../../types/procedure";
 import { getSupabaseBrowser } from "../../../../../lib/supabaseBrowserClient";
@@ -33,6 +34,48 @@ function DocumentBody({ content }: { content: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function DocumentLoadingState() {
+  return (
+    <section className="min-h-[60vh] flex flex-col items-center justify-center bg-slate-50 px-4 py-12 text-center">
+      <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-8 shadow-xl">
+        <div className="mb-6 flex flex-col items-center">
+          <div className="relative flex h-20 w-20 items-center justify-center">
+            <div className="absolute inset-0 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-sm">
+              <FileText className="h-7 w-7" strokeWidth={1.9} aria-hidden="true" />
+              <Scale className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-white p-0.5 text-indigo-600" strokeWidth={2} aria-hidden="true" />
+            </div>
+          </div>
+        </div>
+
+        <div className="mx-auto mb-6 max-w-sm">
+          <h2 className="text-xl font-bold leading-tight text-gray-900 sm:text-2xl">
+            Estamos ensamblando tu escrito jurídico blindado...
+          </h2>
+          <p className="mt-3 text-sm leading-relaxed text-gray-600">
+            Analizando la caducidad, prescripción y notificaciones para que radiques este documento en la Secretaría de Tránsito y logres la eliminación de tus comparendos.
+          </p>
+        </div>
+
+        <div className="mb-6 w-full overflow-hidden rounded-full bg-gray-100" role="progressbar" aria-label="Generando documento jurídico">
+          <div className="h-2 w-3/4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 animate-pulse" />
+        </div>
+
+        <div className="flex w-full flex-col gap-2 text-xs font-medium">
+          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
+            <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Fundamentación Constitucional C-038/20</span>
+          </div>
+          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-600">
+            <FileText className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Formato listo para radicación presencial o correo</span>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -75,7 +118,7 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
 
   useEffect(() => { load(); }, [params.id, params.slug]);
 
-  if (loading) return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16">Cargando documento...</section><Footer /></main>;
+  if (loading) return <main className="min-h-screen bg-slate-50"><Header /><DocumentLoadingState /><Footer /></main>;
   if (!instance) return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no encontrado.</h1></section><Footer /></main>;
 
   const docs = history.length ? history : (instance.document ? [instance.document] : []);
