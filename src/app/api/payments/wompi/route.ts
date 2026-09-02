@@ -4,6 +4,7 @@ import { getSupabaseServer, getUserFromAccessToken } from '../../../../lib/supab
 import { getProcedurePrice } from '../../../../data/pricing';
 import { procedures } from '../../../../data/procedures';
 import { getRepositoryFactory } from '../../../../lib/repositoryFactory';
+import { generateStrictTrafficDocument } from '../../../../lib/strictTrafficDocumentGenerator';
 import { getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guestAccess';
 
 export const runtime = 'nodejs';
@@ -32,8 +33,6 @@ export async function POST(request: NextRequest) {
       rawDocument = (result.data as PaymentDocument | null) || null;
     }
 
-    // Guests may arrive with only the live procedure instance. Do not require a
-    // pre-existing document version: use the instance as the payment subject.
     if (!rawDocument && requestedInstanceId) {
       const factory = getRepositoryFactory();
       const instance = await factory.getInstanceRepo().get(requestedInstanceId);
@@ -60,9 +59,6 @@ export async function POST(request: NextRequest) {
       rawDocument = (result.data as PaymentDocument | null) || null;
     }
 
-    // Last-resort guest checkout: a live instance is sufficient to open Wompi.
-    // If no persisted version exists, use the instance UUID as a stable payment
-    // subject and leave document_version_id nullable in the payment record.
     const documentId = rawDocument?.id || requestedDocumentVersionId || requestedInstanceId;
     if (!documentId) return NextResponse.json({ error: 'No fue posible identificar la instancia del documento.' }, { status: 400 });
     if (rawDocument?.procedure_id && rawDocument.procedure_id !== procedureId) return NextResponse.json({ error: 'El documento no corresponde al trámite.' }, { status: 409 });
@@ -82,25 +78,17 @@ export async function POST(request: NextRequest) {
     if (!integritySecret || !publicKey) return NextResponse.json({ error: 'Wompi no está configurado en el servidor.' }, { status: 503 });
     const integrity = crypto.createHash('sha256').update(`${reference}${amountInCents}${currency}${integritySecret}`).digest('hex');
 
-    if (rawDocument) {
-      const { data: existing } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
-      if (!existing) {
-        const paymentPayload: any = { procedure_id: procedureId, user_id: user?.id || null, document_version_id: rawDocument.id, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: !user ? hashGuestAccessToken(guestToken) : undefined, guestAccessType: !user ? (directIdGuest ? 'document_or_instance_id' : 'token') : undefined, instanceId: requestedInstanceId || rawDocument.instance_id || undefined } };
-        const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
-        if (insertError && insertError.code !== '23505') console.warn('WOMPI_PAYMENT_PERSISTENCE_WARNING:', insertError.message);
-      }
-    } else {
-      // No document row: do not block checkout. If the payments table accepts a
-      // nullable document_version_id, persist against the instance metadata so
-      // approval can still be reconciled by the guest access token.
-      const { data: existing } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
-      if (!existing) {
-        const { error: insertError } = await supabase.from('payments').insert({ procedure_id: procedureId, user_id: user?.id || null, document_version_id: null, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference, metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: !user ? hashGuestAccessToken(guestToken) : undefined, guestAccessType: !user ? 'instance-id' : undefined, instanceId: requestedInstanceId || undefined } } as any);
-        if (insertError) console.warn('WOMPI_GUEST_PAYMENT_PERSISTENCE_WARNING:', insertError.message);
-      }
+    const { data: existing } = await supabase.from('payments').select('*').eq('provider', 'wompi').eq('provider_reference', reference).maybeSingle();
+    if (!existing) {
+      const paymentPayload: any = {
+        procedure_id: procedureId, user_id: user?.id || null, document_version_id: rawDocument?.id || null, amount: pricing.price, currency, status: 'pending', provider: 'wompi', provider_reference: reference,
+        metadata: { reference, amount_in_cents: amountInCents, guestAccessTokenHash: !user ? hashGuestAccessToken(guestToken) : undefined, guestAccessType: !user ? (directIdGuest ? 'document_or_instance_id' : 'token') : undefined, instanceId: requestedInstanceId || rawDocument?.instance_id || undefined },
+      };
+      const { error: insertError } = await supabase.from('payments').insert(paymentPayload);
+      if (insertError) console.warn('WOMPI_PAYMENT_PERSISTENCE_WARNING:', insertError.message);
     }
 
-    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId: rawDocument?.id || undefined, instanceId: requestedInstanceId || rawDocument?.instance_id || undefined, guest: !Boolean(user), accessToken: !user ? guestToken : undefined });
+    return NextResponse.json({ publicKey, currency, amountInCents, reference, integrity, price: pricing.price, documentVersionId: rawDocument?.id || requestedDocumentVersionId || requestedInstanceId || undefined, instanceId: requestedInstanceId || rawDocument?.instance_id || undefined, guest: !Boolean(user), accessToken: !user ? guestToken : undefined });
   } catch (error) {
     console.error('WOMPI_CHECKOUT_ERROR:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'No fue posible preparar el pago Wompi.' }, { status: 400 });
