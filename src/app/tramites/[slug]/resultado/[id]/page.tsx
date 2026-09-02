@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FileText, Scale, ShieldCheck } from "lucide-react";
 import { procedureStorage } from "../../../../../lib/procedureStorage";
 import type { ProcedureInstance } from "../../../../../types/procedure";
@@ -9,33 +9,7 @@ import { useRouter } from "next/navigation";
 import Header from "../../../../../components/Header";
 import Footer from "../../../../../components/Footer";
 import TestimonialsSlider from "../../../../../components/TestimonialsSlider";
-
-function cleanDisplayText(value: string) {
-  return String(value || "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/^\s*#{1,6}\s*/gm, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^\s*[-•]\s+/gm, "")
-    .replace(/^\s*\d+[.)]\s+/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function DocumentBody({ content }: { content: string }) {
-  const lines = useMemo(() => cleanDisplayText(content).split("\n"), [content]);
-
-  return (
-    <div className="prose max-w-none text-gray-900 leading-relaxed space-y-4 whitespace-pre-wrap font-sans p-8">
-      {lines.map((line, index) => (
-        <div key={index} className="whitespace-pre-wrap">
-          {line}
-        </div>
-      ))}
-    </div>
-  );
-}
+import DocumentPreview from "../../../../../components/DocumentPreview";
 
 function DocumentLoadingState() {
   return (
@@ -50,29 +24,14 @@ function DocumentLoadingState() {
             </div>
           </div>
         </div>
-
         <div className="mx-auto mb-6 max-w-sm">
-          <h2 className="text-xl font-bold leading-tight text-gray-900 sm:text-2xl">
-            Estamos ensamblando tu escrito jurídico blindado...
-          </h2>
-          <p className="mt-3 text-sm leading-relaxed text-gray-600">
-            Analizando la caducidad, prescripción y notificaciones para que radiques este documento en la Secretaría de Tránsito y logres la eliminación de tus comparendos.
-          </p>
+          <h2 className="text-xl font-bold leading-tight text-gray-900 sm:text-2xl">Estamos ensamblando tu escrito jurídico blindado...</h2>
+          <p className="mt-3 text-sm leading-relaxed text-gray-600">Analizando la caducidad, prescripción y notificaciones para que radiques este documento en la Secretaría de Tránsito y logres la eliminación de tus comparendos.</p>
         </div>
-
-        <div className="mb-6 w-full overflow-hidden rounded-full bg-gray-100" role="progressbar" aria-label="Generando documento jurídico">
-          <div className="h-2 w-3/4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 animate-pulse" />
-        </div>
-
+        <div className="mb-6 w-full overflow-hidden rounded-full bg-gray-100" role="progressbar" aria-label="Generando documento jurídico"><div className="h-2 w-3/4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 animate-pulse" /></div>
         <div className="flex w-full flex-col gap-2 text-xs font-medium">
-          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700">
-            <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>Fundamentación Constitucional C-038/20</span>
-          </div>
-          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-600">
-            <FileText className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>Formato listo para radicación presencial o correo</span>
-          </div>
+          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700"><ShieldCheck className="h-4 w-4 shrink-0" />Fundamentación Constitucional C-038/20</div>
+          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-600"><FileText className="h-4 w-4 shrink-0" />Formato listo para radicación presencial o correo</div>
         </div>
       </div>
     </section>
@@ -112,7 +71,7 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
       setInstance(local);
       const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(local?.procedureId || local?.procedureSlug || params.slug)}&instanceId=${encodeURIComponent(params.id)}`, { headers: guestHeaders, cache: "no-store" });
       if (paymentResponse.ok) { const payment = await paymentResponse.json(); setPaid(Boolean(payment.approved)); if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId); }
-      try { const stored = localStorage.getItem(`tramiteya:paid-document:${params.id}`); if (stored) setResolvedDocumentId(stored); } catch { /* localStorage may be unavailable */ }
+      try { const stored = localStorage.getItem(`tramiteya:paid-document:${params.id}`); if (stored) setResolvedDocumentId(stored); } catch {}
     } finally { setLoading(false); }
   }
 
@@ -135,6 +94,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
 
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
   <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Historial ({docs.length})</button></div>
-  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentBody content={latest?.content || "El contenido del documento no está disponible todavía."} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
+  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentPreview content={latest?.content || "El contenido del documento no está disponible todavía."} instanceId={instance.id} initiallyUnlocked={paid} onUnlocked={() => setPaid(true)} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
   <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p></div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
