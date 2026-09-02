@@ -18,34 +18,56 @@ function amap(a: FormAnswers): AnswerMap { return a as AnswerMap; }
 function firstValue(a: FormAnswers, ...keys: string[]): string { for (const k of keys) { const v=amap(a)[k]; if(v===undefined||v===null) continue; const s=Array.isArray(v)?v.map(String).join(', ').trim():String(v).trim(); if(s)return s; } return ''; }
 function obj(v: unknown): Record<string,unknown> { return v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}; }
 function nested(r: Record<string,unknown>, ...keys:string[]): string { for(const k of keys){const v=r[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim();}return ''; }
-function shown(v:string):string{return v.trim()||'NO REPORTADO EN LA INFORMACIÓN APORTADA';}
+function isMissing(v:string):boolean { return !v.trim() || /NO REPORTADO(?: EN LA INFORMACIÓN APORTADA)?/i.test(v.trim()); }
+function shown(v:string):string{return v.trim()||'NO REPORTADO EN LA INFORMACIÓN APORTADA'; }
+function normalizeCity(value:string):string {
+  const raw=value.trim().replace(/\s+/g,' ');
+  if(isMissing(raw)) return '';
+  const withoutDepartment=raw.replace(/\s*[-–—]\s*(?:DPTAL|DEPARTAMENTAL|DPTO|DEPTO)\.?\s*(?:SUCRE|[A-ZÁÉÍÓÚÑ .'-]+)$/i,'').trim();
+  const withoutTransitSuffix=withoutDepartment.replace(/\s*[-–—]\s*(?:SECRETAR[IÍ]A|ORGANISMO|TR[AÁ]NSITO|MOVILIDAD).*$/i,'').trim();
+  const folded=withoutTransitSuffix.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  if(folded==='SAMPUES') return 'SAMPUÉS';
+  if(folded==='SANTA MARTA') return 'SANTA MARTA';
+  return withoutTransitSuffix.toUpperCase();
+}
 function deriveMunicipalityFromAuthority(value:string):string {
   const s=value.trim();
   if(!s)return '';
-  const santaMarta=s.match(/SANTA\s*MARTA/i); if(santaMarta)return 'SANTA MARTA';
+  if(/SANTA\s*MARTA/i.test(s))return 'SANTA MARTA';
+  if(/SAMPU[ÉE]S/i.test(s))return 'SAMPUÉS';
+  const cleaned=normalizeCity(s);
   const patterns=[/\b(?:MUNICIPIO|DISTRITO)\s+DE\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,})$/i,/\b(?:DE|DEL)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,})$/i];
-  for(const pattern of patterns){const m=s.match(pattern);if(m?.[1])return m[1].trim();}
-  return '';
+  for(const pattern of patterns){const m=s.match(pattern);if(m?.[1])return normalizeCity(m[1]);}
+  return cleaned && !/^(SECRETAR[IÍ]A|ORGANISMO|AUTORIDAD|TR[AÁ]NSITO|MOVILIDAD)/i.test(cleaned)?cleaned:'';
 }
 function municipality(a:FormAnswers):string {
   const s=obj(amap(a).__simitRecord);
-  const explicitCity=firstValue(a,'ciudad','municipio');
+  const explicitCity=firstValue(a,'ciudad');
+  const explicitMunicipality=firstValue(a,'municipio');
   const recordCity=nested(s,'municipality','municipio','city');
   const organism=firstValue(a,'organismoTransito','organismo_transito')||nested(s,'organismoTransito','organismo','authority','entidad');
   const secretaria=firstValue(a,'secretaria','secretaría')||nested(s,'secretaria','secretaría','secretariaDeTransito');
-  return shown(explicitCity||recordCity||deriveMunicipalityFromAuthority(organism)||deriveMunicipalityFromAuthority(secretaria));
+  const candidate=explicitCity&&!isMissing(explicitCity)?explicitCity:explicitMunicipality&&!isMissing(explicitMunicipality)?explicitMunicipality:recordCity&&!isMissing(recordCity)?recordCity:deriveMunicipalityFromAuthority(organism)||deriveMunicipalityFromAuthority(secretaria);
+  return shown(normalizeCity(candidate));
 }
 export function resolveAuthorityHeader(municipalityName:string, authority?:string):string {
-  const city=municipalityName.trim();
+  const city=normalizeCity(municipalityName);
   const explicit=(authority||'').trim();
-  if(explicit && !/AUTORIDAD DE TRÁNSITO COMPETENTE/i.test(explicit)) return explicit.toUpperCase();
-  if(/SANTA\s*MARTA/i.test(city)) return 'SECRETARÍA DE TRÁNSITO Y MOVILIDAD DEL DISTRITO DE SANTA MARTA';
+  const cleanExplicit=normalizeCity(explicit);
+  const cleanFold=(value:string)=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  const cityFold=cleanFold(city);
+  if(cityFold.includes('SAMPUES') || cleanFold(explicit).includes('SAMPUES')) return 'SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE SAMPUÉS - SUCRE';
+  if(cityFold.includes('SANTA MARTA') || cleanFold(explicit).includes('SANTA MARTA')) return 'SECRETARÍA DE TRÁNSITO Y MOVILIDAD DEL DISTRITO DE SANTA MARTA';
+  if(explicit && !/AUTORIDAD DE TRÁNSITO COMPETENTE/i.test(explicit) && !/^(?:SAMPUES?|SANTA MARTA)\s*[-–—]/i.test(explicit)) {
+    if(/SECRETAR[IÍ]A|ORGANISMO|INSTITUTO|DIRECCI[ÓO]N|DEPARTAMENTO ADMINISTRATIVO/i.test(explicit)) return explicit.toUpperCase();
+  }
   if(city&&!city.startsWith('NO REPORTADO')) return `SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE ${city.toUpperCase()}`;
+  if(cleanExplicit && !cleanExplicit.startsWith('NO REPORTADO')) return `SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE ${cleanExplicit}`;
   throw new Error('LEGAL_DOCUMENT_AUTHORITY_UNRESOLVED: no fue posible identificar la autoridad de tránsito.');
 }
-function filingDate(a:FormAnswers):string { const city=municipality(a); const s=obj(amap(a).__simitRecord); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento'); const n=new Date(); const d=`${n.getDate()} de ${MONTHS_ES[n.getMonth()]} de ${n.getFullYear()}`; return dep?`${city.toUpperCase()}, ${dep.toUpperCase()}, ${d}`:`${city.toUpperCase()}, ${d}`; }
+function filingDate(a:FormAnswers):string { const city=municipality(a); const s=obj(amap(a).__simitRecord); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento')||(/SAMPU[ÉE]S/i.test(city)?'SUCRE':''); const n=new Date(); const d=`${n.getDate()} de ${MONTHS_ES[n.getMonth()]} de ${n.getFullYear()}`; return dep?`${city.toUpperCase()}, ${dep.toUpperCase()}, ${d}`:`${city.toUpperCase()}, ${d}`; }
 function cop(v:string):string { if(!v.trim())return 'NO REPORTADO'; const n=v.replace(/[^0-9]/g,''); return n?Number(n).toLocaleString('es-CO'):v.trim(); }
-function record(a:FormAnswers):TrafficRecord { const s=obj(amap(a).__simitRecord); const city=municipality(a); const organism=firstValue(a,'organismoTransito','organismo_transito')||nested(s,'organismoTransito','organismo','authority','entidad'); const secretaria=firstValue(a,'secretaria','secretaría')||nested(s,'secretaria','secretaría','secretariaDeTransito'); const municipioRecord=firstValue(a,'municipio')||nested(s,'municipio','municipality','city'); const explicit=firstValue(a,'entidad','autoridad','autoridad_transito'); const authorityCandidate=organism||secretaria||explicit||municipioRecord; const authority=resolveAuthorityHeader(city,authorityCandidate); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento'); return { comparendo:shown(firstValue(a,'numero_comparendo','numeroComparendo','numero_acto')||nested(s,'number','comparendo','numero')), fecha:shown(firstValue(a,'fecha_comparendo','fechaComparendo','fecha_infraccion')||nested(s,'date','fecha','fechaInfraccion')), codigo:shown(firstValue(a,'codigo_infraccion','codigoInfraccion','codigo')||nested(s,'infractionCode','code','codigoInfraccion')), autoridad:authority, valor:cop(firstValue(a,'valor_reportado','valorReportado','valor_multa','valor','monto')||nested(s,'value','valor','amount')), estado:shown(firstValue(a,'estado_simit','estadoSimit','estadoComparendo','estado')||nested(s,'status','estado')), municipality:city, department:dep, organismoTransito:organism||secretaria||municipioRecord }; }
+function record(a:FormAnswers):TrafficRecord { const s=obj(amap(a).__simitRecord); const city=municipality(a); const organism=firstValue(a,'organismoTransito','organismo_transito')||nested(s,'organismoTransito','organismo','authority','entidad'); const secretaria=firstValue(a,'secretaria','secretaría')||nested(s,'secretaria','secretaría','secretariaDeTransito'); const municipioRecord=firstValue(a,'municipio')||nested(s,'municipio','municipality','city'); const explicit=firstValue(a,'entidad','autoridad','autoridad_transito'); const authorityCandidate=organism||secretaria||explicit||municipioRecord; const authority=resolveAuthorityHeader(city,authorityCandidate); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento')||(/SAMPU[ÉE]S/i.test(city)?'SUCRE':''); return { comparendo:shown(firstValue(a,'numero_comparendo','numeroComparendo','numero_acto')||nested(s,'number','comparendo','numero')), fecha:shown(firstValue(a,'fecha_comparendo','fechaComparendo','fecha_infraccion')||nested(s,'date','fecha','fechaInfraccion')), codigo:shown(firstValue(a,'codigo_infraccion','codigoInfraccion','codigo')||nested(s,'infractionCode','code','codigoInfraccion')), autoridad:authority, valor:cop(firstValue(a,'valor_reportado','valorReportado','valor_multa','valor','monto')||nested(s,'value','valor','amount')), estado:shown(firstValue(a,'estado_simit','estadoSimit','estadoComparendo','estado')||nested(s,'status','estado')), municipality:city, department:dep, organismoTransito:organism||secretaria||municipioRecord }; }
 function parseDate(fecha:string):Date|null { const m=fecha.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/); if(!m)return null; const d=new Date(+m[3],+m[2]-1,+m[1]); return Number.isNaN(d.getTime())?null:d; }
 function age(fecha:string):string { const d=parseDate(fecha); if(!d)return 'NO DETERMINABLE CON LA INFORMACIÓN APORTADA'; const now=new Date(); if(d.getTime()>now.getTime())return '0 meses'; let years=now.getFullYear()-d.getFullYear(); let months=now.getMonth()-d.getMonth(); if(now.getDate()<d.getDate())months-=1; if(months<0){years-=1;months+=12;} if(years<0)return '0 meses'; const parts:string[]=[]; if(years===1)parts.push('1 año'); else if(years>1)parts.push(`${years} años`); if(months===1)parts.push('1 mes'); else if(months>1)parts.push(`${months} meses`); return parts.join(' y ')||'0 meses'; }
 function ord(items:string[]):string{return items.map((x,i)=>`${ORDINALS[i]||`NÚMERO ${i+1}`}: ${x}`).join('\n\n');}
