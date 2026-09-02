@@ -48,6 +48,16 @@ function buildFacts(answers: FormAnswers): string {
   ];
   return facts.map((fact, index) => `${ORDINALES[index]}: ${fact}`).join('\n\n');
 }
+function buildProofs(answers: FormAnswers): string {
+  const cedula = answerValue(answers, 'cedula', 'documento', 'documentNumber') || '________________';
+  const numero = answerValue(answers, 'numero_comparendo', 'numeroComparendo') || '________________';
+  const pruebasList = [
+    `Copia de mi documento de identidad (C.C. No. ${cedula}).`,
+    `Estado de Cuenta del SIMIT correspondiente al comparendo No. ${numero}.`,
+    'Demás documentos e información aportada para la reconstrucción del expediente administrativo.',
+  ];
+  return pruebasList.map((prueba, index) => `${ORDINALES[index]}: ${prueba}`).join('\n\n');
+}
 function replaceFacts(content: string, facts: string): string {
   const heading = /(^|\n)(?:[IVXLCDM]+\.\s*)?(?:\*\*)?HECHOS(?: Y ANTECEDENTES)?\s*:?(?:\*\*)?/im;
   const match = heading.exec(content);
@@ -61,18 +71,37 @@ function replaceFacts(content: string, facts: string): string {
   const nextStart = next.index + (next[1] ? next[1].length : 0);
   return `${content.slice(0, start)}I. HECHOS Y ANTECEDENTES\n\n${facts}\n\n${afterHeading.slice(nextStart).replace(/^\s+/, '')}`.trim();
 }
+function replaceProofs(content: string, proofs: string): string {
+  const heading = /(^|\n)(?:[IVXLCDM]+\.\s*)?(?:\*\*)?(?:PRUEBAS|ANEXOS)(?: Y ANEXOS)?\s*:?(?:\*\*)?/im;
+  const match = heading.exec(content);
+  if (!match) return `${content}\n\nIII. PRUEBAS Y ANEXOS\n\n${proofs}`.trim();
+  const start = match.index + (match[1] ? match[1].length : 0);
+  const remainder = content.slice(start);
+  const headingEnd = remainder.indexOf('\n');
+  const afterHeading = headingEnd >= 0 ? remainder.slice(headingEnd + 1) : '';
+  const next = /(^|\n)(?:[IVXLCDM]+\.\s*)?(?:NOTIFICACIONES|ATENTAMENTE)\b/im.exec(afterHeading);
+  if (!next) return `${content.slice(0, start)}III. PRUEBAS Y ANEXOS\n\n${proofs}`.trim();
+  const nextStart = next.index + (next[1] ? next[1].length : 0);
+  return `${content.slice(0, start)}III. PRUEBAS Y ANEXOS\n\n${proofs}\n\n${afterHeading.slice(nextStart).replace(/^\s+/, '')}`.trim();
+}
 function buildCleanTrafficContent(content: string, answers: FormAnswers): string {
   const source = answers as FormAnswers & Record<string, any>;
   const simit = source.__simitRecord && typeof source.__simitRecord === 'object' ? source.__simitRecord : {};
   const municipality = answerValue(answers, 'ciudad', 'municipio') || String(simit.municipality || 'SANTA MARTA').trim();
   const cleaned = cleanMarkdown(content)
+    .replace(/aportados por yo/gi, 'los cuales adjunto')
+    .replace(/aportadas por yo/gi, 'las cuales adjunto')
+    .replace(/aportado por yo/gi, 'el cual adjunto')
+    .replace(/aportada por yo/gi, 'la cual adjunto')
+    .replace(/Con base en los hechos expuestos[\s\S]*?pido respetuosamente a su despacho[^.]*\./gi, 'Con base en los hechos expuestos y los soportes que adjunto a la presente solicitud, pido respetuosamente a su despacho.')
     .replace(/La estrategia jurídica se determina[^.]*durante el\s*\./gi, '')
     .replace(/Tr[aá]mi no presenta esa fecha como prescripci[oó]n configurada:?[^.]*\./gi, '')
     .replace(/Frente a la oportunidad de defensa,\s*(?:el solicitante\s*)?manifiesta:\s*nunca\.?/gi, 'Manifiesto que no se me garantizó el derecho a la defensa ni fui citado a audiencia pública antes de la imposición de la sanción.')
     .replace(/Respecto de pagos(?:\s+o acuerdos)?,\s*(?:el solicitante\s*)?manifiesta:\s*completo\.?/gi, 'Indico que no he realizado acuerdos de pago que impliquen renuncia a los términos normativos de notificación o prescripción.')
     .replace(/\n{3,}/g, '\n\n').trim();
-  const body = replaceFacts(removeHeaders(cleaned, municipality), buildFacts(answers));
-  return `${buildHeader(municipality)}\n\n${body}`.replace(/\n{3,}/g, '\n\n').trim();
+  const withFacts = replaceFacts(removeHeaders(cleaned, municipality), buildFacts(answers));
+  const withProofs = replaceProofs(withFacts, buildProofs(answers));
+  return `${buildHeader(municipality)}\n\n${withProofs}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string; }): Promise<DocumentItem> {
