@@ -39,15 +39,20 @@ export async function generateDocument({
   if (TRAFFIC_SLUGS.has(procedure.slug)) {
     const strictDocument = await generateStrictTrafficDocument(procedure, answers, instanceId);
     const generatedAt = strictDocument.generatedAt ?? strictDocument.createdAt ?? new Date().toISOString();
+    const content = normalizeDocumentContent(strictDocument.content);
+
     return {
       ...strictDocument,
+      content,
       version,
       instanceId,
       generatedAt,
       sourceVersion: `strict-v${version}`,
       snapshot: {
-        ...strictDocument.snapshot,
+        answers: JSON.parse(JSON.stringify(answers)),
+        procedureSlug: procedure.slug,
         generatedAt,
+        content,
       },
     };
   }
