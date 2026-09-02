@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServer, getUserFromAccessToken } from '../../../lib/supabaseServerClient';
 import { getGuestAccessToken, hashGuestAccessToken } from '../../../lib/guestAccess';
 
+type PaymentRow = {
+  id: string;
+  status: string;
+  amount: number | null;
+  currency: string | null;
+  procedure_id: string;
+  document_version_id: string | null;
+  provider: string | null;
+  created_at: string;
+  approved_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -31,7 +44,18 @@ export async function GET(request: Request) {
 
     const { data, error } = await query.maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ approved: Boolean(data), payment: data || null, documentVersionId: data?.document_version_id || null, guest: Boolean(guestToken) });
+
+    // Supabase no tiene un tipo Database explícito en este cliente, por lo que
+    // TypeScript puede inferir `data` como `never` al encadenar filtros.
+    // El SELECT anterior define exactamente la forma que consumimos aquí.
+    const payment = data as PaymentRow | null;
+
+    return NextResponse.json({
+      approved: Boolean(payment),
+      payment,
+      documentVersionId: payment?.document_version_id || null,
+      guest: Boolean(guestToken),
+    });
   } catch {
     return NextResponse.json({ error: 'No fue posible consultar el estado del pago.' }, { status: 400 });
   }
