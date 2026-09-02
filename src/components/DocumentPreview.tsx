@@ -7,18 +7,31 @@ import WompiCheckout from "./WompiCheckout";
 function cleanDisplayText(value: string) {
   return String(value || "").replace(/\r\n?/g, "\n").replace(/^\s*#{1,6}\s*/gm, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/__(.*?)__/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^\s*[-•]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
-function isFundamentalsStart(line: string) { return /^\s*IV\.?\s+FUNDAMENTOS DE DERECHO\b/i.test(line.trim()); }
+function isProtectionStart(line: string) { return /^\s*(?:III\.?\s+HECHOS\s+Y\s+ANTECEDENTES|Yo,\s+)/i.test(line.trim()); }
+function lineClass(line: string) {
+  const text = line.trim();
+  if (/^(SEÑORES|ASUNTO:|PETICIONARIO:|REFERENCIA:)/i.test(text)) return "font-bold text-slate-950";
+  if (/^(?:[IVX]+)\.?\s+/.test(text)) return "font-bold text-slate-950 tracking-[0.02em]";
+  if (/^4\.[1-4]\./.test(text)) return "font-semibold text-slate-950";
+  if (/^(PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SÉPTIMO|OCTAVO|NOVENO|DÉCIMO):/i.test(text)) return "font-semibold text-slate-950";
+  return "";
+}
 
 export default function DocumentPreview({ content, procedureId, instanceId, initiallyUnlocked = false }: { content: string; procedureId: string; instanceId?: string; initiallyUnlocked?: boolean; }) {
   const [unlocked, setUnlocked] = useState(initiallyUnlocked);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const sections = useMemo(() => { const lines = cleanDisplayText(content).split("\n"); const index = lines.findIndex(isFundamentalsStart); if (index < 0) return { visible: lines, protected: [] as string[] }; return { visible: lines.slice(0, index), protected: lines.slice(index) }; }, [content]);
+  const sections = useMemo(() => {
+    const lines = cleanDisplayText(content).split("\n");
+    const index = lines.findIndex(isProtectionStart);
+    if (index < 0) return { visible: lines, protected: [] as string[] };
+    return { visible: lines.slice(0, index), protected: lines.slice(index) };
+  }, [content]);
   const handlePending = () => setCheckoutOpen(true);
 
   return <div className="relative">
-    <div className="whitespace-pre-wrap p-8 font-sans leading-relaxed text-slate-900">{sections.visible.map((line, index) => <div key={index} className="whitespace-pre-wrap min-h-[1.5rem]">{line || "\u00a0"}</div>)}</div>
+    <div className="whitespace-pre-wrap p-8 font-sans leading-relaxed text-slate-900">{sections.visible.map((line, index) => <div key={index} className={`whitespace-pre-wrap min-h-[1.5rem] ${lineClass(line)}`}>{line || "\u00a0"}</div>)}</div>
     {sections.protected.length > 0 && <div className="relative mt-6">
-      <div className={unlocked ? "" : "pointer-events-none select-none"}><div className={unlocked ? "" : "blur-[12px] opacity-80"}>{sections.protected.map((line, index) => <div key={index} className="whitespace-pre-wrap min-h-[1.5rem]">{line || "\u00a0"}</div>)}</div></div>
+      <div className={unlocked ? "" : "pointer-events-none select-none"}><div className={unlocked ? "" : "blur-[12px] opacity-80"}>{sections.protected.map((line, index) => <div key={index} className={`whitespace-pre-wrap min-h-[1.5rem] ${lineClass(line)}`}>{line || "\u00a0"}</div>)}</div></div>
       {!unlocked && <div className="absolute inset-0 flex items-center justify-center p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white/95 p-6 text-center shadow-2xl backdrop-blur-md">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg"><Scale className="h-7 w-7" /></div>
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-600">Documento protegido</p>
