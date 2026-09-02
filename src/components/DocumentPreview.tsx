@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Check, FileText, Scale, ShieldCheck, X } from "lucide-react";
-import WompiCheckout from "./WompiCheckout";
+import WompiCheckout, { CheckoutData } from "./WompiCheckout";
 
 const WOMPI_PRICE_LABEL = "$49.900 COP";
 const WOMPI_REFERENCE_PRICE_LABEL = "$180.000 COP";
@@ -24,15 +24,39 @@ function lineClass(line: string) {
 export default function DocumentPreview({ content, procedureId, instanceId, initiallyUnlocked = false }: { content: string; procedureId: string; instanceId?: string; initiallyUnlocked?: boolean; }) {
   const [unlocked, setUnlocked] = useState(initiallyUnlocked);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [wompiConfig, setWompiConfig] = useState<CheckoutData | null>(null);
 
   useEffect(() => {
-    if (typeof document === "undefined" || document.querySelector(`script[src="${WOMPI_WIDGET_SRC}"]`)) return;
-    const script = document.createElement("script");
-    script.src = WOMPI_WIDGET_SRC;
-    script.async = true;
-    script.setAttribute("data-tramiteya-wompi-preload", "true");
-    document.head.appendChild(script);
+    if (typeof document !== "undefined" && !document.querySelector(`script[src="${WOMPI_WIDGET_SRC}"]`)) {
+      const script = document.createElement("script");
+      script.src = WOMPI_WIDGET_SRC;
+      script.async = true;
+      script.setAttribute("data-tramiteya-wompi-preload", "true");
+      document.head.appendChild(script);
+    }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function preGenerateCheckout() {
+      if (!procedureId || (!instanceId && !content)) return;
+      try {
+        const response = await fetch("/api/payments/wompi", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-guest-access-token": instanceId || "" },
+          body: JSON.stringify({ procedureId, instanceId: instanceId || undefined, amountInCents: 4990000, currency: "COP" }),
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as CheckoutData;
+        if (!cancelled) setWompiConfig(data);
+      } catch (error) {
+        console.warn("TRAMITEYA_WOMPI_PREFETCH_ERROR", error);
+      }
+    }
+    preGenerateCheckout();
+    return () => { cancelled = true; };
+  }, [procedureId, instanceId, content]);
 
   const sections = useMemo(() => {
     const lines = cleanDisplayText(content).split("\n");
@@ -40,7 +64,6 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
     if (index < 0) return { visible: lines, protected: [] as string[] };
     return { visible: lines.slice(0, index), protected: lines.slice(index) };
   }, [content]);
-  const handlePending = () => setCheckoutOpen(true);
 
   return <div className="relative">
     <div className="whitespace-pre-wrap p-8 font-sans leading-relaxed text-slate-900">{sections.visible.map((line, index) => <div key={index} className={`whitespace-pre-wrap min-h-[1.5rem] ${lineClass(line)}`}>{line || "\u00a0"}</div>)}</div>
@@ -51,7 +74,7 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-600">Documento protegido</p>
         <h3 className="mt-2 text-xl font-bold text-slate-900">Desbloquea tu escrito jurídico completo</h3>
         <p className="mt-2 text-sm leading-relaxed text-slate-600">Valor de referencia <span className="line-through">{WOMPI_REFERENCE_PRICE_LABEL}</span> → <strong>{WOMPI_PRICE_LABEL}</strong> con TrámiteYa.</p>
-        <button type="button" onClick={() => setCheckoutOpen(true)} className="mt-5 w-full rounded-xl bg-slate-900 px-5 py-3.5 text-sm font-bold text-white shadow-lg transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Desbloquear Documento Completo ({WOMPI_PRICE_LABEL})</button>
+        <div className="mt-5"><WompiCheckout procedureId={procedureId} instanceId={instanceId} prefetchedConfig={wompiConfig} onPending={() => setCheckoutOpen(true)} /></div>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-slate-500"><span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Pago seguro con Wompi</span><span className="rounded-full bg-slate-100 px-3 py-1">Sin registro</span></div>
       </div></div>}
     </div>}
@@ -61,7 +84,7 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
       <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white"><FileText className="h-5 w-5" /></div><div><h2 className="text-lg font-bold text-slate-900">Completa tu pago</h2><p className="text-sm text-slate-500">Documento jurídico completo · {WOMPI_PRICE_LABEL}</p></div></div>
       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-center"><span className="text-xs font-semibold text-slate-400 line-through">{WOMPI_REFERENCE_PRICE_LABEL}</span><span className="mx-2 text-slate-300">→</span><strong className="text-xl text-slate-900">{WOMPI_PRICE_LABEL}</strong></div>
       <div className="mt-5 space-y-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-600"><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />Sin crear cuenta ni iniciar sesión</div><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />Acceso inmediato al documento completo</div><div className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />PDF y Word (.DOCX) disponibles después del pago</div></div>
-      <div className="mt-5"><WompiCheckout procedureId={procedureId} instanceId={instanceId} onPending={handlePending} /></div>
+      <div className="mt-5"><WompiCheckout procedureId={procedureId} instanceId={instanceId} prefetchedConfig={wompiConfig} onPending={() => undefined} /></div>
       <p className="mt-3 text-center text-[11px] text-slate-400">Checkout oficial de Wompi · {WOMPI_PRICE_LABEL} · sin registro.</p>
     </div></div>}
   </div>;
