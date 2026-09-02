@@ -12,88 +12,22 @@ import TestimonialsSlider from "../../../../../components/TestimonialsSlider";
 import DocumentPreview from "../../../../../components/DocumentPreview";
 
 function DocumentLoadingState() {
-  return (
-    <section className="min-h-[60vh] flex flex-col items-center justify-center bg-slate-50 px-4 py-12 text-center">
-      <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-8 shadow-xl">
-        <div className="mb-6 flex flex-col items-center">
-          <div className="relative flex h-20 w-20 items-center justify-center">
-            <div className="absolute inset-0 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
-            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-sm">
-              <FileText className="h-7 w-7" strokeWidth={1.9} aria-hidden="true" />
-              <Scale className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-white p-0.5 text-indigo-600" strokeWidth={2} aria-hidden="true" />
-            </div>
-          </div>
-        </div>
-        <div className="mx-auto mb-6 max-w-sm">
-          <h2 className="text-xl font-bold leading-tight text-gray-900 sm:text-2xl">Estamos ensamblando tu escrito jurídico blindado...</h2>
-          <p className="mt-3 text-sm leading-relaxed text-gray-600">Analizando la caducidad, prescripción y notificaciones para que radiques este documento en la Secretaría de Tránsito y logres la eliminación de tus comparendos.</p>
-        </div>
-        <div className="mb-6 w-full overflow-hidden rounded-full bg-gray-100" role="progressbar" aria-label="Generando documento jurídico"><div className="h-2 w-3/4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 animate-pulse" /></div>
-        <div className="flex w-full flex-col gap-2 text-xs font-medium">
-          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700"><ShieldCheck className="h-4 w-4 shrink-0" />Fundamentación Constitucional C-038/20</div>
-          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-600"><FileText className="h-4 w-4 shrink-0" />Formato listo para radicación presencial o correo</div>
-        </div>
-      </div>
-    </section>
-  );
+  return <section className="min-h-[60vh] flex flex-col items-center justify-center bg-slate-50 px-4 py-12 text-center"><div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-8 shadow-xl"><div className="mb-6 flex flex-col items-center"><div className="relative flex h-20 w-20 items-center justify-center"><div className="absolute inset-0 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" /><div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-sm"><FileText className="h-7 w-7" strokeWidth={1.9} /><Scale className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-white p-0.5 text-indigo-600" strokeWidth={2} /></div></div></div><div className="mx-auto mb-6 max-w-sm"><h2 className="text-xl font-bold leading-tight text-gray-900 sm:text-2xl">Estamos ensamblando tu escrito jurídico blindado...</h2><p className="mt-3 text-sm leading-relaxed text-gray-600">Analizando la caducidad, prescripción y notificaciones para que radiques este documento en la Secretaría de Tránsito y logres la eliminación de tus comparendos.</p></div><div className="mb-6 w-full overflow-hidden rounded-full bg-gray-100" role="progressbar" aria-label="Generando documento jurídico"><div className="h-2 w-3/4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 animate-pulse" /></div><div className="flex w-full flex-col gap-2 text-xs font-medium"><div className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-700"><ShieldCheck className="h-4 w-4 shrink-0" />Fundamentación Constitucional C-038/20</div><div className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-600"><FileText className="h-4 w-4 shrink-0" />Formato listo para radicación presencial o correo</div></div></div></section>;
 }
 
 export default function ResultPage({ params }: { params: { slug: string; id: string } }) {
-  const [instance, setInstance] = useState<ProcedureInstance | null>(null);
-  const [history, setHistory] = useState<any[]>([]);
-  const [paid, setPaid] = useState(false);
-  const [resolvedDocumentId, setResolvedDocumentId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"preview" | "history">("preview");
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
-  const guestHeaders = { "x-guest-access-token": params.id };
-
-  async function load() {
-    try {
-      const supabase = getSupabaseBrowser();
-      if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const headers = { Authorization: `Bearer ${session.access_token}` };
-          const response = await fetch(`/api/instances/${params.id}`, { headers, cache: "no-store" });
-          if (response.ok) {
-            const data = await response.json();
-            setInstance(data);
-            const historyResponse = await fetch(`/api/instances/${params.id}/documents`, { headers, cache: "no-store" });
-            if (historyResponse.ok) setHistory((await historyResponse.json()).data || []);
-            const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&instanceId=${encodeURIComponent(params.id)}`, { headers, cache: "no-store" });
-            if (paymentResponse.ok) { const payment = await paymentResponse.json(); setPaid(Boolean(payment.approved)); if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId); }
-            return;
-          }
-        }
-      }
-      const local = procedureStorage.get(params.id);
-      setInstance(local);
-      const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(local?.procedureId || local?.procedureSlug || params.slug)}&instanceId=${encodeURIComponent(params.id)}`, { headers: guestHeaders, cache: "no-store" });
-      if (paymentResponse.ok) { const payment = await paymentResponse.json(); setPaid(Boolean(payment.approved)); if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId); }
-      try { const stored = localStorage.getItem(`tramiteya:paid-document:${params.id}`); if (stored) setResolvedDocumentId(stored); } catch {}
-    } finally { setLoading(false); }
-  }
-
+  const [instance, setInstance] = useState<ProcedureInstance | null>(null); const [history, setHistory] = useState<any[]>([]); const [paid, setPaid] = useState(false); const [resolvedDocumentId, setResolvedDocumentId] = useState<string | null>(null); const [tab, setTab] = useState<"preview" | "history">("preview"); const [loading, setLoading] = useState(true); const router = useRouter(); const guestHeaders = { "x-guest-access-token": params.id };
+  async function load() { try { const supabase = getSupabaseBrowser(); if (supabase) { const { data: { session } } = await supabase.auth.getSession(); if (session?.user) { const headers = { Authorization: `Bearer ${session.access_token}` }; const response = await fetch(`/api/instances/${params.id}`, { headers, cache: "no-store" }); if (response.ok) { const data = await response.json(); setInstance(data); const historyResponse = await fetch(`/api/instances/${params.id}/documents`, { headers, cache: "no-store" }); if (historyResponse.ok) setHistory((await historyResponse.json()).data || []); const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(data.procedureId || data.procedureSlug || params.slug)}&instanceId=${encodeURIComponent(params.id)}`, { headers, cache: "no-store" }); if (paymentResponse.ok) { const payment = await paymentResponse.json(); setPaid(Boolean(payment.approved)); if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId); } return; } } } const local = procedureStorage.get(params.id); setInstance(local); const paymentResponse = await fetch(`/api/payments?procedureId=${encodeURIComponent(local?.procedureId || local?.procedureSlug || params.slug)}&instanceId=${encodeURIComponent(params.id)}`, { headers: guestHeaders, cache: "no-store" }); if (paymentResponse.ok) { const payment = await paymentResponse.json(); setPaid(Boolean(payment.approved)); if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId); } try { const stored = localStorage.getItem(`tramiteya:paid-document:${params.id}`); if (stored) setResolvedDocumentId(stored); } catch {} } finally { setLoading(false); } }
   useEffect(() => { load(); }, [params.id, params.slug]);
-
   if (loading) return <main className="min-h-screen bg-slate-50"><Header /><DocumentLoadingState /><Footer /></main>;
   if (!instance) return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no encontrado.</h1></section><Footer /></main>;
-
-  const docs = history.length ? history : (instance.document ? [instance.document] : []);
-  const latest = instance.document || docs[docs.length - 1];
-  const edit = () => router.push(`/tramites/${params.slug}/formulario?instance=${encodeURIComponent(instance.id)}`);
+  const docs = history.length ? history : (instance.document ? [instance.document] : []); const latest = instance.document || docs[docs.length - 1]; const edit = () => router.push(`/tramites/${params.slug}/formulario?instance=${encodeURIComponent(instance.id)}`);
   const markDownloaded = async () => { procedureStorage.markDownloaded(instance.id); const supabase = getSupabaseBrowser(); try { if (supabase) { const { data: { session } } = await supabase.auth.getSession(); if (session?.user) await fetch(`/api/instances/${instance.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ status: "downloaded" }) }); } } catch (error) { console.error(error); } };
-  const download = async (format: "docx" | "pdf", version?: number) => {
-    if (!paid) { alert("Primero debes completar el pago para descargar el documento."); return; }
-    await markDownloaded(); const suffix = version ? `?version=${encodeURIComponent(String(version))}` : ""; const supabase = getSupabaseBrowser(); const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any; const headers: Record<string,string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : guestHeaders; const downloadId = resolvedDocumentId || latest?.id || instance.id; const response = await fetch(`/api/documents/${downloadId}/download${format === "pdf" ? "/pdf" : ""}${suffix}`, { headers });
-    if (!response.ok) { const body = await response.json().catch(() => ({})); alert(body.error === "Payment required" ? "Primero debes completar el pago para descargar el documento." : "La descarga todavía no está habilitada."); return; }
-    const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `tramiteya-${params.slug}.${format}`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
-  };
+  const download = async (format: "docx" | "pdf", version?: number) => { if (!paid) { alert("Primero debes completar el pago para descargar el documento."); return; } await markDownloaded(); const suffix = version ? `?version=${encodeURIComponent(String(version))}` : ""; const supabase = getSupabaseBrowser(); const { data: { session } } = supabase ? await supabase.auth.getSession() : { data: { session: null } } as any; const headers: Record<string,string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : guestHeaders; const downloadId = resolvedDocumentId || latest?.id || instance.id; const response = await fetch(`/api/documents/${downloadId}/download${format === "pdf" ? "/pdf" : ""}${suffix}`, { headers }); if (!response.ok) { const body = await response.json().catch(() => ({})); alert(body.error === "Payment required" ? "Primero debes completar el pago para descargar el documento." : "La descarga todavía no está habilitada."); return; } const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `tramiteya-${params.slug}.${format}`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); };
   const downloadButtonClass = (format: "word" | "pdf") => paid ? `px-4 py-3 rounded-lg ${format === "pdf" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"} font-medium hover:opacity-90` : "px-4 py-3 rounded-lg bg-slate-200 text-slate-400 font-medium cursor-not-allowed";
-
+  const procedureId = String((instance as any).procedureId || (instance as any).procedureSlug || params.slug);
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
   <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Historial ({docs.length})</button></div>
-  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentPreview content={latest?.content || "El contenido del documento no está disponible todavía."} instanceId={instance.id} initiallyUnlocked={paid} onUnlocked={() => setPaid(true)} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
+  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentPreview content={latest?.content || "El contenido del documento no está disponible todavía."} procedureId={procedureId} instanceId={instance.id} initiallyUnlocked={paid} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
   <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p></div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
