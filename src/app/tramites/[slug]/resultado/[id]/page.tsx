@@ -24,19 +24,34 @@ function cleanDisplayText(value: string) {
     .trim();
 }
 
-function DocumentBody({ content }: { content: string }) {
+function DocumentBody({ content, paid, procedureId, documentVersionId, instanceId }: { content: string; paid: boolean; procedureId: string; documentVersionId?: string; instanceId?: string }) {
   const blocks = useMemo(() => {
     const normalized = cleanDisplayText(content);
-    return normalized.split("\n\n").filter((block) => block.trim());
-  }, [content]);
+    const lines = normalized.split("\n");
+    const foundationIndex = lines.findIndex((line) => /FUNDAMENTOS DE DERECHO/i.test(line.trim()));
+    const thirtyPercentIndex = Math.max(1, Math.floor(lines.length * 0.3));
+    const cutoff = foundationIndex >= 0 ? Math.max(thirtyPercentIndex, foundationIndex) : thirtyPercentIndex;
+    return lines.map((line, index) => ({ line, blurred: !paid && index >= cutoff }));
+  }, [content, paid]);
 
   return (
     <div className="prose max-w-none text-gray-900 leading-relaxed space-y-4 whitespace-pre-wrap font-sans p-8">
-      {blocks.map((block, index) => (
-        <div key={index} className="whitespace-pre-wrap">
-          {block}
+      {blocks.map((item, index) => (
+        <div key={index} className={item.blurred ? "filter blur-[5px] select-none" : "whitespace-pre-wrap"}>
+          {item.line}
         </div>
       ))}
+      {!paid && (
+        <div className="mt-8 border border-slate-200 rounded-xl bg-white p-6 shadow-sm not-prose">
+          <div className="text-center mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Documento completo</p>
+            <h3 className="text-xl font-bold text-slate-900 mt-1">Desbloquea tu documento</h3>
+            <p className="text-sm text-slate-500 mt-1">Obtén acceso completo y descarga el documento en Word y PDF.</p>
+            <p className="text-3xl font-extrabold text-slate-900 mt-4">$49.900 COP</p>
+          </div>
+          <WompiCheckout procedureId={procedureId} documentVersionId={documentVersionId} instanceId={instanceId} />
+        </div>
+      )}
     </div>
   );
 }
@@ -97,6 +112,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
 
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
   <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Historial ({docs.length})</button></div>
-  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentBody content={latest?.content || "El contenido del documento no está disponible todavía."} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
+  {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentBody content={latest?.content || "El contenido del documento no está disponible todavía."} paid={paid} procedureId={instance.procedureId || params.slug} documentVersionId={resolvedDocumentId || latest?.id} instanceId={instance.id} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"><button disabled={!paid} onClick={() => download("docx", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg border text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>Word</button><button disabled={!paid} onClick={() => download("pdf", Number(doc.version ?? doc.meta?.version ?? i + 1))} className={paid ? "px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium" : "px-3 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed"}>PDF</button></div></div>)}</div>}
   <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3"><button disabled={!paid} onClick={() => download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p></div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
