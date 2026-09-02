@@ -11,34 +11,31 @@ import WompiCheckout from "../../../../../components/WompiCheckout";
 import TrustBadges from "../../../../../components/TrustBadges";
 import TestimonialsSlider from "../../../../../components/TestimonialsSlider";
 
-function cleanInlineMarkdown(value: string) {
-  return value.replace(/\*\*(.*?)\*\*/g, "$1").replace(/__(.*?)__/g, "$1").replace(/`([^`]+)`/g, "$1").trim();
-}
-
 function DocumentBody({ content, paid }: { content: string; paid: boolean }) {
   const blocks = useMemo(() => {
-    const lines = content.replace(/\r\n/g, "\n").split("\n");
-    const foundationIndex = lines.findIndex((line) => /^(?:#{1,6}\s*)?(?:\*\*\s*)?(?:III\.?\s*)?FUNDAMENTOS DE DERECHO/i.test(line.trim()) || /FUNDAMENTOS DE DERECHO/i.test(line.trim()));
+    const normalized = String(content || "").replace(/\r\n?/g, "\n").trim();
+    const lines = normalized.split("\n");
+    const foundationIndex = lines.findIndex((line) => /FUNDAMENTOS DE DERECHO/i.test(line.trim()));
     const thirtyPercentIndex = Math.max(1, Math.floor(lines.length * 0.3));
     const cutoff = foundationIndex >= 0 ? Math.max(thirtyPercentIndex, foundationIndex) : thirtyPercentIndex;
     return lines.map((line, index) => ({ line, blurred: !paid && index >= cutoff }));
   }, [content, paid]);
 
-  return <div className="mx-auto w-full max-w-[850px] bg-white border border-slate-300 shadow-xl px-8 py-10 md:px-12 md:py-12 text-[15px] text-slate-900 leading-[1.3]" style={{ fontFamily: '"Arial Narrow", Arial, sans-serif' }}>
-    <div className="whitespace-pre-wrap break-words">
-      {blocks.map(({ line, blurred }, index) => {
-        const trimmed = line.trim();
-        const isHeading = /^#{1,6}\s+/.test(trimmed) || /^\*\*[^*]+\*\*$/.test(trimmed);
-        const headingText = cleanInlineMarkdown(trimmed.replace(/^#{1,6}\s+/, ""));
-        const className = blurred ? "relative select-none pointer-events-none filter blur-[5px] transition-all duration-500" : "";
-        if (!trimmed) return <div key={index} className={`h-3 ${className}`} aria-hidden="true" />;
-        if (isHeading) return <h3 key={index} className={`text-lg font-bold my-4 ${className}`}>{headingText}</h3>;
-        if (/^[-•]\s+/.test(trimmed)) return <p key={index} className={`my-1 pl-4 ${className}`}>{cleanInlineMarkdown(trimmed)}</p>;
-        if (/^\d+[.)]\s+/.test(trimmed)) return <p key={index} className={`my-2 ${className}`}>{cleanInlineMarkdown(trimmed)}</p>;
-        return <p key={index} className={`my-2 ${className}`}>{cleanInlineMarkdown(line)}</p>;
-      })}
-    </div>
-  </div>;
+  return (
+    <article
+      className="mx-auto w-full max-w-[850px] bg-white border border-slate-300 shadow-xl px-8 py-10 md:px-12 md:py-12 text-[15px] text-slate-900 leading-[1.3]"
+      style={{ fontFamily: '"Arial Narrow", Arial, sans-serif', whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+    >
+      {blocks.map(({ line, blurred }, index) => (
+        <React.Fragment key={index}>
+          <span className={blurred ? "relative select-none pointer-events-none filter blur-[5px] transition-all duration-500" : undefined}>
+            {line}
+          </span>
+          {index < blocks.length - 1 ? "\n" : null}
+        </React.Fragment>
+      ))}
+    </article>
+  );
 }
 
 export default function ResultPage({ params }: { params: { slug: string; id: string } }) {
