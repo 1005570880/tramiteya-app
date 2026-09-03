@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, FileText, Scale, ShieldCheck, X } from "lucide-react";
+import { Check, Download, FileText, Scale, ShieldCheck, X } from "lucide-react";
 import WompiCheckout, { CheckoutData } from "./WompiCheckout";
 
 const WOMPI_PRICE_LABEL = "$49.900 COP";
@@ -25,6 +25,8 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
   const [unlocked, setUnlocked] = useState(initiallyUnlocked);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [wompiConfig, setWompiConfig] = useState<CheckoutData | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState<"pdf" | "docx" | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof document !== "undefined" && !document.querySelector(`script[src="${WOMPI_WIDGET_SRC}"]`)) {
@@ -35,6 +37,12 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
       document.head.appendChild(script);
     }
   }, []);
+
+  useEffect(() => {
+    if (initiallyUnlocked || !instanceId) return;
+    const paidVersion = localStorage.getItem(`tramiteya:paid-document:${instanceId}`);
+    if (paidVersion) setUnlocked(true);
+  }, [initiallyUnlocked, instanceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +73,36 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
     return { visible: lines.slice(0, index), protected: lines.slice(index) };
   }, [content]);
 
+  async function download(format: "pdf" | "docx") {
+    if (!unlocked || !procedureId) return;
+    setDownloadLoading(format);
+    setDownloadError(null);
+    try {
+      const response = await fetch("/api/documents/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(instanceId ? { "x-guest-access-token": instanceId } : {}) },
+        body: JSON.stringify({ format, content: cleanDisplayText(content), procedureId, instanceId: instanceId || undefined, documentVersionId: wompiConfig?.documentVersionId || undefined, title: "TramiteYa - Derecho de Petición" }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "No fue posible descargar el documento.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = format === "pdf" ? "TramiteYa-Derecho-de-Peticion.pdf" : "TramiteYa-Derecho-de-Peticion.docx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "No fue posible descargar el documento.");
+    } finally {
+      setDownloadLoading(null);
+    }
+  }
+
   return <div className="relative">
     <div className="whitespace-pre-wrap p-8 font-sans leading-relaxed text-slate-900">{sections.visible.map((line, index) => <div key={index} className={`whitespace-pre-wrap min-h-[1.5rem] ${lineClass(line)}`}>{line || "\u00a0"}</div>)}</div>
     {sections.protected.length > 0 && <div className="relative mt-6">
@@ -78,7 +116,14 @@ export default function DocumentPreview({ content, procedureId, instanceId, init
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-slate-500"><span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Pago seguro con Wompi</span><span className="rounded-full bg-slate-100 px-3 py-1">Sin registro</span></div>
       </div></div>}
     </div>}
-    {unlocked && <div className="mx-8 mb-6 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"><ShieldCheck className="h-5 w-5" />Documento desbloqueado: lectura y descarga en PDF y Word (.DOCX) disponibles.</div>}
+    {unlocked && <div className="mx-8 mb-6 space-y-3">
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"><ShieldCheck className="h-5 w-5" />Documento desbloqueado: lectura y descarga disponibles.</div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button type="button" onClick={() => download("pdf")} disabled={Boolean(downloadLoading)} className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-extrabold text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"><Download className="h-5 w-5" />{downloadLoading === "pdf" ? "Generando PDF…" : "Descargar PDF"}</button>
+        <button type="button" onClick={() => download("docx")} disabled={Boolean(downloadLoading)} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-extrabold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"><FileText className="h-5 w-5" />{downloadLoading === "docx" ? "Generando Word…" : "Descargar Word (.DOCX)"}</button>
+      </div>
+      {downloadError && <p className="text-center text-xs font-semibold text-red-600">{downloadError}</p>}
+    </div>}
     {checkoutOpen && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"><div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
       <button type="button" aria-label="Cerrar" onClick={() => setCheckoutOpen(false)} className="absolute right-4 top-4 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
       <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white"><FileText className="h-5 w-5" /></div><div><h2 className="text-lg font-bold text-slate-900">Completa tu pago</h2><p className="text-sm text-slate-500">Documento jurídico completo · {WOMPI_PRICE_LABEL}</p></div></div>
