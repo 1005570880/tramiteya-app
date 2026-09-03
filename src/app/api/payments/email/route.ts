@@ -10,7 +10,6 @@ export const dynamic = 'force-dynamic';
 const PRICE = 4990000;
 
 type Body = { procedureId?: string; instanceId?: string; documentVersionId?: string; content?: string; email?: string };
-
 type PaymentRow = { id: string; status: string; amount: number | null; currency: string | null; procedure_id: string; document_version_id: string | null; metadata?: Record<string, any> | null };
 
 function pdfBuffer(content: string): Promise<Buffer> {
@@ -46,7 +45,7 @@ async function getInstanceEmail(instanceId: string) {
 
 async function verifyPayment(procedureId: string, instanceId: string, documentVersionId: string) {
   const supabase = getSupabaseServer();
-  const guestToken = getGuestAccessTokenFromValues(instanceId, documentVersionId);
+  const guestToken = instanceId || documentVersionId || '';
   let query = supabase.from('payments').select('id,status,amount,currency,procedure_id,document_version_id,metadata').eq('provider', 'wompi').eq('status', 'approved').eq('amount', PRICE).eq('currency', 'COP').eq('procedure_id', procedureId).order('created_at', { ascending: false }).limit(1);
   if (documentVersionId) query = query.eq('document_version_id', documentVersionId);
   if (instanceId) query = query.contains('metadata', { instanceId });
@@ -54,13 +53,6 @@ async function verifyPayment(procedureId: string, instanceId: string, documentVe
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data as PaymentRow | null;
-}
-
-function getGuestAccessTokenFromValues(instanceId: string, documentVersionId: string) {
-  return getGuestAccessTokenFromRequestValues(instanceId, documentVersionId);
-}
-function getGuestAccessTokenFromRequestValues(instanceId: string, documentVersionId: string) {
-  return instanceId || documentVersionId || '';
 }
 
 export async function POST(request: Request) {
@@ -90,23 +82,14 @@ export async function POST(request: Request) {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from,
-        to: [email],
-        subject: 'Tu documento jurídico está listo — TrámiteYa',
-        html: '<p>Hola,</p><p>Tu pago fue aprobado y adjuntamos tu documento jurídico completo en los formatos <strong>PDF</strong> y <strong>Word (.DOCX)</strong>.</p><p>Gracias por utilizar TrámiteYa.</p>',
-        attachments: [
-          { filename: 'TramiteYa-Derecho-de-Peticion.pdf', content: pdf.toString('base64') },
-          { filename: 'TramiteYa-Derecho-de-Peticion.docx', content: docx.toString('base64') },
-        ],
-      }),
+      body: JSON.stringify({ from, to: [email], subject: 'Tu documento jurídico está listo — TrámiteYa', html: '<p>Hola,</p><p>Tu pago fue aprobado y adjuntamos tu documento jurídico completo en los formatos <strong>PDF</strong> y <strong>Word (.DOCX)</strong>.</p><p>Gracias por utilizar TrámiteYa.</p>', attachments: [
+        { filename: 'TramiteYa-Derecho-de-Peticion.pdf', content: pdf.toString('base64') },
+        { filename: 'TramiteYa-Derecho-de-Peticion.docx', content: docx.toString('base64') },
+      ] },
     });
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Resend: ${detail.slice(0, 500)}`);
-    }
+    if (!response.ok) { const detail = await response.text(); throw new Error(`Resend: ${detail.slice(0, 500)}`); }
 
-    await getSupabaseServer().from('payments').update({ metadata: { ...metadata, documentsEmailSentTo: email, documentsEmailSentAt: new Date().toISOString() } }).eq('id', payment.id);
+    await (getSupabaseServer().from('payments') as any).update({ metadata: { ...metadata, documentsEmailSentTo: email, documentsEmailSentAt: new Date().toISOString() } }).eq('id', payment.id);
     return NextResponse.json({ sent: true, email });
   } catch (error) {
     console.error('PAID_DOCUMENT_EMAIL_ERROR:', error);
