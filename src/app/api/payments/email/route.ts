@@ -8,6 +8,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const PRICE = 4990000;
+const REPLY_TO = 'arrietabogado@gmail.com';
+const SENDER_NAME = 'TrámiteYa | Abogado Jacob Arrieta';
 
 type Body = { procedureId?: string; instanceId?: string; documentVersionId?: string; content?: string; email?: string };
 type PaymentRow = { id: string; status: string; amount: number | null; currency: string | null; procedure_id: string; document_version_id: string | null; metadata?: Record<string, any> | null };
@@ -55,6 +57,33 @@ async function verifyPayment(procedureId: string, instanceId: string, documentVe
   return data as PaymentRow | null;
 }
 
+function resolveFromAddress() {
+  const configured = String(process.env.RESEND_FROM_EMAIL || '').trim();
+  if (!configured) return `${SENDER_NAME} <onboarding@resend.dev>`;
+  return configured.includes('<') ? configured : `${SENDER_NAME} <${configured}>`;
+}
+
+async function sendDocumentsByEmail(to: string, content: string, resendKey: string) {
+  const [pdf, docx] = await Promise.all([pdfBuffer(content), docxBuffer(content)]);
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: resolveFromAddress(),
+      to: [to],
+      reply_to: REPLY_TO,
+      subject: 'Tu documento jurídico está listo — TrámiteYa',
+      html: '<p>Hola,</p><p>Tu pago ha sido confirmado exitosamente. Adjunto a este correo encontrarás tu escrito de Derecho de Petición en formatos PDF y Word (.DOCX) totalmente editable.</p><p>Para cualquier inquietud o seguimiento sobre tu trámite, puedes responder directamente a este correo.</p><p>Atentamente,<br><strong>Jacob Elias Arrieta Florez — Abogado</strong></p>',
+      text: 'Hola,\n\nTu pago ha sido confirmado exitosamente. Adjunto a este correo encontrarás tu escrito de Derecho de Petición en formatos PDF y Word (.DOCX) totalmente editable.\n\nPara cualquier inquietud o seguimiento sobre tu trámite, puedes responder directamente a este correo.\n\nAtentamente,\nJacob Elias Arrieta Florez — Abogado',
+      attachments: [
+        { filename: 'TramiteYa-Derecho-de-Peticion.pdf', content: pdf.toString('base64') },
+        { filename: 'TramiteYa-Derecho-de-Peticion.docx', content: docx.toString('base64') },
+      ],
+    }),
+  });
+  if (!response.ok) { const detail = await response.text(); throw new Error(`Resend: ${detail.slice(0, 500)}`); }
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Body;
@@ -75,19 +104,9 @@ export async function POST(request: Request) {
     if (metadata.documentsEmailSentTo === email) return NextResponse.json({ sent: true, alreadySent: true, email });
 
     const resendKey = process.env.RESEND_API_KEY;
-    const from = process.env.RESEND_FROM_EMAIL || 'TrámiteYa <onboarding@resend.dev>';
     if (!resendKey) return NextResponse.json({ error: 'El servicio de correo no está configurado en el servidor.' }, { status: 503 });
 
-    const [pdf, docx] = await Promise.all([pdfBuffer(content), docxBuffer(content)]);
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [email], subject: 'Tu documento jurídico está listo — TrámiteYa', html: '<p>Hola,</p><p>Tu pago fue aprobado y adjuntamos tu documento jurídico completo en los formatos <strong>PDF</strong> y <strong>Word (.DOCX)</strong>.</p><p>Gracias por utilizar TrámiteYa.</p>', attachments: [
-        { filename: 'TramiteYa-Derecho-de-Peticion.pdf', content: pdf.toString('base64') },
-        { filename: 'TramiteYa-Derecho-de-Peticion.docx', content: docx.toString('base64') },
-      ] },
-    });
-    if (!response.ok) { const detail = await response.text(); throw new Error(`Resend: ${detail.slice(0, 500)}`); }
+    await sendDocumentsByEmail(email, content, resendKey);
 
     await (getSupabaseServer().from('payments') as any).update({ metadata: { ...metadata, documentsEmailSentTo: email, documentsEmailSentAt: new Date().toISOString() } }).eq('id', payment.id);
     return NextResponse.json({ sent: true, email });
