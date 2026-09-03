@@ -7,6 +7,8 @@ import { getGuestAccessToken, hashGuestAccessToken } from '../../../../lib/guest
 export const runtime = 'nodejs';
 
 const PRICE = 4990000;
+// AUDIT MODE — temporal. Reactivar la validación de pago cambiando a false.
+const AUDIT_MODE = true;
 
 type Body = {
   format?: 'pdf' | 'docx';
@@ -87,7 +89,9 @@ export async function POST(request: Request) {
     if (!content) return NextResponse.json({ error: 'No hay contenido disponible para descargar.' }, { status: 400 });
     if (!procedureId) return NextResponse.json({ error: 'procedureId es requerido.' }, { status: 400 });
 
-    if (!(await hasApprovedPayment(request, procedureId, instanceId, documentVersionId))) {
+    // En modo auditoría se omite temporalmente la validación contra Wompi.
+    // El helper hasApprovedPayment queda intacto para reactivar el paywall.
+    if (!AUDIT_MODE && !(await hasApprovedPayment(request, procedureId, instanceId, documentVersionId))) {
       return NextResponse.json({ error: 'El documento debe estar desbloqueado mediante un pago aprobado.' }, { status: 403 });
     }
 
