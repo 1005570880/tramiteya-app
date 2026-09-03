@@ -17,14 +17,7 @@ type Body = {
   documentVersionId?: string;
 };
 
-type PaymentRow = {
-  id: string;
-  status: string;
-  amount: number | null;
-  currency: string | null;
-  procedure_id: string;
-  document_version_id: string | null;
-};
+type PaymentRow = { id: string; status: string; amount: number | null; currency: string | null; procedure_id: string; document_version_id: string | null };
 
 function safeFilename(value: string) {
   return (value || 'tramiteya-documento').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'tramiteya-documento';
@@ -34,7 +27,7 @@ async function hasApprovedPayment(request: Request, procedureId: string, instanc
   const authorization = request.headers.get('authorization') || '';
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   const user = token ? await getUserFromAccessToken(token) : null;
-  const guestToken = user ? '' : getGuestAccessToken(request) || '';
+  const guestToken = user ? '' : getGuestAccessToken(request) || instanceId || documentVersionId;
   if (!user && !guestToken) return false;
 
   const supabase = getSupabaseServer();
@@ -78,8 +71,7 @@ async function docxBuffer(content: string) {
     spacing: { after: 180, line: 276 },
     children: [new TextRun({ text: text.trim(), size: 22 })],
   }));
-  const document = new Document({ sections: [{ properties: {}, children: paragraphs }] });
-  return Packer.toBuffer(document);
+  return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
 }
 
 export async function POST(request: Request) {
@@ -95,8 +87,9 @@ export async function POST(request: Request) {
     if (!content) return NextResponse.json({ error: 'No hay contenido disponible para descargar.' }, { status: 400 });
     if (!procedureId) return NextResponse.json({ error: 'procedureId es requerido.' }, { status: 400 });
 
-    const approved = await hasApprovedPayment(request, procedureId, instanceId, documentVersionId);
-    if (!approved) return NextResponse.json({ error: 'El documento debe estar desbloqueado mediante un pago aprobado.' }, { status: 403 });
+    if (!(await hasApprovedPayment(request, procedureId, instanceId, documentVersionId))) {
+      return NextResponse.json({ error: 'El documento debe estar desbloqueado mediante un pago aprobado.' }, { status: 403 });
+    }
 
     const filename = safeFilename(body.title || 'documento-tramiteya');
     if (format === 'pdf') {
