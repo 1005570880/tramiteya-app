@@ -29,8 +29,6 @@ export default function SimitUploadFirst({ slug }: { slug: string }) {
   function select(record: RecordItem, doc: string, allRecords: RecordItem[] = records, fileName = "Estado de Cuenta SIMIT") {
     const document = normalizeDocument(doc || record.documentNumber); const hydratedRecords = allRecords.map(item => ({ ...item, ...(document ? { documentNumber: document } : {}) }));
     try {
-      // La selección es parte del estado del expediente y debe sobrevivir a la navegación.
-      // Antes solo se guardaban los registros, por lo que la pantalla siguiente no sabía cuál había elegido el usuario.
       saveSession(hydratedRecords, document, fileName, { ...record, ...(document ? { documentNumber: document } : {}) });
       const comparendoId = encodeURIComponent(record.number || "");
       router.push(`/tramites/${slug}/formulario-simit?comparendoId=${comparendoId}`);

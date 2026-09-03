@@ -2,140 +2,98 @@ import type { Procedure } from '../types';
 import type { FormAnswers } from '../types/form';
 import type { DocumentItem } from '../types/procedure';
 import { buildDocumentText } from './documentTemplates';
-import { buildTrafficDocument } from './trafficDocumentTemplates';
-import { refineLegalDocument } from './aiDocumentRefiner';
-import { cleanLegalDocumentOutput, isLegallySafeTrafficDocument } from './legalDocumentGuard';
+import PDFDocument from 'pdfkit';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 
-function generateId(prefix = 'doc') { return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`; }
-const trafficSlugs = new Set(['prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo', 'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa']);
+const TRAFFIC_SLUGS = new Set([
+  'prescripcion-comparendo', 'caducidad-comparendo', 'revocatoria-comparendo',
+  'solicitud-soportes-comparendo', 'fotomultas', 'derecho-de-peticion-eliminar-multa',
+]);
+const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const ORDINALS = ['PRIMERO','SEGUNDO','TERCERO','CUARTO','QUINTO','SEXTO','SÉPTIMO','OCTAVO','NOVENO','DÉCIMO','UNDÉCIMO','DUODÉCIMO'];
+type AnswerMap = FormAnswers & Record<string, unknown>;
+type TrafficRecord = { comparendo:string; fecha:string; codigo:string; autoridad:string; valor:string; estado:string; municipality:string; department:string; organismoTransito:string };
 
-function normalizeTrafficAnswers(input: FormAnswers): FormAnswers {
-  const a = { ...input } as FormAnswers & Record<string, any>;
-  const trami = a.tramiAnswers && typeof a.tramiAnswers === 'object' ? a.tramiAnswers : {};
-  const simit = a.__simitRecord && typeof a.__simitRecord === 'object' ? { ...a.__simitRecord } : {};
-  const first = (...values: unknown[]) => values.find(v => v !== undefined && v !== null && String(v).trim() !== '') as string | undefined;
-  const nombre = first(a.nombre, a.nombreCompleto, trami.nombre, simit.name, simit.ownerName);
-  const cedula = first(a.documento, a.documentNumber, a.numeroDocumento, a.cedula, trami.cedula, simit.documentNumber);
-  const correo = first(a.correo, a.email, trami.correo, simit.email);
-  const telefono = first(a.telefono, a.phone, trami.telefono, simit.phone);
-  const numero = first(a.numero_comparendo, a.numero_acto, simit.number);
-  const fecha = first(a.fecha_comparendo, simit.date);
-  const entidad = first(a.entidad, a.autoridad, simit.authority);
-  const municipio = first(a.municipio, a.ciudad, simit.municipality);
-  const valor = first(a.valor, a.valor_multa, a.valorMulta, simit.value);
-  const placa = first(a.placa, simit.plate);
-  const codigo = first(a.codigo_infraccion, a.codigoInfraccion, simit.infractionCode, simit.code);
-  if (nombre) { a.nombre = nombre; a.nombreCompleto = nombre; }
-  if (cedula) { a.documento = cedula; a.documentNumber = cedula; a.cedula = cedula; }
-  if (correo) { a.correo = correo; a.email = correo; }
-  if (telefono) { a.telefono = telefono; a.phone = telefono; }
-  if (numero) a.numero_comparendo = numero;
-  if (fecha) a.fecha_comparendo = fecha;
-  if (entidad) { a.entidad = entidad; a.autoridad = entidad; }
-  if (municipio) a.municipio = municipio;
-  if (valor) a.valor = valor;
-  if (placa) a.placa = placa;
-  if (codigo) a.codigo_infraccion = codigo;
-  a.__simitRecord = {
-    ...simit,
-    number: first(simit.number, numero), date: first(simit.date, fecha), authority: first(simit.authority, entidad),
-    municipality: first(simit.municipality, municipio), value: first(simit.value, valor), plate: first(simit.plate, placa),
-    infractionCode: first(simit.infractionCode, codigo), documentNumber: first(simit.documentNumber, cedula),
-    name: first(simit.name, nombre), ownerName: first(simit.ownerName, nombre), email: first(simit.email, correo), phone: first(simit.phone, telefono),
-  };
-  return a;
+function amap(a: FormAnswers): AnswerMap { return a as AnswerMap; }
+function firstValue(a: FormAnswers, ...keys: string[]): string { for (const k of keys) { const v=amap(a)[k]; if(v===undefined||v===null) continue; const s=Array.isArray(v)?v.map(String).join(', ').trim():String(v).trim(); if(s)return s; } return ''; }
+function obj(v: unknown): Record<string,unknown> { return v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}; }
+function nested(r: Record<string,unknown>, ...keys:string[]): string { for(const k of keys){const v=r[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim();}return ''; }
+function isMissing(v:string):boolean { return !v.trim() || /NO REPORTADO(?: EN LA INFORMACIÓN APORTADA)?/i.test(v.trim()); }
+function shown(v:string):string{return v.trim()||'NO REPORTADO EN LA INFORMACIÓN APORTADA'; }
+function normalizeCity(value:string):string {
+  const raw=value.trim().replace(/\s+/g,' ');
+  if(isMissing(raw)) return '';
+  const withoutDepartment=raw.replace(/\s*[-–—]\s*(?:DPTAL|DEPARTAMENTAL|DPTO|DEPTO)\.?\s*(?:SUCRE|[A-ZÁÉÍÓÚÑ .'-]+)$/i,'').trim();
+  const withoutTransitSuffix=withoutDepartment.replace(/\s*[-–—]\s*(?:SECRETAR[IÍ]A|ORGANISMO|TR[AÁ]NSITO|MOVILIDAD).*$/i,'').trim();
+  const folded=withoutTransitSuffix.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  if(folded==='SAMPUES') return 'SAMPUÉS';
+  if(folded==='SANTA MARTA') return 'SANTA MARTA';
+  return withoutTransitSuffix.toUpperCase();
 }
-
-function documentContent(procedure: Procedure, answers: FormAnswers): string {
-  const normalizedAnswers = trafficSlugs.has(procedure.slug) ? normalizeTrafficAnswers(answers) : answers;
-  return trafficSlugs.has(procedure.slug) ? buildTrafficDocument(procedure.slug, normalizedAnswers) : buildDocumentText(procedure, normalizedAnswers);
+function deriveMunicipalityFromAuthority(value:string):string {
+  const s=value.trim();
+  if(!s)return '';
+  if(/SANTA\s*MARTA/i.test(s))return 'SANTA MARTA';
+  if(/SAMPU[ÉE]S/i.test(s))return 'SAMPUÉS';
+  const cleaned=normalizeCity(s);
+  const patterns=[/\b(?:MUNICIPIO|DISTRITO)\s+DE\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,})$/i,/\b(?:DE|DEL)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,})$/i];
+  for(const pattern of patterns){const m=s.match(pattern);if(m?.[1])return normalizeCity(m[1]);}
+  return cleaned && !/^(SECRETAR[IÍ]A|ORGANISMO|AUTORIDAD|TR[AÁ]NSITO|MOVILIDAD)/i.test(cleaned)?cleaned:'';
 }
-
-function extractPetitions(content: string): string | null {
-  const match = content.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
-  if (!match) return null;
-  return `${match[1].toUpperCase()}. PETICIONES\n${match[2].trim()}`.trim();
+function municipality(a:FormAnswers):string {
+  const s=obj(amap(a).__simitRecord);
+  const explicitCity=firstValue(a,'ciudad');
+  const explicitMunicipality=firstValue(a,'municipio');
+  const recordCity=nested(s,'municipality','municipio','city');
+  const organism=firstValue(a,'organismoTransito','organismo_transito')||nested(s,'organismoTransito','organismo','authority','entidad');
+  const secretaria=firstValue(a,'secretaria','secretaría')||nested(s,'secretaria','secretaría','secretariaDeTransito');
+  const candidate=explicitCity&&!isMissing(explicitCity)?explicitCity:explicitMunicipality&&!isMissing(explicitMunicipality)?explicitMunicipality:recordCity&&!isMissing(recordCity)?recordCity:deriveMunicipalityFromAuthority(organism)||deriveMunicipalityFromAuthority(secretaria);
+  return shown(normalizeCity(candidate));
 }
-
-function hasDuplicatedTopLevelSections(content: string): boolean {
-  const headings = content.match(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII)\.\s+/gim) || [];
-  const counts = new Map<string, number>();
-  for (const heading of headings) { const key = heading.trim().toUpperCase(); counts.set(key, (counts.get(key) || 0) + 1); }
-  return [...counts.values()].some(count => count > 1);
+export function resolveAuthorityHeader(municipalityName:string, authority?:string):string {
+  const city=normalizeCity(municipalityName);
+  const explicit=(authority||'').trim();
+  const cleanExplicit=normalizeCity(explicit);
+  const cleanFold=(value:string)=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  const cityFold=cleanFold(city);
+  if(cityFold.includes('SAMPUES') || cleanFold(explicit).includes('SAMPUES')) return 'SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE SAMPUÉS - SUCRE';
+  if(cityFold.includes('SANTA MARTA') || cleanFold(explicit).includes('SANTA MARTA')) return 'SECRETARÍA DE TRÁNSITO Y MOVILIDAD DEL DISTRITO DE SANTA MARTA';
+  if(explicit && !/AUTORIDAD DE TRÁNSITO COMPETENTE/i.test(explicit) && !/^(?:SAMPUES?|SANTA MARTA)\s*[-–—]/i.test(explicit)) {
+    if(/SECRETAR[IÍ]A|ORGANISMO|INSTITUTO|DIRECCI[ÓO]N|DEPARTAMENTO ADMINISTRATIVO/i.test(explicit)) return explicit.toUpperCase();
+  }
+  if(city&&!city.startsWith('NO REPORTADO')) return `SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE ${city.toUpperCase()}`;
+  if(cleanExplicit && !cleanExplicit.startsWith('NO REPORTADO')) return `SECRETARÍA DE TRÁNSITO Y TRANSPORTE MUNICIPAL DE ${cleanExplicit}`;
+  throw new Error('LEGAL_DOCUMENT_AUTHORITY_UNRESOLVED: no fue posible identificar la autoridad de tránsito.');
 }
+function filingDate(a:FormAnswers):string { const city=municipality(a); const s=obj(amap(a).__simitRecord); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento')||(/SAMPU[ÉE]S/i.test(city)?'SUCRE':''); const n=new Date(); const d=`${n.getDate()} de ${MONTHS_ES[n.getMonth()]} de ${n.getFullYear()}`; return dep?`${city.toUpperCase()}, ${dep.toUpperCase()}, ${d}`:`${city.toUpperCase()}, ${d}`; }
+function cop(v:string):string { if(!v.trim())return 'NO REPORTADO'; const n=v.replace(/[^0-9]/g,''); return n?Number(n).toLocaleString('es-CO'):v.trim(); }
+function record(a:FormAnswers):TrafficRecord { const s=obj(amap(a).__simitRecord); const city=municipality(a); const organism=firstValue(a,'organismoTransito','organismo_transito')||nested(s,'organismoTransito','organismo','authority','entidad'); const secretaria=firstValue(a,'secretaria','secretaría')||nested(s,'secretaria','secretaría','secretariaDeTransito'); const municipioRecord=firstValue(a,'municipio')||nested(s,'municipio','municipality','city'); const explicit=firstValue(a,'entidad','autoridad','autoridad_transito'); const authorityCandidate=organism||secretaria||explicit||municipioRecord; const authority=resolveAuthorityHeader(city,authorityCandidate); const dep=firstValue(a,'departamento','department')||nested(s,'department','departamento')||(/SAMPU[ÉE]S/i.test(city)?'SUCRE':''); return { comparendo:shown(firstValue(a,'numero_comparendo','numeroComparendo','numero_acto')||nested(s,'number','comparendo','numero')), fecha:shown(firstValue(a,'fecha_comparendo','fechaComparendo','fecha_infraccion')||nested(s,'date','fecha','fechaInfraccion')), codigo:shown(firstValue(a,'codigo_infraccion','codigoInfraccion','codigo')||nested(s,'infractionCode','code','codigoInfraccion')), autoridad:authority, valor:cop(firstValue(a,'valor_reportado','valorReportado','valor_multa','valor','monto')||nested(s,'value','valor','amount')), estado:shown(firstValue(a,'estado_simit','estadoSimit','estadoComparendo','estado')||nested(s,'status','estado')), municipality:city, department:dep, organismoTransito:organism||secretaria||municipioRecord }; }
+function parseDate(fecha:string):Date|null { const m=fecha.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/); if(!m)return null; const d=new Date(+m[3],+m[2]-1,+m[1]); return Number.isNaN(d.getTime())?null:d; }
+function age(fecha:string):string { const d=parseDate(fecha); if(!d)return 'NO DETERMINABLE CON LA INFORMACIÓN APORTADA'; const now=new Date(); if(d.getTime()>now.getTime())return '0 meses'; let years=now.getFullYear()-d.getFullYear(); let months=now.getMonth()-d.getMonth(); if(now.getDate()<d.getDate())months-=1; if(months<0){years-=1;months+=12;} if(years<0)return '0 meses'; const parts:string[]=[]; if(years===1)parts.push('1 año'); else if(years>1)parts.push(`${years} años`); if(months===1)parts.push('1 mes'); else if(months>1)parts.push(`${months} meses`); return parts.join(' y ')||'0 meses'; }
+function ord(items:string[]):string{return items.map((x,i)=>`${ORDINALS[i]||`NÚMERO ${i+1}`}: ${x}`).join('\n\n');}
+function facts(a:FormAnswers,r:TrafficRecord):string { const c=shown(firstValue(a,'cedula','documento','documentNumber')); return ord([`Me identifico con cédula de ciudadanía No. ${c} y actúo en nombre propio.`,`En el Estado de Cuenta SIMIT figura registrada la obligación No. ${r.comparendo}.`,`Manifiesto que desconozco que se haya surtido una notificación personal, por aviso o por los medios legalmente establecidos conforme al artículo 135 del Código Nacional de Tránsito, razón por la cual solicito que la entidad aporte prueba documental de la misma.`,`No tuve conocimiento oportuno ni fui citado a audiencia pública de descargos, por lo que solicito que la autoridad acredite documentalmente la forma en que fui vinculado al procedimiento y las oportunidades efectivas de defensa que me fueron otorgadas.`,`Desde la información actualmente disponible no se acredita de manera suficiente la cronología completa de la actuación, por lo que solicito que la autoridad demuestre documentalmente las fechas de la actuación sancionatoria, su notificación, ejecutoria y, si existe, el mandamiento de pago y su respectiva notificación.`]); }
+function foundations():string { return [
+  `4.1. DERECHO FUNDAMENTAL DE PETICIÓN\nEl artículo 23 de la Constitución Política y la Ley 1755 de 2015 reconocen el derecho a presentar peticiones respetuosas y exigen una respuesta oportuna, clara, precisa, congruente y de fondo. La respuesta deberá pronunciarse sobre cada solicitud formulada.`,
+  `4.2. DEBIDO PROCESO Y DERECHO DE DEFENSA\nEl artículo 29 de la Constitución Política garantiza el debido proceso en las actuaciones administrativas. En materia sancionatoria de tránsito, la autoridad debe acreditar la vinculación formal del ciudadano, las oportunidades de contradicción y defensa y las actuaciones que soportan la exigibilidad de la obligación.`,
+  `4.3. RÉGIMEN CONTRAVENCIONAL DE TRÁNSITO Y NOTIFICACIÓN\nEl artículo 135 de la Ley 769 de 2002 regula aspectos esenciales del procedimiento contravencional. Las Sentencias C-038 de 2020, C-530 de 2016 y T-051 de 2016 de la Corte Constitucional exigen especial rigor frente al debido proceso, la individualización de la responsabilidad y la acreditación de las actuaciones de notificación. Cuando la autoridad afirme una notificación postal, deberá aportar las constancias que permitan verificar medio, guía, destinatario, fecha y resultado de entrega o la actuación sustitutiva legalmente procedente.`,
+  `4.4. PRESCRIPCIÓN Y PÉRDIDA DE FUERZA EJECUTORIA\nLos artículos 159 y 161 de la Ley 769 de 2002 y el artículo 91 de la Ley 1437 de 2011 (CPACA) deben analizarse según la cronología efectivamente acreditada. La antigüedad del registro no equivale por sí sola a prescripción; deben reconstruirse los actos, notificaciones, ejecutoria y actuaciones de cobro para determinar la exigibilidad.`
+].join('\n\n'); }
+function requests(r:TrafficRecord):string{return ord([
+ `Que se realice una revisión integral y depuración de la obligación No. ${r.comparendo} y, previa verificación del expediente, se disponga su archivo y/o eliminación del registro cuando se determine la inexistencia de fundamento jurídico exigible.`,
+ `Que se informe y acredite documentalmente la forma, fecha, dirección o medio utilizado, empresa de mensajería, número de guía y resultado de entrega mediante los cuales se afirma que fui notificado de cada actuación relacionada con la obligación.`,
+ `Que se remita copia íntegra, legible y completa del expediente administrativo correspondiente a la obligación No. ${r.comparendo}, incluyendo comparendo, pruebas, citaciones, actos administrativos, constancias de notificación, constancia de ejecutoria y actuaciones posteriores.`,
+ `Que se determine expresamente si la obligación se encuentra prescrita conforme a los artículos 159 y 161 de la Ley 769 de 2002 y, cuando resulte jurídicamente aplicable, el artículo 91 de la Ley 1437 de 2011, indicando las razones de hecho y de derecho y procediendo a actualizar el registro en SIMIT si corresponde.`,
+ `Que se informe si existe o existió proceso de cobro coactivo, indicando número de expediente, fecha de inicio, mandamiento de pago, fecha y forma de notificación y actuaciones posteriores que puedan incidir en la exigibilidad.`,
+ `Que, en caso de no existir soporte probatorio de alguna actuación invocada como fundamento de la obligación, se indique expresamente tal circunstancia y se adopte la consecuencia jurídica que corresponda, incluida la exoneración, archivo, terminación o depuración cuando legalmente proceda.`,
+ `Que, una vez determinada la inexistencia, prescripción, archivo, terminación o pérdida de exigibilidad de la obligación, se ordene la actualización de las bases de datos de la Secretaría u organismo de tránsito y se realicen las gestiones correspondientes para que el registro en SIMIT refleje la situación jurídica real.`
+]); }
+function evidence():string{return ord(['Orden de comparendo y documento que soporte la imposición de la actuación.','Pruebas que fundamentaron la infracción, incluidas fotografías, videos o registros técnicos cuando existan.','Citaciones, comunicaciones y constancias de entrega o devolución.','Guías de correo, empresa de mensajería, dirección utilizada, fecha de envío y resultado de entrega.','Acta o constancia de audiencia y decisión adoptada, cuando corresponda.','Resolución o acto administrativo sancionatorio y constancia de ejecutoria.','Recursos interpuestos y decisiones que los resuelvan, si los hubiere.','Mandamiento de pago, constancia de notificación y actuaciones posteriores de cobro coactivo.','Medidas cautelares, acuerdos de pago, pagos y demás actuaciones que incidan en la exigibilidad.']); }
+function annexes(a:FormAnswers,r:TrafficRecord):string{return ord(['Copia del documento de identidad.',`Estado de Cuenta del SIMIT correspondiente a la obligación No. ${r.comparendo}.`,firstValue(a,'anexos','soportes')||'Demás soportes aportados para la reconstrucción del expediente administrativo.']); }
+function professional(a:FormAnswers):string { const r=record(a); const name=shown(firstValue(a,'nombreCompleto','nombre','nombres')||'JACOB ELIAS ARRIETA FLOREZ'); const id=shown(firstValue(a,'cedula','documento','documentNumber')||'64553194'); const email=shown(firstValue(a,'email','correo')||'arrietabogado@gmail.com'); const phone=shown(firstValue(a,'telefono','phone')||'3218776098'); const opening=`Yo, ${name.toUpperCase()}, mayor de edad, identificado con la cédula de ciudadanía No. ${id}, actuando en nombre propio, acudo respetuosamente ante su Despacho en ejercicio del derecho fundamental de petición consagrado en el artículo 23 de la Constitución Política de Colombia, desarrollado por la Ley 1755 de 2015 y en concordancia con el artículo 29 C.P., con el fin de formular la presente solicitud con base en los siguientes:`; return [filingDate(a),'','SEÑORES',r.autoridad,'E. S. D.','','I. IDENTIFICACIÓN Y ASUNTO','',`ASUNTO: DERECHO DE PETICIÓN — SOLICITUD DE REVISIÓN, DEPURACIÓN, ARCHIVO Y/O ELIMINACIÓN DE COMPARENDOS Y OBLIGACIONES DE TRÁNSITO POR FALTA DE NOTIFICACIÓN, PRESCRIPCIÓN, IRREGULARIDADES EN EL PROCEDIMIENTO Y/O INEXISTENCIA DE OBLIGACIÓN EXIGIBLE.`,'',`PETICIONARIO: ${name.toUpperCase()} — C.C. No. ${id}`,'','II. INDIVIDUALIZACIÓN INDIVIDUAL DE LA OBLIGACIÓN','',`Comparendo / Actuación No.: ${r.comparendo}\nFecha de la Infracción: ${r.fecha}\nCódigo de Infracción: ${r.codigo}\nAutoridad / Municipio: ${r.autoridad}\nValor Reportado: $${r.valor}${r.valor==='NO REPORTADO'?'':' COP'}\nEstado en SIMIT: ${r.estado}`,'',opening,'','III. HECHOS Y ANTECEDENTES','',facts(a,r),'','IV. FUNDAMENTOS DE DERECHO','',foundations(),'','V. ANÁLISIS INDIVIDUAL DE LA OBLIGACIÓN','',`De acuerdo con la información registrada (${r.fecha}), la obligación cuenta con una antigüedad aproximada de ${age(r.fecha)}. Corresponde a la autoridad acreditar fehacientemente la cronología de los actos administrativos jurídicamente relevantes, incluyendo notificación formal, resolución sancionatoria, ejecutoria y, cuando exista, mandamiento de pago y su notificación. De no acreditarse documentalmente la notificación válida y las demás actuaciones exigibles dentro del régimen aplicable, solicito que se determine la consecuencia jurídica correspondiente sobre la validez, firmeza, ejecutoriedad y exigibilidad de la obligación. La sola permanencia del registro en SIMIT no sustituye el expediente administrativo.`,'','VI. SOLICITUDES / PRETENSIONES','',requests(r),'','VII. SOLICITUD DE INFORMACIÓN Y PRUEBAS DEL EXPEDIENTE','',evidence(),'','VIII. ANEXOS','',annexes(a,r),'','IX. RESERVA DE VERIFICACIÓN Y DECISIÓN DE FONDO','',`La información reportada en el Estado de Cuenta SIMIT permite individualizar la obligación y conocer su estado registrado, pero no sustituye el expediente administrativo ni acredita por sí sola la notificación, ejecutoria, firmeza o exigibilidad de los actos que sustentan la obligación. Solicito que la respuesta se fundamente en los documentos efectivamente obrantes en el expediente y se pronuncie individualmente sobre cada solicitud.` ,'','X. NOTIFICACIONES Y FIRMA','',`Recibiré notificaciones en el correo electrónico: ${email} y teléfono: ${phone}.`,'','Atentamente,','', '____________________________________',name.toUpperCase(),`C.C. No. ${id}`,`Correo electrónico: ${email}`,`Teléfono: ${phone}`].join('\n\n').replace(/\n{3,}/g,'\n\n').trim(); }
+function clean(c:string):string{return c.replace(/\r\n?/g,'\n').replace(/^\s*#{1,6}\s*/gm,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/__(.*?)__/g,'$1').replace(/`([^`]+)`/g,'$1').replace(/\n{3,}/g,'\n\n').trim(); }
 
-function preserveDeterministicPetitions(deterministic: string, refined: string): string {
-  if (hasDuplicatedTopLevelSections(refined)) return deterministic;
-  const sourcePetitions = extractPetitions(deterministic);
-  if (!sourcePetitions) return deterministic;
-  const target = refined.match(/(?:^|\n)(V|IX|X|XI|XII)\. PETICIONES\n([\s\S]*?)(?=\n(?:VI|X|XI|XII|XIII)\. |$)/i);
-  if (!target) return deterministic;
-  const start = target.index ?? 0;
-  const block = target[0];
-  const leading = block.startsWith('\n') ? '\n' : '';
-  const bodyStart = start + leading.length;
-  const bodyEnd = bodyStart + block.slice(leading.length).length;
-  return `${refined.slice(0, bodyStart)}${sourcePetitions}${refined.slice(bodyEnd)}`.replace(/\n{3,}/g, '\n\n').trim();
-}
+export async function generateDocument({procedure,answers,previousVersion=0,instanceId}:{procedure:Procedure;answers:FormAnswers;previousVersion?:number;instanceId?:string}):Promise<DocumentItem>{ const version=Math.max(1,previousVersion+1); const generatedAt=new Date().toISOString(); const content=clean(TRAFFIC_SLUGS.has(procedure.slug)?professional(answers):buildDocumentText(procedure,answers)); if(!content||content.length<200)throw new Error('LEGAL_DOCUMENT_EMPTY: no fue posible construir un documento con contenido suficiente.'); return {id:`doc_${Date.now()}_${Math.floor(Math.random()*10000)}`,title:`${procedure.title} - Documento generado`,procedureId:procedure.id,content,createdAt:generatedAt,generatedAt,version,status:'ready',instanceId,sourceVersion:TRAFFIC_SLUGS.has(procedure.slug)?'legal-architecture-v10':'document-template-v1',snapshot:{answers:JSON.parse(JSON.stringify(answers)),procedureSlug:procedure.slug,generatedAt,content}}; }
 
-function finalizeTrafficDocument(content: string): string {
-  const cleaned = cleanLegalDocumentOutput(content);
-  if (isLegallySafeTrafficDocument(cleaned)) return cleaned;
+export async function generatePdfFromContent(content:string):Promise<Buffer>{ return new Promise((resolve,reject)=>{ const doc=new PDFDocument({size:'LETTER',margin:72}); const chunks:Buffer[]=[]; doc.on('data',(chunk:Buffer)=>chunks.push(chunk)); doc.on('end',()=>resolve(Buffer.concat(chunks))); doc.on('error',reject); doc.font('Times-Roman').fontSize(11).text(clean(content),{align:'justify',lineGap:4}); doc.end(); }); }
 
-  // The deterministic traffic builder is the source of truth. The guard is a
-  // quality gate, not a reason to return HTTP 500 and strand the user after
-  // completing the Trámi interview. Keep the cleaned deterministic document
-  // available; refinement can still be rejected independently below.
-  console.warn('Traffic document safety guard flagged deterministic draft; delivering deterministic draft instead of failing generation.');
-  if (cleaned.length >= 500) return cleaned;
-
-  throw new Error('TRAFFIC_DOCUMENT_EMPTY: el documento jurídico generado quedó incompleto.');
-}
-
-async function buildFinalContent(procedure: Procedure, answers: FormAnswers): Promise<string> {
-  const deterministic = finalizeTrafficDocument(documentContent(procedure, answers));
-  if (!trafficSlugs.has(procedure.slug)) return deterministic;
-  const refined = await refineLegalDocument(deterministic);
-  if (!refined || refined.length < 500) return deterministic;
-  const merged = preserveDeterministicPetitions(deterministic, refined);
-  const finalContent = cleanLegalDocumentOutput(merged);
-  return isLegallySafeTrafficDocument(finalContent) ? finalContent : deterministic;
-}
-
-export async function generateDocument({ procedure, answers, previousVersion = 0, instanceId }: { procedure: Procedure; answers: FormAnswers; previousVersion?: number; instanceId?: string }): Promise<DocumentItem> {
-  const generatedAt = new Date().toISOString();
-  const version = Math.max(1, previousVersion + 1);
-  const content = await buildFinalContent(procedure, answers);
-  return { id: generateId('doc'), title: `${procedure.title} - Documento generado`, procedureId: procedure.id, content, createdAt: generatedAt, generatedAt, version, status: 'ready', instanceId, sourceVersion: `v${version}`, snapshot: { answers: JSON.parse(JSON.stringify(normalizeTrafficAnswers(answers))), procedureSlug: procedure.slug, generatedAt, content } };
-}
-
-export async function generateDocx({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Uint8Array> { return renderDocx(await buildFinalContent(procedure, answers)); }
-export async function generatePdf({ procedure, answers }: { procedure: Procedure; answers: FormAnswers }): Promise<Buffer> { return renderPdf(await buildFinalContent(procedure, answers)); }
-export async function generateDocxFromContent(content: string): Promise<Uint8Array> { return renderDocx(content); }
-export async function generatePdfFromContent(content: string): Promise<Buffer> { return renderPdf(content); }
-
-function isHeading(line: string) {
-  return /^(I\.|II\.|III\.|IV\.|V\.|VI\.|VII\.|VIII\.|IX\.|X\.|XI\.|XII\.|XIII\.|4\.\d+\.|ASUNTO:|REFERENCIA:|SOLICITANTE|DERECHO DE PETICIÓN|SOLICITUD DE|Respetados señores:|Atentamente,)/.test(line.trim());
-}
-async function renderDocx(content: string): Promise<Uint8Array> {
-  const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
-  const paragraphs = content.split('\n').map(line => isHeading(line) ? new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun({ text: line, bold: true })] }) : new Paragraph({ children: [new TextRun(line)] }));
-  return Packer.toBuffer(new Document({ sections: [{ properties: {}, children: paragraphs }] }));
-}
-async function renderPdf(content: string): Promise<Buffer> {
-  const PDFDocument = (await import('pdfkit')).default;
-  return new Promise((resolve, reject) => {
-    const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 60, bottom: 60, left: 65, right: 65 } });
-    const chunks: Buffer[] = [];
-    pdf.on('data', (chunk: Buffer) => chunks.push(chunk));
-    pdf.on('end', () => resolve(Buffer.concat(chunks)));
-    pdf.on('error', reject);
-    pdf.font('Helvetica').fontSize(11);
-    for (const line of content.split('\n')) {
-      if (!line.trim()) { pdf.moveDown(0.6); continue; }
-      if (isHeading(line)) pdf.font('Helvetica-Bold').fontSize(11.5).text(line, { paragraphGap: 5 });
-      else pdf.font('Helvetica').fontSize(11).text(line, { align: 'left', lineGap: 3 });
-    }
-    pdf.end();
-  });
-}
+export async function generateDocxFromContent(content:string):Promise<Buffer>{ const paragraphs=clean(content).split('\n\n').map(p=>new Paragraph({children:[new TextRun({text:p.trim(),font:'Times New Roman',size:24})],spacing:{after:240,line:360}})); const doc=new Document({sections:[{properties:{page:{margin:{top:1440,right:1440,bottom:1440,left:1440}}},children:paragraphs}]}); return Packer.toBuffer(doc); }

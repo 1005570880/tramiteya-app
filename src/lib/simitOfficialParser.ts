@@ -17,25 +17,44 @@ export type ParsedSimitRecord = SimitRecord & {
 export function parseSimitPDF(rawText: string): { cedula: string; comparendos: SimitRecord[] } {
   console.log('=== SIMIT RAW TEXT LENGTH ===', rawText ? rawText.length : 0);
   if (!rawText) return { cedula: '', comparendos: [] };
-  const cleanText = rawText.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\r/g, '').replace(/Pendiente\s+de\s+pago/gi, 'Pendiente de pago').replace(/Cobro\s+coactivo/gi, 'Cobro coactivo');
+
+  const cleanText = rawText
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/Pendiente\s+de\s+pago/gi, 'Pendiente de pago')
+    .replace(/Cobro\s+coactivo/gi, 'Cobro coactivo');
+
   let cedula = '';
   const cedulaMatch = cleanText.match(/Cédula:\s*\|?\s*(\d+)/i) || cleanText.match(/(\d{7,10})/);
   if (cedulaMatch) cedula = cedulaMatch[1];
+
   const ID_REGEX = /(\d{20}|\d{4}-[A-Z0-9]+-[A-Z0-9]+|[A-Z]{2}-\d{4}-\d+|\d{8,12})/g;
   const matches = cleanText.match(ID_REGEX) || [];
   const rawIds = Array.from(new Set(matches)).filter(id => id !== cedula && !id.startsWith('018000') && !id.startsWith('333602') && id.length >= 8);
   console.log('=== COMPARENDOS DETECTADOS (IDs) ===', rawIds);
+
   const comparendos: SimitRecord[] = [];
   for (const id of rawIds) {
-    const pos = cleanText.indexOf(id); if (pos === -1) continue;
+    const pos = cleanText.indexOf(id);
+    if (pos === -1) continue;
     const chunk = cleanText.substring(Math.max(0, pos - 40), Math.min(cleanText.length, pos + 310));
-    const fechaMatch = chunk.match(/(\d{2}\/\d{2}\/\d{4})/); const fechaComparendo = fechaMatch ? fechaMatch[1] : '';
-    const infraccionMatch = chunk.match(/([A-Z]\d{2,3})/); const codigoInfraccion = infraccionMatch ? infraccionMatch[1] : '';
+    const fechaMatch = chunk.match(/(\d{2}\/\d{2}\/\d{4})/);
+    const fechaComparendo = fechaMatch ? fechaMatch[1] : '';
+    const infraccionMatch = chunk.match(/([A-Z]\d{2,3})/);
+    const codigoInfraccion = infraccionMatch ? infraccionMatch[1] : '';
+
     let organismoTransito = 'ORGANISMO DE TRÁNSITO';
     if (fechaMatch) {
       const idxFecha = chunk.indexOf(fechaMatch[1]);
       if (idxFecha !== -1) {
-        let postFechaText = chunk.substring(idxFecha + fechaMatch[1].length, idxFecha + 150).replace(/\d{2}:\d{2}:\d{2}/g, '').replace(/[|#\t\r]/g, ' ').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+        let postFechaText = chunk.substring(idxFecha + fechaMatch[1].length, idxFecha + 150);
+        postFechaText = postFechaText
+          .replace(/\d{2}:\d{2}:\d{2}/g, '')
+          .replace(/[|#\t\r]/g, ' ')
+          .replace(/\n+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
         const orgMatch = postFechaText.match(/^\s*([A-Za-zÁéíóúÁÉÍÓÚñÑ\s\-\.]{3,45}?)\s*(?=[A-Z]\d{2,3}|Pendiente|Cobro|\$)/i);
         if (orgMatch && orgMatch[1].trim().length > 2) {
           const cleanOrg = orgMatch[1].replace(/\s+/g, ' ').trim().toUpperCase();
@@ -43,8 +62,12 @@ export function parseSimitPDF(rawText: string): { cedula: string; comparendos: S
         }
       }
     }
-    const valorMatch = chunk.match(/\$\s*([\d\.,]+)/); let estadoComparendo = 'Pendiente';
-    if (/cobro\s+coactivo/i.test(chunk)) estadoComparendo = 'Cobro coactivo'; else if (/pendiente\s+de\s+pago/i.test(chunk)) estadoComparendo = 'Pendiente de pago';
+
+    const valorMatch = chunk.match(/\$\s*([\d\.,]+)/);
+    let estadoComparendo = 'Pendiente';
+    if (/cobro\s+coactivo/i.test(chunk)) estadoComparendo = 'Cobro coactivo';
+    else if (/pendiente\s+de\s+pago/i.test(chunk)) estadoComparendo = 'Pendiente de pago';
+
     comparendos.push({ numComparendo: id, fechaComparendo, organismoTransito, codigoInfraccion, estadoComparendo, valorComparendo: valorMatch ? valorMatch[1] : '0' });
   }
   console.log('=== SIMIT PARSED RECORDS ===', comparendos.length);

@@ -16,6 +16,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RequestBody;
     const procedureSlug = body.procedureSlug?.trim();
+
     if (!procedureSlug) {
       return NextResponse.json({ error: 'procedureSlug es obligatorio' }, { status: 400 });
     }
@@ -25,17 +26,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Trámite no encontrado' }, { status: 404 });
     }
 
-    const answers = body.answers ?? {};
     const document = await generateDocument({
       procedure,
-      answers,
+      answers: body.answers ?? {},
       previousVersion: body.previousVersion ?? 0,
       instanceId: body.instanceId,
     });
 
     return NextResponse.json(document);
   } catch (error) {
-    console.error('Document generation failed:', error);
-    return NextResponse.json({ error: 'No fue posible generar el documento' }, { status: 500 });
+    console.error('CRITICAL_DOC_GEN_ERROR:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'No fue posible generar el documento' },
+      { status: 500 },
+    );
   }
 }
