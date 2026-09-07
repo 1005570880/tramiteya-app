@@ -29,7 +29,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
 
   useEffect(() => {
     let cancelled = false;
-
     async function load() {
       try {
         const supabase = getSupabaseBrowser();
@@ -56,7 +55,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
             }
           }
         }
-
         const local = procedureStorage.get(params.id);
         if (cancelled) return;
         setInstance(local);
@@ -68,23 +66,17 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
           if (approved && typeof window !== "undefined") window.localStorage.setItem(paidStorageKey(params.id), "true");
           if (payment.documentVersionId) setResolvedDocumentId(payment.documentVersionId);
         }
-      } catch (error) {
-        console.error("Error loading result page:", error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } catch (error) { console.error("Error loading result page:", error); }
+      finally { if (!cancelled) setLoading(false); }
     }
-
     void load();
     return () => { cancelled = true; };
   }, [params.id, params.slug]);
 
-  // A return URL is only a signal to refresh payment state; it is never trusted as payment proof.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const approvedFromUrl = new URLSearchParams(window.location.search).get("status")?.toUpperCase() === "APPROVED";
     if (!approvedFromUrl) return;
-
     let cancelled = false;
     async function confirmReturnedPayment() {
       for (let i = 0; i < 30 && !cancelled; i += 1) {
@@ -95,8 +87,7 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.access_token) headers = { Authorization: `Bearer ${session.access_token}` };
           }
-          const instanceData = instance;
-          const procedureId = String(instanceData?.procedureId || instanceData?.procedureSlug || params.slug);
+          const procedureId = String(instance?.procedureId || instance?.procedureSlug || params.slug);
           const response = await fetch(`/api/payments?procedureId=${encodeURIComponent(procedureId)}&instanceId=${encodeURIComponent(params.id)}`, { headers, cache: "no-store" });
           if (response.ok) {
             const payment = await response.json();
@@ -135,10 +126,7 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
   };
 
   const download = async (format: "docx" | "pdf", version?: number) => {
-    if (!paid) {
-      alert("Primero debes completar el pago para descargar el documento.");
-      return;
-    }
+    if (!paid) { alert("Primero debes completar el pago para descargar el documento."); return; }
     await markDownloaded();
     const suffix = version ? `?version=${encodeURIComponent(String(version))}` : "";
     const supabase = getSupabaseBrowser();
@@ -166,7 +154,7 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
   const procedureId = String((instance as any).procedureId || (instance as any).procedureSlug || params.slug);
 
   return <main className="min-h-screen bg-slate-50 text-slate-900 font-sans"><Header /><section className="max-w-5xl mx-auto px-4 py-12"><div className="bg-white p-6 md:p-8 rounded-2xl shadow"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><p className={`text-sm font-semibold ${paid ? "text-emerald-600" : "text-amber-600"}`}>DOCUMENTO • {paid ? "PAGO CONFIRMADO" : "PENDIENTE DE PAGO"}</p><h1 className="text-2xl font-bold mt-1">Revisa tu documento</h1><p className="text-sm text-slate-500 mt-1">Versión {latest?.version ?? latest?.meta?.version ?? 1} · generado {latest?.generatedAt ? new Date(latest.generatedAt).toLocaleString("es-CO") : "ahora"}</p></div><button onClick={edit} className="px-4 py-2 rounded-lg border font-medium">Editar respuestas</button></div>
-  <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500`}>Historial ({docs.length})</button></div>
+  <div className="mt-6 flex gap-2 border-b"><button onClick={() => setTab("preview")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "preview" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Vista previa</button><button onClick={() => setTab("history")} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === "history" ? "border-emerald-600 text-emerald-600" : "border-transparent text-slate-500"}`}>Historial ({docs.length})</button></div>
   {tab === "preview" ? <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden"><DocumentPreview content={latest?.content || "El contenido del documento no está disponible todavía."} procedureId={procedureId} instanceId={instance.id} initiallyUnlocked={paid} /></div> : <div className="mt-6 space-y-3">{docs.map((doc: any, i: number) => <div key={doc.id || i} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-xl p-4"><div><div className="font-semibold">Versión {doc.version ?? doc.meta?.version ?? i + 1}</div><div className="text-xs text-slate-500">{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString("es-CO") : doc.createdAt}</div></div><div className="flex gap-2"></div></div>)}</div>}
   <div className="mt-6 flex flex-col sm:flex-row gap-3"><button disabled={!paid} onClick={() => void download("docx")} className={downloadButtonClass("word")}>Descargar Word (.docx)</button><button disabled={!paid} onClick={() => void download("pdf")} className={downloadButtonClass("pdf")}>Descargar PDF</button></div><div className="mt-3"><button onClick={() => router.push("/dashboard")} className="w-full px-4 py-3 rounded-lg border font-medium">Volver a mis trámites</button></div><p className="mt-5 text-xs text-slate-400">Revisa el contenido y sus fundamentos antes de presentarlo ante la autoridad competente.</p></div></section>{!paid && <TestimonialsSlider />}<Footer /></main>;
 }
