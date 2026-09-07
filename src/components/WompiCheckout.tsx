@@ -29,6 +29,36 @@ export default function WompiCheckout({ procedureId, documentVersionId, instance
     return false;
   }
 
+  async function downloadPaidFile(resolvedDocumentId: string, format: 'pdf' | 'docx') {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/documents/${encodeURIComponent(resolvedDocumentId)}/download${format === 'pdf' ? '/pdf' : ''}`, { cache: 'no-store', headers });
+    if (!response.ok) throw new Error(`No fue posible descargar el archivo ${format.toUpperCase()}.`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `tramiteya-${procedureId}.${format}`;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function downloadPaidDocuments(resolvedDocumentId: string) {
+    try {
+      // The first download starts as soon as Wompi/server confirmation succeeds.
+      await downloadPaidFile(resolvedDocumentId, 'pdf');
+      // Stagger the second download so Chromium/WebKit can process the first one.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await downloadPaidFile(resolvedDocumentId, 'docx');
+      return true;
+    } catch (downloadError) {
+      console.warn('TRAMITEYA_PAID_DOCUMENT_DOWNLOAD_ERROR', downloadError);
+      return false;
+    }
+  }
+
   async function sendPaidDocuments(resolvedDocumentId: string) {
     if (!content) return;
     try {
@@ -63,9 +93,11 @@ export default function WompiCheckout({ procedureId, documentVersionId, instance
         if (status === 'APPROVED') {
           const approved = await waitForApproval(data!.documentVersionId);
           if (approved) {
-            await sendPaidDocuments(data!.documentVersionId);
             if (instanceId) localStorage.setItem(`tramiteya:paid-document:${instanceId}`, data!.documentVersionId);
-            window.location.reload();
+            const downloadsOk = await downloadPaidDocuments(data!.documentVersionId);
+            await sendPaidDocuments(data!.documentVersionId);
+            if (!downloadsOk) setError('Pago aprobado. El documento quedó desbloqueado; si el navegador bloqueó las descargas automáticas, usa los botones PDF y Word de la página.');
+            window.setTimeout(() => window.location.reload(), 250);
           } else setError('El pago fue aprobado, pero estamos esperando la confirmación del servidor. Actualiza esta página en unos segundos.');
         } else if (status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') setError('El pago no fue aprobado. Puedes intentarlo nuevamente.');
       });
