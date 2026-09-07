@@ -1,5 +1,6 @@
 import './globals.css';
 import React from 'react';
+import Script from 'next/script';
 import TramiWidget from '../components/TramiWidget';
 
 export const metadata = {
@@ -15,6 +16,11 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="min-h-screen flex flex-col">
+        <Script
+          id="wompi-widget-script"
+          src="https://checkout.wompi.co/widget.js"
+          strategy="afterInteractive"
+        />
         <main className="flex-1">
           {children}
         </main>
