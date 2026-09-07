@@ -11,7 +11,7 @@ import { procedures } from '../data/procedures';
 function Icon({ type }: { type: 'id' | 'ai' | 'doc' }) {
   if (type === 'id') return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8" cy="11" r="2" /><path d="M13 10h5M13 14h4" /></svg>;
   if (type === 'ai') return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M5.6 18.4l2.1-2.1M18.4 18.4l-2.1-2.1M21 12h-3M18.4 5.6l-2.1 2.1M12 18v3" /><path d="M9 14.5c-1.2-.9-2-2.3-2-3.9a5 5 0 0 1 10 0c0 1.6-.8 3-2 3.9-.7.5-1 1.1-1 1.9h-4c0-.8-.3-1.4-1-1.9Z" /><path d="M9.5 20h5" /></svg>;
-  return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13l2 2 4-4" /></svg>;
+  return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13l2 2 2 2 4-4" /></svg>;
 }
 
 const steps = [
@@ -38,7 +38,7 @@ export default function Home() {
               <h1 className="max-w-4xl text-4xl font-black leading-[1.03] tracking-[-0.045em] sm:text-5xl lg:text-6xl">Elimina tus multas de tránsito sin pagarle cientos de miles a un tramitador.</h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-200 sm:text-xl">Analizamos tu caso en SIMIT, aplicamos la ley colombiana y redactamos tu escrito legal listo en 2 minutos.</p>
               <div className="mt-8 flex flex-col gap-3">
-                <Link href="/tramites/derecho-de-peticion-eliminar-multa" className="group flex min-h-[88px] w-full items-center justify-center rounded-3xl bg-white px-7 py-5 text-center text-xl font-black text-slate-950 shadow-[0_20px_60px_rgba(0,0,0,0.35)] ring-4 ring-white/10 transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(0,0,0,0.45)] hover:ring-white/20 sm:min-h-[104px] sm:text-2xl lg:max-w-2xl lg:text-3xl">Analizar mi comparendo gratis <span className="ml-2 transition-transform group-hover:translate-x-1">→</span></Link>
+                <a href="/tramites/derecho-de-peticion-eliminar-multa" className="group flex min-h-[88px] w-full items-center justify-center rounded-3xl bg-white px-7 py-5 text-center text-xl font-black text-slate-950 shadow-[0_20px_60px_rgba(0,0,0,0.35)] ring-4 ring-white/10 transition duration-200 hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(0,0,0,0.45)] hover:ring-white/20 sm:min-h-[104px] sm:text-2xl lg:max-w-2xl lg:text-3xl">Analizar mi comparendo gratis <span className="ml-2 transition-transform group-hover:translate-x-1">→</span></a>
                 <Link href="/tramites" className="rounded-2xl border border-white/15 bg-white/5 px-6 py-4 text-center text-sm font-bold text-white transition hover:bg-white/10">Ver otros trámites</Link>
               </div>
               <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold text-slate-200"><span>✓ Sin formularios interminables</span><span>✓ Vista previa</span><span>✓ Word + PDF</span></div>
