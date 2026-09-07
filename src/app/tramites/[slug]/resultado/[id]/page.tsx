@@ -117,6 +117,17 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
     return () => { cancelled = true; };
   }, [params.id, params.slug, instance]);
 
+  // IMPORTANT: all hooks must run on every render. The previous auto-download hook
+  // lived below the loading/not-found early returns, causing React hook-order crashes
+  // exactly when the generated document finished loading.
+  useEffect(() => {
+    if (!paid || hasAutoDownloaded.current) return;
+    hasAutoDownloaded.current = true;
+    void download("pdf");
+    const timer = window.setTimeout(() => { void download("docx"); }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [paid]);
+
   if (loading) return <main className="min-h-screen bg-slate-50"><Header /><DocumentLoadingState /><Footer /></main>;
   if (!instance) return <main className="min-h-screen bg-slate-50"><Header /><section className="max-w-4xl mx-auto px-4 py-16"><h1 className="text-2xl font-bold">Trámite no encontrado.</h1></section><Footer /></main>;
 
@@ -162,14 +173,6 @@ export default function ResultPage({ params }: { params: { slug: string; id: str
     anchor.remove();
     URL.revokeObjectURL(url);
   };
-
-  useEffect(() => {
-    if (!paid || hasAutoDownloaded.current) return;
-    hasAutoDownloaded.current = true;
-    void download("pdf");
-    const timer = window.setTimeout(() => { void download("docx"); }, 1000);
-    return () => window.clearTimeout(timer);
-  }, [paid]);
 
   const downloadButtonClass = (format: "word" | "pdf") => paid ? `px-4 py-3 rounded-lg ${format === "pdf" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"} font-medium hover:opacity-90` : "px-4 py-3 rounded-lg bg-slate-200 text-slate-400 font-medium cursor-not-allowed";
   const procedureId = String((instance as any).procedureId || (instance as any).procedureSlug || params.slug);
